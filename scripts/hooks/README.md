@@ -7,7 +7,7 @@ thing that refuses.
 |---|---|
 | `guard.py` | the whole dispatcher — one file, no dependencies |
 | `guard-check` | is it healthy? compiles it, fires nine named probes, checks every lane is wired, and lists lanes nobody has touched in `stale_days` with the command that clears each (`lane doctor`; `-v` also runs the suite) |
-| `test-guard.sh` | 179 cases covering every rule, against a throwaway control plane it builds itself |
+| `test-guard.sh` | 184 cases covering every rule, against a throwaway control plane it builds itself |
 
 ## How it is wired
 
@@ -78,7 +78,7 @@ bash scripts/hooks/test-guard.sh
 It builds its own throwaway control plane under a temp directory — a lane with repos, a mirror,
 an attached reference, a second lane to test reach-in against, an existing memory file — copies
 `guard.py` into it (a copy, not a symlink: the guard finds the control plane from its own real
-path) and runs every case there. So it asserts the same 179 cases on a fresh clone as on a machine
+path) and runs every case there. So it asserts the same 184 cases on a fresh clone as on a machine
 full of work, and it never reads or writes your real lanes, mirrors or memory. If the fixture
 cannot be built the run fails; it never skips. The case count is itself an assertion, so adding
 or losing a case fails until `EXPECTED_CASES` is changed deliberately.

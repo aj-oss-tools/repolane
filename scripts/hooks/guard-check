@@ -2,7 +2,7 @@
 # lane doctor — is the guard healthy, AND is it actually wired into every session?
 #
 #   guard-check         the evidence, in a few lines
-#   guard-check -v      the same, plus every wiring location and the full 179-case suite
+#   guard-check -v      the same, plus every wiring location and the full 184-case suite
 #   guard-check -q      one line, for the top of the board; the detail appears only if it fails
 #
 # Exits non-zero, and explains, if any of it is wrong. Used by status-all and by `lane doctor`.

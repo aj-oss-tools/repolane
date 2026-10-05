@@ -103,15 +103,9 @@ Keep pull requests to one thing. A guard rule and a board tweak are two pull req
 ## Reporting a security problem
 
 If you find a way to get the guard to allow something it should refuse — a path that escapes the
-lane, a chained command that slips past, a way to read a secret file — please open an issue. This
-is a local tool with no server and no account attached, so there is nothing to disclose privately
-to; a public issue is the right place and gets it fixed faster.
-
-Describe the class of the problem rather than posting a full working exploit in the same breath —
-what kind of command or path shape gets through, not a ready-to-run repro. Anyone who has already
-installed Repolane is exposed to it for as long as it is both public and unpatched, so a class
-description is enough for a maintainer to find and fix it without also handing out a working
-bypass to every other install in the meantime.
+lane, a chained command that slips past, a way to read a secret file — please report it privately
+through [GitHub's vulnerability reporting](https://github.com/aj-oss-tools/repolane/security/advisories/new)
+rather than a public issue. See [SECURITY.md](SECURITY.md) for what's in scope.
 
 ## Conduct
 

@@ -7,16 +7,18 @@ lane, a chained command that slips past a rule, a way to read a secret file.
 
 ## Reporting one
 
-Open an [issue](https://github.com/aj-oss-tools/repolane/issues). There is nothing to
-disclose privately to — no server, no account, no other tenant whose exposure depends on
-quiet, fast patching — so a public issue is the right place and gets it fixed faster than
-any private channel would.
+Report it privately through GitHub:
+[**Report a vulnerability**](https://github.com/aj-oss-tools/repolane/security/advisories/new)
+(the repository's Security tab). Please don't open a public issue for a bypass: every
+existing install stays exposed to it until a fix ships, so details are kept private until
+then.
 
-Describe the *class* of the problem rather than posting a full working exploit in the same
-breath: what kind of command or path shape gets through, not a ready-to-run repro. Every
-existing install stays exposed to a bypass for as long as it is both public and unpatched,
-so naming the class is enough for it to get found and fixed without also handing out a
-working bypass to everyone else running it in the meantime.
+Include the kind of command or path shape that gets through and how you ran it. Once a fix
+is released, the advisory is published with credit to you unless you'd rather stay
+anonymous.
+
+Repolane is maintained on a best-effort basis and provided as is, without warranty, under
+the Apache License 2.0.
 
 ## What's in scope
 
