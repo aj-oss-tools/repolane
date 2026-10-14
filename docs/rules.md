@@ -2,11 +2,18 @@
 
 Every refusal here exists because the alternative went wrong. If you hit one, this page says why.
 
+Every rule below is enforced by `scripts/hooks/guard.py` inspecting the tool call Claude Code is
+about to make — the text of a Bash command, the path a file tool names — and answering allow or
+deny. It is not an operating-system sandbox: it cannot stop anything Claude Code itself did not
+route through a hook, and on hook input it does not recognize it fails open (lets the call through)
+rather than blocking everything. "Never" and "cannot" below describe what the guard denies when it
+recognizes the operation, not a guarantee enforced below the process level.
+
 ## Stay in the lane you are in
 
-A session belongs to one piece of work. It cannot read other lanes, the mirrors, or anything
-outside this folder. Without this, a session asked to fix one bug quietly reads four repos, fills
-its context with unrelated code, and starts making changes nobody asked for.
+A session belongs to one piece of work. The guard denies reads of other lanes, the mirrors, or
+anything outside this folder. Without this, a session asked to fix one bug quietly reads four repos,
+fills its context with unrelated code, and starts making changes nobody asked for.
 
 Need something outside? Attach it once with `lane ref` and read it at `lanes/<id>/refs/<name>`.
 The hook refuses writes through a reference unless it was attached with `--rw`. It is a symlink
@@ -29,11 +36,15 @@ store. Work in a worktree.
 Scripts, rules, the registry and memory are changed from a session started at the top, not from
 inside a lane. A lane editing the rules that constrain it is how you lose the rules.
 
-## Never read `.env` or credential files
+## Secret files are denied by default
 
-Not even when you grant permission: the read itself is the problem, because the values end up in a
-transcript. Structure is available instead, via `.env.example` or `lane keys <path>`, which lists key
-names and never values.
+The guard refuses the file tools and any Bash command naming a file it recognizes as a secret —
+`.env*`, `*.pem`/`*.key`/`*.p12`/`*.pfx`, `*credentials*.json`, `secrets.json`/`.yaml`/`.toml` —
+even when you grant permission: the read itself is the problem, because the values end up in a
+transcript. Structure is available instead, via `.env.example` or `lane keys <path>`, which lists
+key names and never values. This is a fixed, filename-based pattern, not every credential a project
+might have — see ["Per-repo secret files"](#per-repo-secret-files) below for filenames the guard
+doesn't recognize on its own and how to add them.
 
 ## Pushing to a default branch needs your word
 
