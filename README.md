@@ -248,8 +248,9 @@ rebuildable from the registry.
 
 Repolane is used daily by its author and is stable for that use. It is early software: the layout on
 disk is settled, the command names are settled, and the guard has a real test suite — but expect
-rough edges outside the paths that get walked every day. Current version is **0.1.0**
-(`lane --version`); see [`CHANGELOG.md`](CHANGELOG.md) for what changed.
+rough edges outside the paths that get walked every day. The current version is whatever
+[`VERSION`](VERSION) says — run `lane --version`, which also reports how far a given checkout has
+drifted past that release's tag; see [`CHANGELOG.md`](CHANGELOG.md) for what changed.
 
 Issues, discussions and pull requests are welcome, and used: if something is broken, unclear, or
 missing, filing it is the useful thing to do. [Issues](https://github.com/aj-oss-tools/repolane/issues)
