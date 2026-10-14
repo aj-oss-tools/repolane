@@ -48,6 +48,13 @@ task's boundaries.
 Repolane is built on Git worktrees, Bash, and standard-library Python. It does not replace Claude
 Code or Git, and its guardrails are not an operating-system sandbox.
 
+**Contents:** [See it in action](#see-it-in-action) · [Is Repolane for you?](#is-repolane-for-you) ·
+[Quick start](#quick-start) · [Complete workflow example](#complete-workflow-example) ·
+[How it works](#how-it-works) · [Why it refuses things](#why-it-refuses-things) ·
+[The commands](#the-commands) · [Using it without Claude](#using-it-without-claude) ·
+[Documentation](#documentation) · [What your clone becomes](#what-your-clone-becomes) ·
+[Status and contributing](#status-and-contributing)
+
 ## See it in action
 
 ```sh
@@ -65,16 +72,7 @@ worktrees may be all you need.
 
 ## Quick start
 
-```sh
-git clone https://github.com/aj-oss-tools/repolane.git && cd repolane
-./lane install        # puts `lane` and the long-form commands on your PATH
-lane init             # asks two questions, sets the machine up
-lane add <git-url>    # or: lane add ~/path/to/a/checkout/you/already/have
-```
-
-Just want to see if this would work before committing to it? `lane init --check` verifies the
-prerequisites (git, python3, optionally gh and claude) and exits — it changes nothing on your
-machine.
+**Prerequisites**
 
 | | |
 |---|---|
@@ -86,6 +84,16 @@ machine.
 
 Nothing is compiled, nothing is published to a package registry, and nothing phones home. Repolane
 is a folder of scripts. Tested on macOS and Linux; on Windows use WSL.
+
+```sh
+git clone https://github.com/aj-oss-tools/repolane.git && cd repolane
+./lane install        # puts `lane` and the long-form commands on your PATH
+lane init             # asks two questions, sets the machine up
+lane add <git-url>    # or: lane add ~/path/to/a/checkout/you/already/have
+```
+
+Just want to see if this would work before committing to it? `lane init --check` verifies the
+prerequisites above and exits — it changes nothing on your machine.
 
 `lane add` takes a checkout you already have, not just a URL — it adopts the existing `.git`, keeps
 the origin, and remembers where it came from so `lane import` can find the Claude conversations you
@@ -194,11 +202,16 @@ each story.
   `lane gh <repo> <args>`, `git -C <repo>` and editing `<repo>/file` all work without moving, and a
   `cd` into a repo is refused — in Claude Code a `cd` moves the session itself, so one `cd` for
   convenience strands it.
-- **Secrets are never read.** Not `.env`, not `*.pem`, not `credentials.json` — not even with
-  permission, because the read itself is the problem: the values end up in a transcript. Structure
-  comes from `.env.example` or `lane keys <path>`, which lists names and never values. Denial is the
-  default: `cp .env /tmp/x && cat /tmp/x` is the whole attack, so copying and linking are refused
-  too.
+- **Secrets are denied by default, not an exception you opt into.** The guard recognizes a fixed
+  set of shapes — `.env*`, `*.pem`/`*.key`/`*.p12`/`*.pfx`, `*credentials*.json`,
+  `secrets.json`/`.yaml`/`.toml` — by filename, across every repo, and refuses the file tools and
+  any Bash command naming one of them, even with permission granted, because the read itself is
+  the problem: the values end up in a transcript. `cp .env /tmp/x && cat /tmp/x` is the whole
+  attack, so copying and linking are refused too. Structure comes from `.env.example` or
+  `lane keys <path>`, which lists names and never values. This is pattern matching, not a sandbox
+  boundary: a credential file outside that fixed set (`service-account.json`, `.npmrc`, `id_rsa`, …)
+  is not recognized and is not denied unless you declare it with `lane secrets <repo> add` — see
+  [`docs/rules.md`](docs/rules.md#per-repo-secret-files).
 - **Default branches are protected.** Pushing to `main`, `master` or `develop` needs a marker you
   can see — `ALLOW_DEFAULT_BRANCH_PUSH=1 git push …`. Remotes may never be added, changed or
   removed. Destructive `gh` calls (`repo delete`, writing `gh api`) are refused outright.
