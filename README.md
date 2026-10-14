@@ -4,38 +4,98 @@
 
 # Repolane
 
-**One piece of work at a time, across all your repos.**
+**One ticket. Every repo it touches. One bounded AI session.**
 
-A control plane for multi-repo development — and a set of rules that keeps an AI coding session
-inside the work it was actually asked to do.
+Repolane is a local control plane for multi-repository development with Claude Code. It gives each
+piece of work an isolated workspace across every repository it touches, preserves the context
+needed to resume later, and enforces tested guardrails around what the coding agent can access and
+do.
 
 The command is `lane`.
 
-**[repolane.dev](https://repolane.dev)**
-
-[Install](#install) · [How it works](#how-it-works) · [The rules](#why-it-refuses-things) · [Docs](https://repolane.dev/docs/concepts/) · [Apache 2.0](LICENSE)
+[Website](https://repolane.dev) · [Documentation](https://repolane.dev/docs/concepts/) ·
+[Security model](#why-it-refuses-things) · [Apache 2.0](LICENSE)
 
 </div>
 
 ---
 
-## The problem
+**The problem:** A feature spans your frontend, API, and worker. Each lives in a separate Git
+repository. You end up juggling checkouts, branches, and separate AI sessions while trying to keep
+the implementation consistent — four checkouts of `web`, two of `api`, a Monday branch sitting in a
+directory you last opened on Thursday, and no record of which clone a stash landed in.
 
-Your product is six repos. A ticket touches three of them. You have four tickets in flight.
+Point Claude Code at one of those folders and it gets worse, not better: the session only sees one
+repo, so cross-repo work becomes a sequence of context-free single-repo sessions. Ask it to fix one
+bug and it wanders into three other repos looking for context, filling its window with code nobody
+asked about. It learns something useful about your deploy process and writes it down as a permanent
+global preference. It commits when you wanted to look first.
 
-So you keep four checkouts of `web`, two of `api`, and a `web-hotfix` you are afraid to delete.
-Monday's branch is checked out in a directory you last opened on Thursday. Two of those checkouts
-have uncommitted work in them. You stash something and lose track of which clone it landed in.
+**The solution:** Repolane makes the ticket — not the repository — the unit of work. One lane groups
+a Git worktree for each participating repository, a shared task goal, progress notes, and repository
+state. Start Claude Code at the lane root to work across those repositories without losing the
+task's boundaries.
 
-Then you point Claude Code at one of those folders, and it makes it worse: the session only sees
-one repo, so cross-repo work becomes a sequence of context-free single-repo sessions. Ask it to fix
-one bug and it wanders into three other repos looking for context, filling its window with code
-nobody asked about. It learns something useful about your deploy process and writes it down as a
-permanent global preference. It commits when you wanted to look first.
+- **Work across repositories:** one task ID and coordinated worktrees across the repositories
+  involved.
+- **Resume without reconstructing context:** keep the goal, findings, progress notes, and Git state
+  together.
+- **Enforce task-scoped guardrails:** Claude Code hooks deny disallowed operations, including
+  access to secrets and unrelated lanes.
+- **Keep control local:** no hosted service or account required; task state and the local board
+  stay on your machine.
 
-Repolane fixes the layout *and* the behaviour, because neither one works on its own.
+Repolane is built on Git worktrees, Bash, and standard-library Python. It does not replace Claude
+Code or Git, and its guardrails are not an operating-system sandbox.
 
-## The idea
+## See it in action
+
+```sh
+lane start ABC-123 web api       # a branch and a worktree of each repo, grouped as one lane
+cd lanes/ABC-123 && claude       # Claude opens knowing what this work is and which repos are in scope
+lane park ABC-123 "waiting on review for the api side"   # resume note + wip-commit, nothing left loose
+lane done ABC-123                # removes the folders once everything is pushed
+```
+
+## Is Repolane for you?
+
+Useful when a single change spans multiple repos and you want the coding agent to work across them
+with explicit boundaries and resumable context. If you work in one repo at a time, plain Git
+worktrees may be all you need.
+
+## Quick start
+
+```sh
+git clone https://github.com/aj-oss-tools/repolane.git && cd repolane
+./lane install        # puts `lane` and the long-form commands on your PATH
+lane init             # asks two questions, sets the machine up
+lane add <git-url>    # or: lane add ~/path/to/a/checkout/you/already/have
+```
+
+Just want to see if this would work before committing to it? `lane init --check` verifies the
+prerequisites (git, python3, optionally gh and claude) and exits — it changes nothing on your
+machine.
+
+| | |
+|---|---|
+| **git** | required — worktrees are the whole mechanism |
+| **python3** | required — the hook dispatcher and the board are stdlib Python, no packages |
+| **bash** | required — every command is a bash script |
+| **gh** | optional — pull request status and `lane gh` |
+| **Claude Code** | optional — the commands work on their own; the hooks only matter when Claude is driving |
+
+Nothing is compiled, nothing is published to a package registry, and nothing phones home. Repolane
+is a folder of scripts. Tested on macOS and Linux; on Windows use WSL.
+
+`lane add` takes a checkout you already have, not just a URL — it adopts the existing `.git`, keeps
+the origin, and remembers where it came from so `lane import` can find the Claude conversations you
+already had about that repo.
+
+`lane import` is entirely optional and safe to poke at: `lane import --list` only shows what was
+found on this machine and changes nothing, and bringing a conversation in **copies** it into the
+lane's folder — the original conversation, wherever it was, is left exactly where it was.
+
+## Complete workflow example
 
 **A lane is one piece of work.** It may span any number of repos.
 
@@ -72,38 +132,6 @@ worktree. `lane done` refuses while any repo is dirty or holds unpushed commits 
 every repo before it removes any of them, so a lane whose second repo has unpushed work does not
 lose the first repo's worktree on the way to failing.
 
-## Install
-
-```sh
-git clone https://github.com/aj-oss-tools/repolane.git && cd repolane
-./lane install        # puts `lane` and the long-form commands on your PATH
-lane init             # asks two questions, sets the machine up
-lane add <git-url>    # or: lane add ~/path/to/a/checkout/you/already/have
-```
-
-Just want to see if this would work before committing to it? `lane init --check` verifies the
-prerequisites (git, python3, optionally gh and claude) and exits — it changes nothing on your
-machine.
-
-| | |
-|---|---|
-| **git** | required — worktrees are the whole mechanism |
-| **python3** | required — the hook dispatcher and the board are stdlib Python, no packages |
-| **bash** | required — every command is a bash script |
-| **gh** | optional — pull request status and `lane gh` |
-| **Claude Code** | optional — the commands work on their own; the hooks only matter when Claude is driving |
-
-Nothing is compiled, nothing is published to a package registry, and nothing phones home. Repolane
-is a folder of scripts. Tested on macOS and Linux; on Windows use WSL.
-
-`lane add` takes a checkout you already have, not just a URL — it adopts the existing `.git`, keeps
-the origin, and remembers where it came from so `lane import` can find the Claude conversations you
-already had about that repo.
-
-`lane import` is entirely optional and safe to poke at: `lane import --list` only shows what was
-found on this machine and changes nothing, and bringing a conversation in **copies** it into the
-lane's folder — the original conversation, wherever it was, is left exactly where it was.
-
 ## How it works
 
 Three pieces, each doing one job.
@@ -128,8 +156,13 @@ hook JSON on stdin and answers allow, deny, or "here is some context you are mis
 It is not a prompt asking nicely. It inspects the actual tool call — including the text of every
 Bash command, each segment of a chain, and every path any of them names — and it judges paths by
 what was *written*, so a symlink or a `..` that climbs out of the lane is refused exactly like its
-absolute twin. It fails open on malformed input, because a crashed guard that blocks everything is
-worse than one that lets an odd call through.
+absolute twin.
+
+Repolane uses Claude Code hooks to inspect tool calls and deny disallowed operations. Its guardrails
+are tested, and `lane doctor` checks that they remain wired and functioning. This is not an
+operating-system sandbox, and unexpected hook input can fail open: the dispatcher fails open on
+malformed input, because a crashed guard that blocks everything is worse than one that lets an odd
+call through.
 
 It also *adds* context rather than only removing options: the first time a session touches a repo
 it injects that repo's own `CLAUDE.md` and rules list, and the first prompt in a lane carries the
@@ -152,8 +185,8 @@ is ever asked for their content.
 Every rule below exists because the alternative went wrong at least once. `docs/rules.md` tells
 each story.
 
-- **A session stays in its lane.** It cannot read another lane, the mirrors, or anything outside the
-  control plane. Need something from outside? `lane ref <id> add <path>` attaches it once, and it is
+- **A session stays in its lane.** The guard denies reads of another lane, the mirrors, or anything
+  outside the control plane. Need something from outside? `lane ref <id> add <path>` attaches it once, and it is
   readable at `lanes/<id>/refs/<name>`. A reference is read-only to a Claude session — the hook
   refuses writes through it unless you pass `--rw`. On disk it is a symlink, so your own editor can
   still write to it.
