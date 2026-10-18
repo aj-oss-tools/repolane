@@ -8,6 +8,10 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.9.0] — 2026-10-18
+
 ### Added
 
 - **Test suites that run on their own throwaway control plane, and a CI workflow that runs them.**
@@ -612,7 +616,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/aj-oss-tools/repolane/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/aj-oss-tools/repolane/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/aj-oss-tools/repolane/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/aj-oss-tools/repolane/compare/v0.7.1...v0.7.2
