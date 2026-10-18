@@ -8,7 +8,256 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Test suites that run on their own throwaway control plane, and a CI workflow that runs them.**
+  `tests/run-all.sh` runs the eight `tests/t_*.sh` suites (dispatcher, memory, upgrade, lifecycle —
+  park / done / brief —, secret names, portability and exit codes, and the second audit's fixes),
+  each in its own sandbox with a temporary `HOME` and local bare repos as remotes, so nothing needs
+  installing, logging in or reaching the network. `scripts/board/test_board.py` is a stdlib
+  `unittest` suite that starts the real board server on a scratch plane (`smoke.sh` now runs it).
+  `scripts/hooks/test-guard.sh` grew from 184 to well over a thousand cases, and no longer asserts a
+  hard-coded case count (nobody notices when that number is edited to match a suite that lost half
+  its cases): every section must run at least one case, every case must also see the guard exit 0,
+  and the totals must add up. The guard now runs against a fake `HOME` inside the fixture, so the
+  result no longer depends on whether the real `$HOME` or `$TMPDIR` is under `/Users`, `/home`,
+  `/tmp` or macOS's `/var/folders` (before, the same suite scored 184, 179 or 157 depending on
+  where it ran). `.github/workflows/tests.yml` runs all three on every push and pull request on
+  `ubuntu-latest` and on `macos-latest` pinned to `/bin/bash` (3.2). The three suites pass on macOS
+  (bash 3.2) and in an Ubuntu 24.04 container run as an ordinary user from a clean clone; the workflow
+  file itself has not yet run on GitHub.
+- **`lane use --remove <name>`** forgets a registered plane. Only the registry entry goes; the
+  checkout is never touched. If it was the active plane there is none afterwards (the command says
+  so) and `lane use <name>` picks one: no replacement is guessed, because guessing the wrong plane is
+  how the wrong project's data got used once. Unknown names exit 1.
+- **`lane done --discard-ignored` and `lane done --pushed-to <remote>`**, described under Changed.
+- **`scripts/gitstate.sh`**, one shared definition of "unpushed", "dirty", "secret-named" and a valid
+  lane id, sourced by the lane scripts that used to each count their own way. `tests/` fails if its
+  secret-name pattern ever differs from `guard.py`'s or the board's.
+- **The board accepts `WS_BOARD_REFRESH` (seconds, default 3)** for how often it re-reads git state.
+
+### Changed
+
+- **The guard (`scripts/hooks/guard.py`) was rewritten around a small shell reader instead of
+  regular expressions over the raw command line.** It now understands quotes (including `$'…'` and
+  `$"…"`), `;` `&` `|` and newlines, `$( )`, backticks, `( )`, redirect targets, and follows
+  `bash -c`, `eval`, `env -S` and `su -c`. A heredoc, here-string or what `echo`/`printf` pipe in is
+  data for `cat` or `git commit -F -` and code for a shell or interpreter. The old regexes were
+  quadratic: a ~24 KB command took about 12 seconds and ~96 KB more than 30, past the hook's
+  timeout; a 96 KB command now costs the same as a short one. What is now **denied** that passed
+  before:
+  - Secret reads through a substitution or a reader flag: `ls $(cat .env)`, ``basename "`cat .env`" ``,
+    `file -f .env`, `wc --files0-from=.env`. The allow-list of metadata-only commands (`ls`, `stat`,
+    `wc`, `find`, `lane-env-keys`, …) is matched as the exact command word and only without the options
+    that turn them into readers. Names are judged after the shell would have read them: earlier
+    variables in the same command (`f=.en; cat ${f}v`), brace expansion, `$'\x2eenv'`, `$(echo .env)`.
+    A `.env.example` that is a symlink to `.env` is treated as the secret. Lane references
+    (`lanes/<id>/refs/…`) are now secret-checked; they returned "allowed" before the check ran.
+  - Whole-folder reads over a folder that holds a secret: `grep -r`, `rg --hidden`/`-uu`, `tar c`,
+    `zip -r`, `cp -r`, `rsync`, `scp -r`, `diff -r`, `find … -exec <reader>`, and the **Grep** tool
+    (the PreToolUse matcher now includes `Glob|Grep`; `Glob` lists names only and is left alone).
+    Lists of names piped into a reader (`ls .env | xargs cat`) are judged as if typed after `cat`.
+    Interpreter one-liners (`python3 -c`, `node -e`, …) are searched for secret names, common ways
+    of assembling one (`'.'+'env'`, `chr(46)`, base64) and out-of-plane paths.
+  - Pushes to a protected branch in every spelling the old whitespace-sensitive check missed:
+    `git push origin main;`, `main&&…`, `+main`, `'main'`, `HEAD:refs/heads/main`, `:main`,
+    `--delete main`, `--all`, `--mirror`, and a bare `git push` while a protected branch is checked
+    out, including inside `bash -c`, `eval`, heredocs, `xargs` and `env -S`. A `git <word>` git does
+    not ship may be a user alias for `push`, so one naming a protected branch is refused (`git lg`
+    and `git co feature` are not).
+  - Git config that would run code or change where hooks come from: `-c alias.*`,
+    `core.hooksPath`, `include.path`, `GIT_CONFIG_*`, `GIT_EXEC_PATH`, `GIT_TEMPLATE_DIR`,
+    `git config` setting any of those or any program-valued setting (`core.editor`, `core.pager`,
+    `core.sshCommand`, `credential.helper`, …), and writes to `.git/config` or `.git/hooks`.
+  - `cd` escapes: `pushd`, `builtin cd`, `\cd`, `{ cd /; }`, `eval cd /`, a bare `cd`. The working
+    directory is now simulated statement by statement, so `cd ..; cd ..; cd ..` leaves a lane on
+    the second step and `cd app && cat ../../../../x` is judged from `app`.
+  - `$HOME` itself (`~`, `$HOME`, `${HOME}`), which was never expanded: `rm -rf ~`,
+    `grep -r token ~`. Symlinks inside a lane are resolved before the path rules apply (except a
+    lane's own attached reference).
+  - Writes to the control plane from inside a lane that the old list missed: `lane`, `VERSION`,
+    `CLAUDE.md.template`, `.github/`, `.cache/` (except the memory inbox), `registry/` (except the
+    lane's own spec), every `.claude/settings*`, writes through `bin/*` symlinks, and
+    `git -C <plane> checkout|reset|clean|apply`. Control-plane commands (`lane upgrade`, `init`,
+    `install`, `add`, `use`, `rules pull`, `secrets add|ignore`) are for the dispatcher session;
+    `lane-done|park|resume|with` act only on the lane you are in; `lane-ref <other lane> add|rm` is
+    refused; `lane-ref add` refuses `/`, the home directory, system and credential directories and
+    secret files.
+  - More `gh` writes: `api` with a body or a non-GET method (including lowercase/quoted `-X`,
+    `--method=PUT`, implicit POST), `pr merge|close`, `secret|variable set|delete`, `alias set`,
+    `extension install|exec`, `ssh-key|gpg-key add`, `release|issue|label|run|cache delete`,
+    `workflow disable`, `repo edit --visibility|--default-branch|--name`, `auth token`.
+  - More write verbs treated as writing every path they name: `perl -i`, `ruby -i`, `awk -i inplace`,
+    `patch`, `ed`, `ex`, `vi`/`vim`, `sponge`, `tar`, `unzip`, `zip`, `curl -o`, `wget -O`.
+
+  What is now **allowed** that was falsely denied: `gh repo edit --delete-branch-on-merge`;
+  text that merely mentions a secret's name (`echo`/`printf` output, a commit message with `-m`/`-am`,
+  `gh --body`/`--title`, a grep pattern, an `--exclude=`/`-g '!…'`/`find -name` pattern, a heredoc
+  body); `git rm --cached`, `git check-ignore` and `git ls-files`; `cp .env.example .env` into the
+  lane (only a source that is a template by name and by where it leads); `GIT_EDITOR=true git rebase
+  --continue`; `git lg` / `git co feature`; and a `.venv/bin/python` that points into a version
+  manager (the program being run is not followed through its links).
+
+  **Things that may surprise you.** A recursive `grep -r` (or `rg`, `tar`, `cp -r`, the Grep tool)
+  over a lane whose repo has a `.env` is now denied unless it excludes it: add
+  `--exclude='.env*'` (and `--exclude='*.pem' --exclude='id_*'`), `rg -g '!.env*'`, an `--include`, or
+  search a subfolder. The denial text says so, per tool. `rg` and `ag` skip hidden files by default,
+  so they trip only on `--hidden`/`-uu` or a non-hidden `server.pem`. A folder with more than
+  100,000 files is refused as too big to vouch for; `.git`, `node_modules` and virtualenvs are not
+  searched for secrets. A `cd` sequence is judged step by step, and a `cd` to a computed target, in a
+  loop or in a function is refused inside a lane. `git -c alias.x=push x origin main` and anything
+  setting `core.hooksPath` is denied outright. The guard now **fails closed** for `PreToolUse`: a
+  payload it cannot make sense of (non-string `command`, non-path `cwd`) or an unexpected exception
+  while judging a tool call is answered with a deny that says why, because a hook that crashes exits
+  non-zero without a decision and Claude Code then runs the tool. Every other event (`UserPromptSubmit`,
+  `PreCompact`, `SessionEnd`, `PostToolUse`, `Worktree*`) still fails open. Denials also read
+  better: writing a secret-named file now gets write wording instead of "never reads"; writing a lane's
+  `.env` symlink says it is a symlink into the read-only mirror and what to do (`rm` the link, copy the
+  template, ask the owner for values); `rm` of just that link is the suggested route.
+- **`ALLOW_DEFAULT_BRANCH_PUSH=1` is now documented as advisory, and works per statement.** It
+  records that the human agreed to a push to a protected branch; it never overrides a force-push, and
+  because Claude can type it as easily as a person can, it does not prove consent. A hard version
+  needs something the model cannot produce, for example exporting the variable in the environment
+  Claude Code is launched from. That is not implemented.
+- **What the guard still does not see** is listed in `scripts/hooks/README.md`: the contents of a script
+  run by name (`bash build.sh`, `source x`), a variable set elsewhere (`cat $f`), the output of
+  commands other than `echo`/`printf`/`cat`, interpreter code that builds a name by arbitrary
+  computation, what `git diff --cached` / `git log -p` print from history, and whether an `rg` run
+  is stopped by a `.gitignore`. Input it cannot read at all (`curl … | sh`, `bash -c "$(…)"`, nesting
+  past 4 levels, more than 8 programs in one command) is refused, not ignored.
+- **`lane done` counts "unpushed" against `origin/*`, not against the branch's upstream.** `lane start`
+  cuts a lane branch from `origin/<base>`, so its upstream is the base branch, and a plain
+  `git push origin <id>` (no `-u`) never changed that: `lane done` kept saying "unpushed commit(s)"
+  after a push, and counted base-branch commits as pushed work before one. The same definition now
+  drives `lane status`, `lane brief`, `lane resume`, `lane doctor`, the board, the status line and
+  SessionStart: commits on `HEAD` that no `origin/*` branch has. `lane start` also stops treating
+  `origin/<id>` as a lane's base after a `git push -u`.
+- **`lane done` rewrites, in detail.** `--pushed-to <remote>` checks against that remote's branches
+  instead of `origin` (for a fork); the refusal text suggests it. A repo with no `origin` is
+  local-only: it used to make `lane done` refuse (it required `@{u}`); now it is noted ("nothing to
+  push, the branch stays in repos/<repo>") and the lane finishes. A repo with no commits is noted
+  too; a detached `HEAD` carrying commits no remote has is refused with how to fix it. Refusals
+  name the exact `git push` to run. `lane done` also refuses while a worktree holds **ignored or
+  untracked secret-named files** that deleting the worktree would destroy, naming them, unless you
+  pass **`--discard-ignored`** (symlinks that `lane start` made into the mirror are skipped, since
+  deleting them loses nothing, and so is anything inside `node_modules`, `.venv`, `vendor`, `dist`,
+  `build`, `.git`, etc.). The previous behaviour deleted ignored files silently. For a parked lane,
+  untracked secrets that `lane park` deliberately left out are no longer reported as "dirty — commit it,
+  or lane park first" (a dead end: park will never commit them); they are named with what to do.
+  The board, `lane status` and SessionStart likewise stop counting them as dirty.
+- **`lane park` never commits a file whose name says secret.** It used `git add -A`, which committed
+  untracked `.env`-style files. It now stages by explicit literal path, leaves secret-named files on
+  disk, and says which: `left out of the commit (secret file names, still on disk): …`. The names
+  are `.env` and `.env.*`, `id_rsa`/`id_ed25519`/`id_ecdsa`/`id_dsa`, `.netrc`, `.npmrc`, `.pgpass`,
+  `.git-credentials`, `.htpasswd`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.p8`, `*.jks`, `*.keystore`,
+  `*.kdbx`, `*credentials*.json`, `service-account*.json` and `secrets.{json,yaml,yml,toml}`; templates
+  ending `.example`, `.sample`, `.template` or `.dist` are not secrets. A secret someone already
+  staged stops the park with nothing committed (`git reset -- <file>` and run it again), and renames
+  and copies are checked on both sides.
+- **Existing lanes keep the old hook matcher until `lane resume`.** The new `Glob|Grep` matcher and the
+  larger per-lane deny list are written into a lane's `.claude/settings.local.json` by `write_guard`;
+  lanes created earlier still have the old ones, so the Grep tool skips the guard there. `lane doctor`
+  now flags such a lane ("the PreToolUse matcher predates Glob/Grep") and so does its check of the
+  control plane's own `.claude/settings.json`; `lane resume <id>` rewrites it. The per-lane Claude Code
+  deny rules now cover the same secret names as the guard, not only `.env*`, `*.pem` and `*.key`.
+- **The pre-approved (no-prompt) `lane-*` list got shorter.** `lane-memory` and `lane-workspace` were
+  approved wholesale although `lane-memory file|rm|move` write and delete markdown and
+  `lane-workspace` rewrites the `.code-workspace` files. Now only `lane-memory list|show|audit`
+  stay pre-approved (in `.claude/settings.json` and in every lane's settings); the write verbs and
+  `lane-workspace` prompt. A refresh removes the old entries from existing lanes. As before, the list only
+  applies once the workspace has accepted Claude Code's trust dialog; an untrusted headless run ignores
+  it. (The dialog path itself was not exercised in the trials.)
+- **Dispatcher text.** SessionStart and `CLAUDE.md.template` told Claude `EnterWorktree
+  path=<plane>/lanes/<id>/<repo>`, which the guard denies (one way in: `name`); Claude recovered by
+  retrying, now it is told `EnterWorktree name="<lane-id>"` (no path, no repo; you land at the lane
+  root and reach each repo at `<repo>/…`). The same text now says to call lane scripts by **absolute
+  path** (it prints the scripts directory) because a relative `scripts/lane-brief` does not exist from
+  the lane root and exits 127.
+- **`lane sync` and `lane import` exit codes tell the truth.** `lane sync` exits 1 when `gh` is missing
+  or not logged in, when there are no repos, when any repo failed, and when nothing could be checked at
+  all (every repo local-only or not on GitHub); 0 only when at least one repo was read from GitHub and
+  none failed. `lane import --list` exits 1 when there are no conversations to show. Scripts that
+  chained on a 0 from these will now stop.
+- **`lane upgrade` after `lane init`.** `lane init` edits `.claude/settings.json` (and `.gitignore` and
+  `scripts/local/` on a `private: true` fork), which made `lane upgrade` refuse. Those are now allowed
+  to be dirty, and untracked files never block. If upstream also changes `.claude/settings.json`, it is
+  put back to `HEAD`, fast-forwarded, and your local top-level keys re-applied (a key changed on both
+  sides keeps upstream's value and says so). Any other dirty file that upstream also touches is
+  refused up front with a `git stash` / `lane upgrade` / `git stash pop` recipe, instead of a failed merge.
+- **Board hardening** (`lane board`, `scripts/board/README.md`):
+  - Every request, `GET /` and static files included, must carry a `Host` (and `Origin`, when sent)
+    of `127.0.0.1` or `localhost` on the server's own port, else 403. Before, `GET /` served the
+    token to any Host, so DNS rebinding could read it and drive the whole API. One token still
+    covers every registered plane. The token has never been printed at start; the docs that said it
+    was are corrected.
+  - Every git call runs with `--literal-pathspecs`; `/api/stage` and the diff endpoint accept only
+    exact changed files (or a directory holding changed files). `.`, globs, `..` and option-like
+    names are refused 400. `.` used to stage `.env`, and a file named `s*.json` used to leak
+    `secrets.json`'s diff through `/api/show`.
+  - Amend and commit refuse while a secret is staged; renames and copies are checked on **both**
+    sides (`git mv .env notes.txt` used to look harmless), including in a commit's file list.
+  - Secret names match case-insensitively (`.ENV`) and cover the guard's full list.
+  - Request bodies over 1 MiB get 413, a non-numeric `Content-Length` 400, a body that is not a JSON
+    object 400; lane ids and memory names outside `[A-Za-z0-9._-]+` are refused with 400; a stalled
+    client times out after 20 seconds. The refresh loop sets `GIT_OPTIONAL_LOCKS=0` so it no longer
+    makes your own `git add` fail with `index.lock exists`.
+  - The board's "ahead" uses the same origin-based count as `lane status`.
+- **`lane status` says it fetches.** It has always run `git fetch -q origin` in every repo under
+  `repos/`; its help line and header comment now say so.
+- **Smaller:** `lane <cmd> --help` prints only the usage comment directly under the shebang (some
+  commands used to print developer notes); `lane-env-keys` and `lane-env-check` as installed stubs now
+  map to the right dispatcher commands (`keys`, `env`) instead of failing; the "184 more cases" line in
+  `lane doctor` no longer states a count.
+
+### Fixed
+
+- **Path traversal in `lane-memory` (and the board's `/api/memory`).** `drop`, `file`, `move` and `rm`
+  built paths from an unvalidated slug, so `lane-memory drop ../../anything` deleted, and `file`/`move`
+  could move, any `.md` file you own, with no prompt because the command was pre-approved. Slugs, repo
+  names, lane ids and memory names must now match `[A-Za-z0-9._-]+` (not `.` or `..`, checked
+  byte-wise so a locale cannot let `é` through), and `lane-memory` refuses to write through a
+  symlinked memory folder. `lane brief ../x` used to read `registry/x.md`; invalid lane ids now just
+  report "no lane".
+- **`lane brief` on a finished lane** printed `sed` errors and dropped repos, findings and references
+  because it read the live lane file; it reads the archive throughout and says "worktree removed when
+  the lane finished".
+- **Bare `lane` before `lane init`** printed raw `sed:` / `fatal:` and exited 128; it now says "this
+  control plane is not set up yet" and exits 2 like the others.
+- **`lane rules pull` overwrote a same-named file in `scripts/local/`**, which is yours. It now keeps your file
+  and says so, unless an earlier pull put it there (tracked in `.cache/scripts-pulled`), in which
+  case it is still updated.
+- **macOS and Linux portability:** `lane add`'s candidate prompt used `mapfile` (absent on macOS bash
+  3.2); `lane ref add` used `md5` (absent on Linux; now a short SHA-1 via Python); `lane-env-keys`' `sed`
+  used `\+`, which BSD sed lacks. The Claude project-folder name is now computed as every
+  character other than letters, digits and `-` turned into `-`, as Claude Code does, so a path
+  with a `.` or a space (`/.boardshot`) finds its sessions; it used to map only `/` and `_`.
+- **SessionEnd no longer piles up duplicate log lines** in the lane file: a line identical to the last
+  one except for its timestamp is skipped, so read-only and denied runs stop filling the log.
+- `lane status` with no repos yet no longer iterates over a literal `repos/*/`.
+- **`lane init` filled the wrong placeholder in `CLAUDE.md`**, so `{{owner}}` stayed literal; it now fills it.
+- **`lane init` linked memory under the wrong Claude project folder** for a control plane whose path has a `.` or a space (it still mapped only `/` and `_`); it uses the same slug rule as everything else.
+- **`lane doctor -v` exited 0 when the guard suite failed**; it now exits with the suite's status.
+- **The board linked tickets to `lanes:`** when `tracker.url` was blank; a blank or missing URL now means plain-text keys, no link.
+- **`lane done --discard-ignored` with an untracked secret file** removed the folder by hand after `git worktree remove` refused, leaving a stale worktree record, and archived the lane. It now passes `--force` only when that flag was given and nothing but those files is in the way; if the worktree still cannot be removed (locked, in use) the lane is not archived and the command exits 1.
+- **The per-prompt STATE block's `uncommitted` count** included untracked secret-named files, which `lane status` leaves out; both use the same definition now.
+- **README and CONTRIBUTING.md** said `lane init` asks two questions (it asks up to five), and CONTRIBUTING.md still described a 184-case suite with `EXPECTED_CASES` and nine probes; both and the other stale counts in `docs/` now match the code.
+
+### Security
+
+- Closes the leak and destruction paths above: `lane-memory` path traversal; the board's staging,
+  amend and show-by-glob secret leaks; the board's missing Host/Origin check; `lane park` committing
+  untracked secrets; the guard bypasses listed under Changed (command substitution and reader flags,
+  `.example` symlink exemption, lane references skipping the secret check, push-refspec spellings,
+  unexpanded `$HOME`, `cd` variants, malformed input crashing the guard open, Glob/Grep outside the
+  matcher, control-plane self-protection gaps). Most of these were found by independent audits and
+  two live trials against Claude Code 2.1.299 in headless (`claude -p`) mode, the second with the
+  `haiku` model; each fix has a regression case.
+- **Limits that remain** (so this section is not read as a guarantee): the guard reads commands, it
+  does not run a shell, and the list of what it cannot see is in `scripts/hooks/README.md`. Stronger
+  models, interactive permission prompts, the trust dialog, live Claude Code sessions on Linux, Windows, the hook timeout and a
+  subagent calling Grep/Glob/WebFetch/MCP were not tested. A hook `allow` skips Claude Code's own
+  permission prompt, as observed in the trials. WebFetch, the Agent tool call itself and MCP tools
+  remain outside the matcher (a subagent's own Bash/Read/Edit/Write calls do reach the guard).
 
 ## [0.8.1] — 2026-09-22
 

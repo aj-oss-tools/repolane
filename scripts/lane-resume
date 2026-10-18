@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # lane-resume <id>: recreate missing worktrees, refresh guards, print the state.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 # A worktree folder deleted by hand leaves git still believing it exists, and every attempt
 # to recreate it fails. Clearing those stale registrations first is what makes resume a repair.
 prune_all(){ for r in "$REPOS"/*/; do [ -d "$r/.git" ] || [ -f "$r/.git" ] || continue
@@ -18,6 +19,6 @@ done < <(lane_repos "$id")
 lane_anchor "$id"
 lane_set_status "$id" active; write_lane_claude "$id"; refresh_guards
 echo "=== $(lane_file "$id")"; cat "$(lane_file "$id")"
-echo; while read -r repo branch; do d="$LANES/$id/$repo"; echo "--- $repo [$branch] $(git -C "$d" status --porcelain | wc -l | tr -d ' ') dirty, $(git -C "$d" log --oneline @{u}..HEAD 2>/dev/null | wc -l | tr -d ' ') unpushed"; git -C "$d" log --oneline -3; done < <(lane_repos "$id")
+echo; while read -r repo branch; do d="$LANES/$id/$repo"; echo "--- $repo [$branch] $(lane_dirty_count "$d") dirty, $(lane_unpushed_text "$d")"; git -C "$d" log --oneline -3; done < <(lane_repos "$id")
 "$AD/scripts/lane-workspace" >/dev/null
 echo; echo "next: cd $LANES/$id && claude"

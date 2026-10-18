@@ -107,7 +107,7 @@ reviewed with `lane secrets` (neither denied with `add` nor dismissed with `igno
 `scripts/local/<name>` shadowed by a built-in of the same name
 (it will never run); and — printed first, more prominently than the rest — whether a configured
 `lane rules pull` source has moved since it was last pinned. `lane doctor -v` adds every wiring
-location and runs the full 184-case suite against a throwaway control plane it builds and deletes.
+location and runs the full guard suite against a throwaway control plane it builds and deletes.
 Any failure exits non-zero — none of the advisories above do, only a genuinely broken rule or
 guard does.
 

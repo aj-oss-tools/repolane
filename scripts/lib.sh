@@ -27,11 +27,24 @@ repo_default(){
   echo "$b"
 }
 repo_exists(){ [ -d "$REPOS/$1/.git" ] || die "unknown repo '$1' (see registry/repos.yaml)"; }
-# Claude Code keeps per-project data under ~/.claude/projects/<path with / and _ turned into ->.
-# Every script that needs to find or write that folder for some absolute path uses this, so the
-# slugging rule only lives in one place.
-claude_project_dir(){ printf '%s' "$1" | sed 's#[/_]#-#g'; }
-lane_file(){ echo "$LANES_DIR/$1.md"; }
+# Claude Code keeps per-project data under ~/.claude/projects/<the absolute path with every character
+# that is not a letter, digit or dash turned into ->  (so "/.boardshot" is "--boardshot", and spaces and
+# "_" go the same way; checked against the real folder names there). Every script that needs that folder
+# uses this, so the slugging rule only lives in one place. scripts/gitstate.sh redefines it identically
+# for the scripts that source that file instead.
+claude_project_dir(){ printf '%s' "$1" | LC_ALL=C sed 's#[^A-Za-z0-9-]#-#g'; }
+# lane_valid_id <id> : a lane id is a file name ([A-Za-z0-9._-]+, not "." or ".."), never a path.
+# Byte-wise (LC_ALL=C) so it agrees with the board for non-ASCII input; the @ sentinel keeps
+# $(...) from eating a trailing newline.
+lane_valid_id(){
+  case "$1" in ''|.|..) return 1 ;; esac
+  [ "$(printf '%s@' "$1" | LC_ALL=C tr -d 'A-Za-z0-9._-')" = @ ]
+}
+
+# lane_file: an unchecked id would build "$LANES_DIR/$1.md" from whatever it is given, so
+# `lane brief ../x` read registry/x.md. An invalid id maps to a path that cannot exist, which every
+# caller already reports as "no lane".
+lane_file(){ if lane_valid_id "$1"; then echo "$LANES_DIR/$1.md"; else echo "$LANES_DIR/.invalid-lane-id"; fi; }
 # yaml-ish frontmatter reader: value of "key:" in the lane file
 lane_get(){ sed -n '/^---$/,/^---$/p' "$(lane_file "$1")" | sed -n "s/^$2: *//p" | head -1; }
 # list "repo branch" pairs from the lane frontmatter
@@ -52,7 +65,9 @@ write_guard(){ # $1 = dir to write .claude/settings.local.json in, $2 = this lan
 import json,os,sys
 d,id_,mem,ad=sys.argv[1:]
 deny=[f"Read({ad}/repos/**)",f"Edit({ad}/repos/**)"]  # Edit covers Write/MultiEdit; Write() rules are ignored
-for pat in ("**/.env","**/.env.local","**/.env.*.local","**/.env.development","**/.env.production","**/.env.staging","**/.env.test","**/*.pem","**/*.key"):
+for pat in ("**/.env","**/.env.local","**/.env.*.local","**/.env.development","**/.env.production","**/.env.staging","**/.env.test","**/*.pem","**/*.key",
+            "**/*.p12","**/*.pfx","**/*.p8","**/*.jks","**/*.keystore","**/*.kdbx","**/id_rsa","**/id_ed25519","**/id_ecdsa","**/id_dsa",
+            "**/.netrc","**/.npmrc","**/.pgpass","**/.git-credentials","**/.htpasswd","**/service-account*.json"):   # the same names guard.py's SECRET_FILE knows
     deny+=[f"Read({pat})",f"Edit({pat})"]
 for o in sorted(os.listdir(f"{ad}/lanes")):
     if o!=id_ and os.path.isdir(f"{ad}/lanes/{o}"):
@@ -62,13 +77,17 @@ cur=json.load(open(p)) if os.path.exists(p) else {}
 perm=cur.setdefault("permissions",{})
 keep=[x for x in perm.get("deny",[]) if f"{ad}/repos/" not in x and f"{ad}/lanes/" not in x]
 seen=set(); perm["deny"]=[x for x in keep+deny if not (x in seen or seen.add(x))]   # order kept, never repeated
-READONLY_LANE=["lane-merge-plan","lane-status","lane-brief","lane-find","lane-menu","lane-sessions","lane-env-check","lane-env-keys","lane-memory","lane-workspace"]
-perm["allow"]=sorted(set(perm.get("allow",[]))|{f"Bash({c}:*)" for c in READONLY_LANE})
+# Pre-approved means "runs without asking", so it is only for commands that read. lane-memory (file/rm/move write and delete
+# markdown) and lane-workspace (rewrites the .code-workspace files) are NOT here; the read-only lane-memory verbs are.
+READONLY_LANE=["lane-merge-plan","lane-status","lane-brief","lane-find","lane-menu","lane-sessions","lane-env-check","lane-env-keys",
+               "lane-memory list","lane-memory show","lane-memory audit"]
+RETIRED=("Bash(lane-memory:*)","Bash(lane-workspace:*)")   # earlier versions approved these; a refresh has to take that back
+perm["allow"]=sorted({x for x in perm.get("allow",[]) if x not in RETIRED}|{f"Bash({c}:*)" for c in READONLY_LANE})
 cur["autoMemoryDirectory"]=mem
 g=f"{ad}/scripts/hooks/guard.py"
 hk=lambda m=None,to=30:[{**({"matcher":m} if m else {}),"hooks":[{"type":"command","command":g,"timeout":to}]}]
 cur["hooks"]={"SessionStart":[{"matcher":"startup|resume|clear|compact|fork","hooks":[{"type":"command","command":f"{ad}/scripts/session-start --worktree","timeout":60}]}],
-  "PreToolUse":hk("Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree"),"PostToolUse":hk("Edit|Write|MultiEdit|NotebookEdit"),
+  "PreToolUse":hk("Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree|Glob|Grep"),"PostToolUse":hk("Edit|Write|MultiEdit|NotebookEdit"),
   "WorktreeCreate":hk(None,120),"WorktreeRemove":hk(),
   "UserPromptSubmit":hk(),"PreCompact":hk(),"SessionEnd":hk()}
 json.dump(cur,open(p,"w"),indent=2)

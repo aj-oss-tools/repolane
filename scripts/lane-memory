@@ -20,11 +20,23 @@
 #   repo   true in one repo, still true after this ticket ships
 #   lane     only matters while this lane is live (archived with it)
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 INBOX="$AD/.cache/memory-inbox"; mkdir -p "$INBOX"
 cmd="${1:-list}"; slug="${2:-}"
+# Every name that reaches a path below (slug, repo, lane id, memory name) goes through this first.
+# A slash or `..` in one of them walked out of the memory folders and let drop/file/rm delete or
+# move any .md file the user owns.
+valid_name(){ # $1 = what it is called in the error, $2 = the value
+  # byte-wise (lane_valid_id uses LC_ALL=C): a bash [A-Za-z] range follows the locale's collation, so
+  # "é" passed here in some locales while the board refused it
+  lane_valid_id "$2" || die "invalid $1 '$2' — use letters, digits, '.', '_' and '-' only"
+}
+case "$cmd" in
+  draft|show|drop) [ -n "$slug" ] || die "usage: lane-memory $cmd <slug>"; valid_name slug "$slug" ;;
+  file) [ -n "$slug" ] || die "usage: lane-memory file <slug> repo <repo> | cross | pref | lane [<id>]"; valid_name slug "$slug" ;;
+esac
 case "$cmd" in
   draft)
-    [ -n "$slug" ] || die "usage: lane-memory draft <slug>"
     echo "$INBOX/$slug.md"
     [ -f "$INBOX/$slug.md" ] || cat > "$INBOX/$slug.md" <<EOT
 ---
@@ -47,6 +59,8 @@ EOT
   drop) rm -f "$INBOX/$slug.md" && echo "dropped $slug";;
   file)
     scope="${3:-}"; repo="${4:-}"; src="$INBOX/$slug.md"
+    # `lane` may omit the id (taken from the current directory), `repo` may not
+    if [ "$scope" = repo ] || { [ "$scope" = lane ] && [ -n "$repo" ]; }; then valid_name "$scope name" "$repo"; fi
     [ -f "$src" ] || die "no draft '$slug' — create it with: lane-memory draft $slug"
     case "$scope" in
       repo) [ -d "$REPOS/$repo" ] || die "unknown repo '$repo'"; dst="$AD/memory/$repo/$slug.md"; idx="$AD/memory/$repo/MEMORY.md";;
@@ -84,6 +98,7 @@ print("appended to knowledge/preferences.md")
 PY
       rm -f "$src"; exit 0
     fi
+    [ ! -L "$(dirname "$dst")" ] || die "$(dirname "$dst") is a symlink — refusing to write through it"
     mkdir -p "$(dirname "$dst")"; mv "$src" "$dst"
     python3 - "$dst" "$idx" <<'PY'
 import sys,os,re
@@ -101,6 +116,7 @@ PY
     ;;
   move|rm)
     name="${2:-}"; [ -n "$name" ] || die "usage: lane-memory move <name> repo <repo>|cross   /   lane-memory rm <name> [repo <repo>]"
+    valid_name "memory name" "${name%.md}"; [ -z "${4:-}" ] || valid_name "repo" "${4:-}"
     python3 - "$AD" "$cmd" "$name" "${3:-}" "${4:-}" <<'PY'
 import sys,os,re,glob
 ad,cmd,name,scope,repo=sys.argv[1:]
@@ -127,6 +143,7 @@ if cmd=="rm":
     deindex(src); os.remove(src); print("deleted",os.path.relpath(src,ad))
 else:
     if scope=="cross": dst=f"{ad}/memory/{os.path.basename(src)}"
+    elif scope=="repo" and repo and os.path.islink(f"{ad}/memory/{repo}"): sys.exit(f"memory/{repo} is a symlink - refusing to write through it")
     elif scope=="repo" and repo: os.makedirs(f"{ad}/memory/{repo}",exist_ok=True); dst=f"{ad}/memory/{repo}/{os.path.basename(src)}"
     else: sys.exit("usage: lane-memory move <name> repo <repo> | cross")
     if os.path.realpath(dst)==os.path.realpath(src): sys.exit("already there")

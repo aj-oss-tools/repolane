@@ -12,6 +12,7 @@ fi
 # context for Claude: the board, the dispatcher procedure, and — for resumed conversations — which repo
 # the conversation belongs to and the exact choices to offer the owner before anything else.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 input=""; [ -t 0 ] || input=$(cat)
 printf '%s' "$input" > "$AD/.cache/last-session-start.json" 2>/dev/null || true
 read -r source sid scwd <<<"$(printf '%s' "$input" | python3 -c 'import json,sys
@@ -24,7 +25,7 @@ print(d.get("source","startup"), d.get("session_id","-"), d.get("cwd","-"))' 2>/
 repo=""
 if [ "$sid" != "-" ]; then
   # the project folder is named after THIS folder's path, so compute it rather than assume it
-  slug=$(printf '%s' "$AD" | sed 's#[/_]#-#g')
+  slug=$(claude_project_dir "$AD")
   f=$(ls "$HOME"/.claude/projects/"$slug"-repos-*/"$sid".jsonl 2>/dev/null | head -1 || true)
   [ -n "$f" ] && { repo=${f#*"$slug"-repos-}; repo=${repo%%/*}; }
 fi
@@ -40,7 +41,7 @@ if [ -n "${LANE_SCREEN:-}" ]; then
     for f in "$LANES_DIR"/*.md; do [ -f "$f" ] || continue; id=$(basename "$f" .md); st=$(lane_get "$id" status)
       line="  $id  [$st]"
       while read -r r branch; do d="$LANES/$id/$r"
-        if [ -d "$d" ]; then line="$line  $r ↑$(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null || echo '?') ✎$(git -C "$d" status --porcelain | wc -l | tr -d ' ')"; else line="$line  $r (no worktree)"; fi
+        if [ -d "$d" ]; then line="$line  $r ↑$(lane_unpushed "$d") ✎$(lane_dirty_count "$d")"; else line="$line  $r (no worktree)"; fi
       done < <(lane_repos "$id")
       echo "$line"
     done
@@ -68,12 +69,12 @@ PY
   wts=$(ls -d "$LANES"/*/"$repo" 2>/dev/null | sed "s|$LANES/||; s|/$repo||" || true)
   if [ -n "$cur" ]; then
     if [ -d "$LANES/$cur/$repo" ]; then echo "You are already inside lane '$cur', which has this repo. Re-anchor every path to $LANES/$cur/$repo and continue."
-    else echo "WARNING: you are inside lane '$cur' but it has no worktree for '$repo'. Offer: scripts/lane-with $cur $repo, or switch lane."; fi
+    else echo "WARNING: you are inside lane '$cur' but it has no worktree for '$repo'. Offer: $AD/scripts/lane-with $cur $repo, or switch lane."; fi
   else
     echo
     echo "YOUR FIRST MESSAGE, before answering anything else, must say which repo this is and offer these choices:"
-    if [ -n "$wts" ]; then for w in $wts; do echo "  - continue in existing lane '$w' → EnterWorktree path=$LANES/$w/$repo  (status: $(lane_get "$w" status); note: $(sed -n '/^## Resume note/,/^## /{/^## Resume note/d;/^## /d;p;}' "$(lane_file "$w")" | grep -v '^$' | head -1 | cut -c1-120))"; done; fi
-    echo "  - start a NEW lane for it → ask for a short id (ticket key or slug), then EnterWorktree name=<id>/$repo, then write its Goal from this conversation"
+    if [ -n "$wts" ]; then for w in $wts; do echo "  - continue in existing lane '$w' → EnterWorktree name=\"$w\"  (status: $(lane_get "$w" status); note: $(sed -n '/^## Resume note/,/^## /{/^## Resume note/d;/^## /d;p;}' "$(lane_file "$w")" | grep -v '^$' | head -1 | cut -c1-120))"; done; fi
+    echo "  - start a NEW lane for it → ask for a short id (ticket key or slug), then EnterWorktree name=\"<id>\", then write its Goal from this conversation"
     echo "  - read-only: just answer questions, no worktree"
     echo "Recommend one and WAIT for their answer. Even if their message is a concrete request, do not enter or create a worktree until they have chosen."
   fi
@@ -86,7 +87,8 @@ if [ "${1:-}" = "--worktree" ] || [ -n "$cur" ]; then
     echo "## lane — session in lane '$id' ($(basename "$scwd"))"; echo
     cat "$(lane_file "$id")"; echo
     echo "Read memory/<repo>/MEMORY.md for each repo above, then brief $OWNER in five lines and continue the work."
-    echo "Scope: only lanes/$id/. Park with scripts/lane-park $id \"<note>\" before they switch away."
+    echo "Scope: only lanes/$id/. Park with $AD/scripts/lane-park $id \"<note>\" before they switch away."
+    echo "Lane scripts: call them by ABSOLUTE path, $AD/scripts/<name> (e.g. $AD/scripts/lane-brief $id). You are in the lane, so a relative scripts/<name> does not exist here and exits 127."
   fi
   exit 0
 fi
@@ -97,7 +99,7 @@ for f in "$LANES_DIR"/*.md; do [ -f "$f" ] || continue; id=$(basename "$f" .md)
   st=$(lane_get "$id" status); up=$(lane_get "$id" updated)
   line="- **$id** [$st, updated $up]"
   while read -r r branch; do d="$LANES/$id/$r"
-    if [ -d "$d" ]; then line="$line · $r/$branch ($(git -C "$d" status --porcelain | wc -l | tr -d ' ') dirty, $(git -C "$d" log --oneline '@{u}..HEAD' 2>/dev/null | wc -l | tr -d ' ') unpushed)"
+    if [ -d "$d" ]; then line="$line · $r/$branch ($(lane_dirty_count "$d") dirty, $(lane_unpushed_text "$d"))"
     else line="$line · $r/$branch (no worktree yet)"; fi
   done < <(lane_repos "$id")
   echo "$line"
@@ -107,6 +109,9 @@ done
 echo
 echo "Repos: $(ls "$REPOS" | tr '\n' ' ')"
 echo
+echo "Scripts dir (absolute): $AD/scripts"
+echo "After EnterWorktree the session sits in the lane, not here: call every lane script by absolute path, $AD/scripts/<name>"
+echo "(e.g. $AD/scripts/lane-brief <id>). A relative scripts/<name> exits 127 from the lane root. The scripts/<name> paths below are relative to the control plane: prefix them with the absolute dir above."
 cat <<'TXT'
 Dispatcher instructions (details in CLAUDE.md "Dispatcher mode"):
 - Discuss before deciding: propose ids, repos, branches, deletions, global-config changes and design choices in one
@@ -114,7 +119,9 @@ Dispatcher instructions (details in CLAUDE.md "Dispatcher mode"):
 - Be a visible operator: every time you run a lane-* script, enter or leave a worktree, or change a lane file,
   say so in one line. Never do these silently.
 - Fresh session: list the active lanes above, one line each, and ask which one or what new work to start.
-- Resume: scripts/lane-resume <id>, then EnterWorktree path=<AD>/lanes/<id>/<repo>.  New: EnterWorktree name="<id>/<repo>".
+- Resume: scripts/lane-resume <id>, then EnterWorktree name="<lane-id>". New: scripts/lane-start <id> <repo>…, then
+  EnterWorktree name="<lane-id>". A name is the only way in (no path, no repo); you land at the lane root and
+  reach each repo at <repo>/… .
 - Add repo to lane: scripts/lane-with. New repo under management: scripts/lane-add. Old chats: scripts/sessions <repo>,
   then hand over `claude --resume <session-id>` (any folder); they cannot be switched into mid-session.
 - Leave: scripts/lane-park <id> "<note>" then ExitWorktree keep.

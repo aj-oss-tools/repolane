@@ -3,5 +3,6 @@
 # implements `lane with`. Not to be confused with lane-add, which implements `lane add` (bring a
 # new repo under management) — see scripts/README.md's naming note if these get mixed up again.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 [ -f "$(lane_file "${1:-}")" ] || die "no lane '${1:-}' — use lane-start for a new one"
 exec "$AD/scripts/lane-start" --add "$@"

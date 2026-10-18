@@ -88,7 +88,7 @@ is a folder of scripts. Tested on macOS and Linux; on Windows use WSL.
 ```sh
 git clone https://github.com/aj-oss-tools/repolane.git && cd repolane
 ./lane install        # puts `lane` and the long-form commands on your PATH
-lane init             # asks two questions, sets the machine up
+lane init             # asks up to five questions, sets the machine up
 lane add <git-url>    # or: lane add ~/path/to/a/checkout/you/already/have
 ```
 
@@ -176,9 +176,9 @@ It also *adds* context rather than only removing options: the first time a sessi
 it injects that repo's own `CLAUDE.md` and rules list, and the first prompt in a lane carries the
 memory index for every repo in scope.
 
-`lane doctor` compiles it and fires nine named probes at it — eight that must be refused and one
+`lane doctor` compiles it and fires eleven named probes at it — ten that must be refused and one
 ordinary command that must not — so you find out when the rules stop being enforced. Behind that
-there is a 184-case suite in `scripts/hooks/test-guard.sh`, which `lane doctor -v` runs.
+there is a suite of well over 1,800 cases in `scripts/hooks/test-guard.sh`, which `lane doctor -v` runs.
 
 ### 3. The board
 
@@ -312,6 +312,14 @@ throwaway control plane, so it runs anywhere and never touches your lanes) and a
 whatever you changed. A rule with no test is a rule that will quietly stop working.
 
 Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Use with care
+
+Claude and other AI models can make mistakes: they can edit the wrong file, run the wrong command or
+misread a rule. Repolane's hooks reduce that risk but cannot remove it, and they are a guardrail, not a
+sandbox. Review what Claude changes, push only what you have read, and keep credentials you cannot
+afford to lose out of reach. You are responsible for what runs on your machine and in your
+repositories. Repolane is provided "as is", without warranty, under the Apache License 2.0.
 
 ## License
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # sessions <repo|lane-id> [n]  — list resumable Claude conversations for a repo (newest first)
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 key="${1:-}"; n="${2:-10}"; [ -n "$key" ] || die "usage: sessions <repo|lane-id> [n]"
 
 # A lane id resolves to exactly one worktree — no union needed, current behaviour unchanged.

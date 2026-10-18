@@ -24,23 +24,32 @@ an argument for itself before it needs code.**
 
 So: bash and stdlib Python only. Nothing compiled, nothing fetched at runtime.
 
-## Run the guard's test suite
+## Run the tests
+
+Three suites, all stdlib-only, and each builds its own throwaway control plane under a temporary
+`HOME` with local bare repos as remotes, so none of them reads or writes your real lanes, mirrors,
+memory or `~/.claude`, and none needs the network. Safe on a fresh clone or on a machine with years
+of work in it.
 
 ```sh
-bash scripts/hooks/test-guard.sh
+bash scripts/hooks/test-guard.sh          # the guard: well over 1,800 cases, ending in ALL PASS
+bash tests/run-all.sh                     # the lane commands: every tests/t_*.sh in its own sandbox
+python3 -W ignore scripts/board/test_board.py   # the board server's regression tests
 ```
 
-It builds its own throwaway control plane in a temp directory under `$HOME` and runs every case
-against a copy of `guard.py` placed inside it. It never reads or writes your real lanes, mirrors
-or memory, so it is safe to run anywhere — on a fresh clone or on a machine with years of work
-in it. It prints `184/184 cases passed` and `ALL PASS`, and exits non-zero on any mismatch.
+Each exits non-zero on any failure. There is no hard-coded case count to bump: the guard suite
+fails if the number it passed differs from the number it ran, so a case that silently never
+asserted cannot hide, and adding a case needs no bookkeeping. For a change to a `lane` command, add
+a case to the matching `tests/t_*.sh` (they share `tests/lib.sh`); for the board, to
+`scripts/board/test_board.py`.
 
-The suite also fails if it asserts *fewer* cases than it expects: `EXPECTED_CASES` at the top of
-the file is checked against the number actually run, because a safety suite that exits 0 without
-having asserted anything is worse than no suite at all. If you add cases, bump that number in the
-same commit.
+CI runs these on every push and pull request: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
+runs `tests/run-all.sh`, the guard suite and the board smoke test (`scripts/board/smoke.sh`) on Linux
+and on macOS's bash 3.2, and [`.github/workflows/test.yml`](.github/workflows/test.yml) runs the guard
+suite alone on pull requests into `main` and `release`.
 
-`lane doctor` runs nine named probes against the guard; `lane doctor -v` runs this whole suite.
+`lane doctor` runs eleven named probes against the guard; `lane doctor -v` runs the whole guard suite
+and exits non-zero if it fails.
 
 ## If you touch `scripts/hooks/guard.py`
 
@@ -89,7 +98,7 @@ folder's README should still be true afterwards. User-visible changes belong in
    numbers. Full picture: [`docs/releasing.md`](docs/releasing.md).
 3. Make the change. Match the surrounding style: `set -u`, explicit error paths, comments that
    explain *why* rather than restating the line below them.
-4. Run `bash scripts/hooks/test-guard.sh`, and `lane doctor` if you have the clone set up.
+4. Run the suites above (at least the one for what you touched), and `lane doctor` if you have the clone set up.
 5. Open the pull request against `release`. Say what changed and why, and whether the suite still
    passes. If the change is user-visible, add an entry under `## [Unreleased]` in
    [`CHANGELOG.md`](CHANGELOG.md) — merging into `release` is what makes that section non-empty,
