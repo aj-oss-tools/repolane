@@ -54,7 +54,8 @@ It is loaded into every session started anywhere below it.
    `lane-memory draft <slug>`, write the draft, ask {{owner}} which scope with a recommendation, then
    `lane-memory file <slug> lane|repo <repo>|cross|pref`. Editing a memory that already exists is allowed from a
    dispatcher session at the root (its scope is settled); creating one never is. Same for the control plane (scripts, CLAUDE.md, registry,
-   .claude): propose it, and change it from a dispatcher session, never from inside a lane.
+   .claude): propose it, and change it from a dispatcher session, never from inside a lane. The one exception is your own
+   lane file, `registry/lanes/<id>.md` (Goal, Findings, log): edit that one directly. Nothing else under `registry/` is yours.
 13. One checkout exists for you: the worktree you are in. Report git state only in the STATE form that arrives
    with each prompt (where you are, branch, ahead/behind origin, uncommitted). Never mention `repos/` or the old
    checkouts; they are frozen and the hook blocks them. In a resumed conversation, translate old paths silently.

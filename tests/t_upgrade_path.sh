@@ -37,7 +37,7 @@ CAND="$T/cand"
 git clone -q --no-hardlinks "$PRODUCT" "$CAND" 2>/dev/null
 git -C "$CAND" checkout -q --detach "$base_sha"
 git -C "$CAND" rm -rq --ignore-unmatch . 2>/dev/null
-(cd "$PRODUCT" && git ls-files -z --cached --others --exclude-standard | tar -cf - --null -T - 2>/dev/null) | (cd "$CAND" && tar -xf - 2>/dev/null)
+copy_product_tree "$CAND"
 git -C "$CAND" add -A && git -C "$CAND" commit -q --allow-empty -m "candidate"
 cand_version=$(cat "$CAND/VERSION")
 cand_matcher=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["matcher"])' "$CAND/.claude/settings.json")
