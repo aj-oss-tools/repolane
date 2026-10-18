@@ -70,8 +70,9 @@ rm "$PLANE/memory/api"
 
 echo "-- R6: lane-env-keys on BSD and GNU sed"
 printf 'A=1\nexport B=2\n  export   C=3\nexportD=4\n# E=5\nexport\tF=6\n' > "$T/envfile"
-keys=$("$PLANE/scripts/lane-env-keys" "$T/envfile" | tail -n +2 | tr -d ' ' | tr '\n' ',')
-assert_eq "export-prefixed and plain names are all listed" "A,B,C,exportD,F," "$keys"
+# sort in the C locale so the expectation does not depend on the platform's collation
+keys=$("$PLANE/scripts/lane-env-keys" "$T/envfile" | tail -n +2 | tr -d ' ' | LC_ALL=C sort | tr '\n' ',')
+assert_eq "export-prefixed and plain names are all listed" "A,B,C,F,exportD," "$keys"
 assert_not_contains "no values leak" "$("$PLANE/scripts/lane-env-keys" "$T/envfile")" "=1"
 assert_eq "no BRE GNU-isms (backslash plus, question, pipe) in shell scripts' sed/grep" "" "$(cd "$PRODUCT" && grep -nE '(sed|grep)[^|]*\\[+?|]' scripts/lane-* scripts/status-all scripts/statusline.sh scripts/session-start scripts/sessions scripts/gitstate.sh 2>/dev/null | grep -v "s/|/")"
 
