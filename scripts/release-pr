@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# release-pr [--dry-run]  — used by .github/workflows/release-plan.yml after every push to release.
+# Opens (or updates) the pull request release -> main whenever release has commits main does not, so a change
+# with no changelog entry (docs, CI, tests) still reaches main through a PR that waits for the checks instead of
+# waiting for someone to open it by hand. If VERSION on release differs from main's it is the release PR ("Release
+# vX.Y.Z": merging it tags the version); otherwise it is a sync PR (nothing to tag, no new version). The kind comes
+# from the files, not from what the current run planned: a docs-only push to release while the release PR is open
+# plans nothing, and must not turn that PR into a sync PR.
+# Merge commits do not count: after main's own merge commit is brought back into release (scripts/release-sync)
+# there is nothing new to ship. Needs GH_TOKEN (RELEASE_PR_TOKEN): the default token cannot open a PR here.
+set -euo pipefail
+GH="${GH:-gh}"; dry=0
+for a in "$@"; do
+  case "$a" in --dry-run) dry=1 ;; *) echo "usage: release-pr [--dry-run]" >&2; exit 2 ;; esac
+done
+
+git fetch -q origin main 2>/dev/null || true
+ahead=$(git rev-list --no-merges --count "origin/main..release") || { echo "release-pr: cannot compare release with origin/main" >&2; exit 1; }
+if [ "$ahead" = 0 ]; then
+  echo "release-pr: release has nothing main lacks — no pull request needed"; exit 0
+fi
+
+version=""
+rel_v=$(git show release:VERSION 2>/dev/null | tr -d '[:space:]'); main_v=$(git show origin/main:VERSION 2>/dev/null | tr -d '[:space:]')
+[ -n "$rel_v" ] && [ "$rel_v" != "$main_v" ] && version="$rel_v"
+commits=$(git log --no-merges --format='- %s' -n 30 "origin/main..release")
+if [ -n "$version" ]; then
+  title="Release v$version"
+  body="Auto-generated from \`## [Unreleased]\` in CHANGELOG.md. Merging this tags v$version and triggers the site's changelog rebuild. Merge it with a plain merge commit, never squash or rebase.
+
+$commits"
+else
+  title="Sync release into main"
+  body="release has $ahead commit(s) main does not, and \`## [Unreleased]\` is empty, so there is no new version: merging this tags nothing. It is opened automatically so the checks run before the change reaches main. Merge it with a plain merge commit, never squash or rebase.
+
+$commits"
+fi
+
+if [ "$dry" = 1 ]; then printf 'TITLE: %s\n\n%s\n' "$title" "$body"; exit 0; fi
+if [ -z "${GH_TOKEN:-}" ]; then
+  echo "release-pr: RELEASE_PR_TOKEN is not set (see release-plan.yml) — skipping the PR, not failing the build."; exit 0
+fi
+existing="$($GH pr list --base main --head release --state open --json number -q '.[0].number')"
+if [ -n "$existing" ]; then
+  $GH pr edit "$existing" --title "$title" --body "$body"
+else
+  $GH pr create --base main --head release --title "$title" --body "$body"
+fi

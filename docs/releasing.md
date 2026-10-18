@@ -87,13 +87,31 @@ in mind, not just a summary of the diff — something a PR description alone usu
 as precisely. Writing the entry is the one place in this whole pipeline where a human judgment
 call is genuinely load-bearing, so it stays manual on purpose.
 
+## Every change reaches main through a PR, and release never falls behind main
+
+Two small workflows keep the branches in step, each backed by a script with its own tests
+(`tests/t_releasepr.sh`, `tests/t_releasesync.sh`):
+
+- **`release-plan.yml` ends with `scripts/release-pr`.** Whenever `release` has non-merge commits that `main`
+  lacks, it opens (or updates) the pull request `release` → `main`. If `VERSION` on `release` is ahead of `main`'s the title is
+  **"Release vX.Y.Z"** and merging it tags the version. If it is not (docs, CI, tests: nothing was planned) the
+  title is **"Sync release into main"** and merging it tags nothing, bumps nothing and does not rebuild the site's
+  changelog. Either way the checks run on the PR before anything reaches `main`. Merge commits do not count, so there is
+  never an empty PR.
+- **`sync-release.yml` runs `scripts/release-sync` after every push to `main`.** Merging the release PR with a merge
+  commit leaves that commit on `main` only; this brings it back into `release` (a fast-forward when `release` has not
+  moved, a merge commit when it has) so `release` is never behind `main`. A conflict fails the job with the files named;
+  nothing is forced or resolved automatically. Both workflows share one concurrency group, so they never push to
+  `release` at the same time.
+
+Both need the PR to be merged with a **plain merge commit** (never squash or rebase), as above: a squash gives the
+change a new SHA on `main`, and `release` would then look ahead of `main` for good.
+
 ## If something in the pipeline itself breaks
 
 The pipeline has needed a couple of fixes to itself along the way (a token permission the
 default `GITHUB_TOKEN` doesn't have because the org blocks Actions from opening PRs — see
 `RELEASE_PR_TOKEN` in `.github/workflows/release-plan.yml`'s comments; a missing git identity
-before tagging in `tag-release.yml`). A fix to the pipeline's own workflow files is not usually
-"user-visible" in the `CHANGELOG.md` sense, so it has no changelog entry and `release-plan.yml`
-won't open a PR for it on its own — a maintainer currently has to open that PR by hand
-(`gh pr create --base main --head release`). This is a known gap, not a bug you need to work
-around in a normal contribution.
+before tagging in `tag-release.yml`). A fix to the pipeline's own workflow files is not user-visible in the `CHANGELOG.md` sense, so it has no
+changelog entry and no version: `release-plan.yml` then opens a **"Sync release into main"** PR instead of a
+release PR (see below), so it still reaches `main` through the checks.

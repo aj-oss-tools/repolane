@@ -7,8 +7,9 @@ name: Plan a release from the release branch
 # into `main` that IS the actual release action — merging it is what tags the version and
 # triggers notify-site.yml.
 #
-# If ## [Unreleased] is empty (nothing new since the last release), this is a no-op: no
-# commit, no PR. Safe to merge several feature branches into `release` before triggering one.
+# If ## [Unreleased] is empty (nothing new since the last release) there is no version bump and no commit,
+# but if release still has commits main lacks (docs, CI, tests), a "Sync release into main" PR is opened so
+# they reach main through the checks. Safe to merge several feature branches into `release` before triggering one.
 
 on:
   push:
@@ -17,6 +18,11 @@ on:
 permissions:
   contents: write
   pull-requests: write
+
+# release-plan and sync-release both push to release: one at a time.
+concurrency:
+  group: release-branch
+  cancel-in-progress: false
 
 jobs:
   plan:
@@ -56,7 +62,9 @@ jobs:
           git push origin release
 
       - name: Open (or update) the PR into main
-        if: steps.plan.outputs.should_release == 'true'
+        # Whenever release has commits main does not: the release PR when VERSION on release is ahead of main's, a sync PR
+        # otherwise (docs, CI, tests: nothing user-visible, no version), so every change reaches main through a
+        # PR that waits for the checks. See scripts/release-pr.
         env:
           # The default GITHUB_TOKEN can't open a PR when the org has "Allow GitHub Actions to
           # create pull requests" turned off (aj-oss-tools does) -- that's an org-wide policy no
@@ -64,16 +72,4 @@ jobs:
           # just this repo (Pull requests: write, Contents: read), the same workaround
           # notify-site.yml already uses for its own cross-permission problem.
           GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "RELEASE_PR_TOKEN is not set -- see the comment above this step. Skipping the PR, not failing the build."
-            exit 0
-          fi
-          v="${{ steps.plan.outputs.version }}"
-          body="Auto-generated from \`## [Unreleased]\` in CHANGELOG.md. Merging this tags v$v and triggers the site's changelog rebuild."
-          existing="$(gh pr list --base main --head release --state open --json number -q '.[0].number')"
-          if [ -n "$existing" ]; then
-            gh pr edit "$existing" --title "Release v$v" --body "$body"
-          else
-            gh pr create --base main --head release --title "Release v$v" --body "$body"
-          fi
+        run: bash scripts/release-pr

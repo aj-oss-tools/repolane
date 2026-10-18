@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# release-sync  — used by .github/workflows/sync-release.yml after every push to main: bring main into release so
+# release is never behind it. Merging release into main with a merge commit leaves that commit on main only; without
+# this, release would fall one commit behind on every release. When release has not moved since, this is a
+# fast-forward; when it has, a merge commit. A conflict stops here with the files named: it is never resolved
+# automatically, and nothing is forced.
+set -euo pipefail
+git fetch -q origin main release
+git checkout -q release
+git merge --ff-only -q origin/release 2>/dev/null || true       # a local release that lags origin's
+if git merge-base --is-ancestor origin/main release; then
+  echo "release-sync: release already contains main"; exit 0
+fi
+if git merge --ff-only -q origin/main 2>/dev/null; then
+  echo "release-sync: fast-forwarded release to main"
+elif git merge --no-ff -q origin/main -m "Merge main into release" 2>/dev/null; then
+  echo "release-sync: merged main into release"
+else
+  conflicts=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+  git merge --abort 2>/dev/null || true
+  echo "release-sync: main cannot be merged into release automatically (conflicts: ${conflicts:-unknown}). Merge it by hand." >&2
+  exit 1
+fi
+git push -q origin release
+echo "release-sync: pushed release"
