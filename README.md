@@ -241,6 +241,11 @@ lane upgrade    pull the latest release, ff-only, never an automatic merge
 lane help       the full list
 ```
 
+Upgrading an install made before 0.9.0? Its `lane upgrade` refuses once, because `lane init` modified
+`.claude/settings.json`. Run `git checkout -- .claude/settings.json`, then `lane upgrade`, then
+`lane init --yes`; see
+[`docs/troubleshooting.md`](docs/troubleshooting.md#your-first-upgrade-from-an-install-made-before-090).
+
 Every command also exists as its own executable — `lane-start`, `lane-run`, `lane-memory` — so they
 run from any directory with no `cd`. Full reference in [`docs/commands.md`](docs/commands.md).
 Your own commands work the same way: anything executable in `scripts/local/` becomes `lane <name>`

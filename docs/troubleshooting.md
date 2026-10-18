@@ -345,7 +345,8 @@ in short, this checkout is not a static copy of the repository — `registry/`, 
 update from upstream is a real merge between upstream's code and your state.
 
 `lane upgrade` automates exactly the procedure below: it refuses if anything tracked outside
-`registry/`, `memory/`, `knowledge/`, `CLAUDE.md` and `.claude/settings.local.json` is dirty,
+`registry/`, `memory/`, `knowledge/`, `CLAUDE.md` and `.claude/settings*.json` is dirty (plus
+`.gitignore` and `scripts/local/` on a `private: true` fork),
 fetches, and fast-forwards only if that's clean — never an automatic merge. If it isn't a clean
 fast-forward (real divergence, or a conflict) it stops and prints the manual steps below rather
 than attempting anything. Run the steps by hand whenever `lane upgrade` itself refuses.
@@ -403,6 +404,27 @@ git merge --abort
 
 That returns you to exactly where you were, upgraded or not, and your lanes are untouched throughout
 — none of this touches `lanes/` or `repos/`.
+
+### Your first upgrade from an install made before 0.9.0
+
+The `lane upgrade` that runs is the one already in your checkout, so an install made before 0.9.0
+still has the older check. It refuses because `lane init` modified `.claude/settings.json`:
+
+```
+lane upgrade: uncommitted changes in tracked files outside the expected-dirty paths:
+   M .claude/settings.json
+```
+
+Do this once:
+
+```
+git checkout -- .claude/settings.json   # drops the edit lane init made; lane init writes it again below
+lane upgrade
+lane init --yes                         # re-applies your statusLine and the hook wiring
+```
+
+If you edited `.claude/settings.json` yourself, copy it aside first. Once you are on 0.9.0,
+`lane upgrade` accepts that file as modified and this step is not needed again.
 
 ### After any upgrade
 
