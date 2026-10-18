@@ -39,6 +39,20 @@ in: $(printf '%s' "$2" | head -c 600)" ;; *) ok "$1" ;; esac
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
 
+# copy_product_tree <dir> : the product as tracked in git plus new unignored files, with working-tree contents (so
+# uncommitted fixes are tested); per-machine files (registry/repos.yaml, *.local.json, repos/, lanes/) are deliberately
+# absent. A checkout that is itself a control plane (the developer ran `lane init` in it) carries its own init state,
+# and a copy must start un-initialized or every "before init" case is wrong: drop the files init creates, and put the
+# files init edits back to what is committed.
+copy_product_tree(){
+  local dest="$1" f
+  (cd "$PRODUCT" && git ls-files -z --cached --others --exclude-standard | tar -cf - --null -T - 2>/dev/null) | (cd "$dest" && tar -xf - 2>/dev/null)
+  (cd "$PRODUCT" && git ls-files --others --exclude-standard -- CLAUDE.md knowledge memory) | while IFS= read -r f; do rm -rf "$dest/$f"; done
+  for f in registry/config.yml .gitignore .claude/settings.json; do
+    git -C "$PRODUCT" cat-file -e "HEAD:$f" 2>/dev/null && git -C "$PRODUCT" show "HEAD:$f" > "$dest/$f"
+  done
+}
+
 # new_sandbox : sets T (temp root), HOME (throwaway), PLANE (copy of the product, a git repo),
 # and ORIGIN (bare repo the plane was cloned from). Everything lives under T.
 new_sandbox(){
@@ -49,9 +63,7 @@ new_sandbox(){
   git config --global protocol.file.allow always
   unset CLAUDE_HOME CLAUDE_PROJECT_DIR
   local seed="$T/seed"; mkdir -p "$seed"
-  # the product as tracked in git plus new unignored files, with working-tree contents (so uncommitted fixes are tested);
-  # per-machine files (registry/repos.yaml, *.local.json, repos/, lanes/) are deliberately absent
-  (cd "$PRODUCT" && git ls-files -z --cached --others --exclude-standard | tar -cf - --null -T - 2>/dev/null) | (cd "$seed" && tar -xf - 2>/dev/null)
+  copy_product_tree "$seed"
   mkdir -p "$seed/repos" "$seed/lanes"
   # the tests dir itself is not needed inside the plane
   (cd "$seed" && git init -q -b main && git add -A && git commit -q -m seed)

@@ -82,7 +82,15 @@ seen=set(); perm["deny"]=[x for x in keep+deny if not (x in seen or seen.add(x))
 READONLY_LANE=["lane-merge-plan","lane-status","lane-brief","lane-find","lane-menu","lane-sessions","lane-env-check","lane-env-keys",
                "lane-memory list","lane-memory show","lane-memory audit"]
 RETIRED=("Bash(lane-memory:*)","Bash(lane-workspace:*)")   # earlier versions approved these; a refresh has to take that back
-perm["allow"]=sorted({x for x in perm.get("allow",[]) if x not in RETIRED}|{f"Bash({c}:*)" for c in READONLY_LANE})
+# A session in this lane records its Goal and Findings in registry/lanes/<id>.md, which sits in the control plane root,
+# outside the lane's folder; Claude Code refuses a path outside the session's folder unless a rule allows it (the guard
+# already does). Allow exactly this lane's file, nothing else under registry/. A leading // is an absolute path in a rule;
+# a single / is relative to the project and would match nothing.
+lf="/"+ad+"/registry/lanes/"+id_+".md"
+OWN=(f"Read({lf})",f"Edit({lf})")
+own_prefix=("Read(/"+ad+"/registry/lanes/","Edit(/"+ad+"/registry/lanes/")   # an earlier lane's rule, or one for another id, is dropped
+perm["allow"]=sorted({x for x in perm.get("allow",[]) if x not in RETIRED and not x.startswith(own_prefix)}
+                     |{f"Bash({c}:*)" for c in READONLY_LANE}|set(OWN))
 cur["autoMemoryDirectory"]=mem
 g=f"{ad}/scripts/hooks/guard.py"
 hk=lambda m=None,to=30:[{**({"matcher":m} if m else {}),"hooks":[{"type":"command","command":g,"timeout":to}]}]
