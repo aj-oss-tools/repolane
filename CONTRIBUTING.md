@@ -43,6 +43,12 @@ asserted cannot hide, and adding a case needs no bookkeeping. For a change to a 
 a case to the matching `tests/t_*.sh` (they share `tests/lib.sh`); for the board, to
 `scripts/board/test_board.py`.
 
+`tests/t_upgrade_path.sh` is the upgrade check: it installs the newest `v*` release tag, runs that
+release's own `lane init` and `lane upgrade`, and upgrades onto your branch. A change that makes the
+shipped upgrader refuse or conflict fails it, for example editing a tracked file that `lane init`
+leaves modified in every install (`registry/config.yml`). Run it with `bash tests/t_upgrade_path.sh`
+in a checkout that has the tags.
+
 CI runs these on every push and pull request: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 runs `tests/run-all.sh`, the guard suite and the board smoke test (`scripts/board/smoke.sh`) on Linux
 and on macOS's bash 3.2, and [`.github/workflows/test.yml`](.github/workflows/test.yml) runs the guard
