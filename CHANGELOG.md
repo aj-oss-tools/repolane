@@ -23,8 +23,9 @@ written down. Inside a git checkout it also says how far past the release tag yo
   result no longer depends on whether the real `$HOME` or `$TMPDIR` is under `/Users`, `/home`,
   `/tmp` or macOS's `/var/folders` (before, the same suite scored 184, 179 or 157 depending on
   where it ran). `.github/workflows/tests.yml` runs all three on every push and pull request on
-  `ubuntu-latest` and on `macos-latest` pinned to `/bin/bash` (3.2). **Nothing in this release was
-  run on Linux or in that workflow before it was written**; the suites were run on macOS only.
+  `ubuntu-latest` and on `macos-latest` pinned to `/bin/bash` (3.2). The three suites pass on macOS
+  (bash 3.2) and in an Ubuntu 24.04 container run as an ordinary user from a clean clone; the workflow
+  file itself has not yet run on GitHub.
 - **`lane use --remove <name>`** forgets a registered plane. Only the registry entry goes; the
   checkout is never touched. If it was the active plane there is none afterwards (the command says
   so) and `lane use <name>` picks one: no replacement is guessed, because guessing the wrong plane is
@@ -253,7 +254,7 @@ written down. Inside a git checkout it also says how far past the release tag yo
   `haiku` model; each fix has a regression case.
 - **Limits that remain** (so this section is not read as a guarantee): the guard reads commands, it
   does not run a shell, and the list of what it cannot see is in `scripts/hooks/README.md`. Stronger
-  models, interactive permission prompts, the trust dialog, Linux, Windows, the hook timeout and a
+  models, interactive permission prompts, the trust dialog, live Claude Code sessions on Linux, Windows, the hook timeout and a
   subagent calling Grep/Glob/WebFetch/MCP were not tested. A hook `allow` skips Claude Code's own
   permission prompt, as observed in the trials. WebFetch, the Agent tool call itself and MCP tools
   remain outside the matcher (a subagent's own Bash/Read/Edit/Write calls do reach the guard).
