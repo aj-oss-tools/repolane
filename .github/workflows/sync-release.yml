@@ -1,0 +1,37 @@
+name: Keep release from falling behind main
+
+# Merging the release PR into main with a merge commit leaves that commit on main only, so release would fall
+# one commit behind on every release. After every push to main this brings main into release (a fast-forward when
+# release has not moved, a merge commit when it has) so release is never behind. A conflict fails the job with
+# the files named; nothing is forced or resolved automatically. See scripts/release-sync.
+#
+# The push uses the default token on purpose: it does not start release-plan again, so there is no loop, and
+# there is nothing new to check (the content already passed on main).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-branch
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release
+          fetch-depth: 0
+
+      - name: Configure git identity for the merge commit
+        run: |
+          git config user.name "repolane-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Bring main into release
+        run: bash scripts/release-sync
