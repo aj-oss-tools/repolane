@@ -21,7 +21,7 @@
             "timeout": 30
           }
         ],
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree"
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree|Glob|Grep"
       }
     ],
     "PostToolUse": [
@@ -101,7 +101,9 @@
       "Bash(*/bin/lane-sessions:*)",
       "Bash(lane-env-check:*)",
       "Bash(lane-env-keys:*)",
-      "Bash(lane-workspace:*)"
+      "Bash(lane-memory list:*)",
+      "Bash(lane-memory show:*)",
+      "Bash(lane-memory audit:*)"
     ]
   }
 }

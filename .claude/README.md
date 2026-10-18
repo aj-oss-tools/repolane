@@ -15,7 +15,7 @@ the control plane's *own* configuration; every lane and worktree gets a generate
 Seven hook events, all pointed at the same dispatcher:
 
 ```json
-"PreToolUse":       "$CLAUDE_PROJECT_DIR/scripts/hooks/guard.py"   // Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree
+"PreToolUse":       "$CLAUDE_PROJECT_DIR/scripts/hooks/guard.py"   // Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree|Glob|Grep
 "PostToolUse":      "…/guard.py"                                   // Edit|Write|MultiEdit|NotebookEdit
 "UserPromptSubmit": "…/guard.py"
 "PreCompact":       "…/guard.py"

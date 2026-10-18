@@ -15,25 +15,26 @@
 # `lane doctor` warning it has been a while since the last sync.
 #
 # Never hard-errors on a repo that is not on GitHub (GitLab, Bitbucket, self-hosted, local-only)
-# or when `gh` is missing/unauthenticated — it prints why and moves on (or exits 0 for one repo),
-# because "can't check" is not the same claim as "nothing is protected".
+# — it prints why and moves on, because "can't check" is not the same claim as "nothing is
+# protected". But it does not claim success either: exit 1 when gh is missing or not logged in, or
+# when no repo could be checked at all; exit 0 only when at least one was and none failed.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 
 want="${1:-}"
 NOT_ON_GITHUB="using the default guess (main/master/develop + this repo's default_branch/compare_branch) — not on GitHub, can't check protection"
 
-command -v gh >/dev/null 2>&1 || { echo "lane sync: gh is not installed — cannot check GitHub branch protection ($NOT_ON_GITHUB)"; exit 0; }
-gh auth status >/dev/null 2>&1 || { echo "lane sync: gh is not authenticated (run: gh auth login) — cannot check GitHub branch protection"; exit 0; }
+command -v gh >/dev/null 2>&1 || { echo "lane sync: gh is not installed — cannot check GitHub branch protection ($NOT_ON_GITHUB)"; exit 1; }
+gh auth status >/dev/null 2>&1 || { echo "lane sync: gh is not authenticated (run: gh auth login) — cannot check GitHub branch protection"; exit 1; }
 
 if [ -n "$want" ]; then
   repo_exists "$want"
   names="$want"
 else
   names=$(sed -n 's/^  \([a-zA-Z0-9._-]*\):$/\1/p' "$AD/registry/repos.yaml")
-  [ -n "$names" ] || { echo "lane sync: no repos in registry/repos.yaml"; exit 0; }
+  [ -n "$names" ] || { echo "lane sync: no repos in registry/repos.yaml"; exit 1; }
 fi
 
-any_failed=0
+any_failed=0; checked=0
 for repo in $names; do
   origin=$(sed -n "/^  $repo:\$/,/^  [a-zA-Z0-9._-]*:\$/p" "$AD/registry/repos.yaml" | sed -n 's/^    origin: //p' | head -1)
   if [ -z "$origin" ] || [ "$origin" = "(local-only)" ]; then
@@ -68,6 +69,7 @@ for repo in $names; do
   rm -f "${TMPDIR:-/tmp}/lane-sync-err.$$"
 
   python3 "$AD/scripts/sync-write.py" "$AD/registry/repos.yaml" "$repo" "$protected"
+  checked=$((checked+1))
   if [ -n "$protected" ]; then
     echo "$repo ($owner/$ghrepo): protected — $(printf '%s' "$protected" | tr '\n' ' ')"
   else
@@ -75,4 +77,8 @@ for repo in $names; do
   fi
 done
 
+# Exit status: 0 when at least one repo's protection was read from GitHub and none failed; 1 when
+# one failed, or when nothing could be checked at all (every repo local-only/non-GitHub, gh missing
+# or not logged in) -- a script must be able to tell "synced" from "did nothing".
+if [ "$checked" = 0 ]; then echo "lane sync: nothing was checked — no repo here has a GitHub origin"; exit 1; fi
 [ "$any_failed" = 0 ]

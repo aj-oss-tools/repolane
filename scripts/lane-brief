@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # lane-brief [id]  — everything you need to pick a lane back up, no model involved.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 id="${1:-}"; [ -z "$id" ] && id=$(python3 -c "import os;p=os.path.realpath('$PWD');w='$LANES/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')")
 [ -n "$id" ] || die "usage: lane-brief <id>  (or run inside lanes/<id>/…)"
+lane_valid_id "$id" || die "invalid lane id '$id' — letters, digits, '.', '_' and '-' only"
 f=$(lane_file "$id")
 # A finished lane is archived, not deleted — being able to read it back is the point of
 # keeping it. Fall back to the archive, and say plainly when there is no such lane.
+archived=0
 if [ ! -f "$f" ]; then
   if [ -f "$LANES_DIR/done/$id.md" ]; then
-    f="$LANES_DIR/done/$id.md"
+    f="$LANES_DIR/done/$id.md"; archived=1
+    # lane_get / lane_repos / lane_links (lib.sh) all go through lane_file, which only knows the
+    # live path; point it at the archive so they read the file we actually found.
+    lane_file(){ echo "$f"; }
     echo "(finished lane — archived in registry/lanes/done/)"
   else
     die "no lane '$id'. Active lanes: $(ls "$LANES_DIR" 2>/dev/null | sed 's/\.md$//' | grep -v '^done$' | tr '\n' ' ')"
@@ -24,13 +30,17 @@ fi
 while read -r repo branch; do d="$LANES/$id/$repo"
   echo "REPO $repo @ $branch"
   if [ -d "$d" ]; then
-    echo "  worktree: $d"; echo "  dirty: $(git -C "$d" status --porcelain | wc -l | tr -d ' ')   unpushed: $(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 'no upstream')"
+    echo "  worktree: $d"; echo "  dirty: $(lane_dirty_count "$d")   unpushed: $(lane_unpushed "$d")"
     git -C "$d" log --oneline -5 | sed 's/^/  /'
     [ -n "$(git -C "$d" status --porcelain)" ] && git -C "$d" status --short | head -10 | sed 's/^/  /'
+  elif [ "$archived" = 1 ]; then echo "  worktree removed when the lane finished"
   else echo "  no worktree (lane-resume $id recreates it)"; fi
   m="$AD/memory/$repo/MEMORY.md"; [ -f "$m" ] && { echo "  memory index ($m):"; { grep '^- ' "$m" || true; } | head -8 | cut -c1-140 | sed 's/^/    /'; }
 done < <(lane_repos "$id")
 if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then echo "FINDINGS (live only — archived when this lane finishes)"; sed -n '/^## Findings/,/^## Log/p' "$f" | grep '^- ' | cut -c1-150 | sed 's/^/  /'; fi
-if grep -q '^  - path: ' "$f"; then echo "REFERENCES (lanes/$id/refs/)"; "$AD/bin/lane-ref" "$id" list 2>/dev/null | grep -v '^ref'; fi
+if grep -q '^  - path: ' "$f"; then
+  if [ "$archived" = 1 ]; then echo "REFERENCES (were attached; links removed with the lane)"; sed -n 's/^  - path: /  /p' "$f"
+  else echo "REFERENCES (lanes/$id/refs/)"; "$AD/bin/lane-ref" "$id" list 2>/dev/null | grep -v '^ref'; fi
+fi
 echo "LOG (last 5)"; sed -n '/^## Log/,$p' "$f" | { grep '^- ' || true; } | tail -5 | sed 's/^/  /'
 exit 0

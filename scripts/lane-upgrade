@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# lane-upgrade   automate the manual upgrade procedure in docs/troubleshooting.md ("Upgrade
-# friction: the clone is the control plane"). Scoped narrowly on purpose, per the design consult:
-# this is that already-documented recipe wired up, not a new upgrade mechanism.
+# lane-upgrade   take an update from upstream: fast-forward this checkout and run `lane doctor`.
+# The manual recipe is docs/troubleshooting.md ("Upgrade friction: the clone is the control plane").
 #
 #   lane upgrade
 #
 # What it does, in order:
 #   1. refuses if $AD has uncommitted changes in tracked files outside the expected-dirty paths
-#      (registry/, memory/, knowledge/, CLAUDE.md, .claude/settings.local.json — the same paths
-#      CONTRIBUTING.md and .gitignore already call out as per-install, never worth blocking on)
+#      (registry/, memory/, knowledge/, CLAUDE.md, .claude/settings*.json — the paths `lane init`
+#      itself edits — plus .gitignore and scripts/local/ on a private: true fork)
 #   2. git fetch origin, then fast-forwards onto the upstream branch if it is a clean
 #      fast-forward (git merge --ff-only, which fails loudly and safely if it turns out not to be)
 #   3. on a real divergence — local commits, or a conflict — stops and prints the manual recipe.
@@ -17,24 +16,31 @@
 #   4. on success: prints the VERSION delta and the CHANGELOG.md sections that landed, then runs
 #      `lane doctor` (the one place this script invokes another command automatically — doctor is
 #      read-only/advisory, so running it is not itself a mutating action).
+
+# Scoped narrowly on purpose, per the design consult: this is the already-documented recipe wired
+# up, not a new upgrade mechanism.
 set -u
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 
 cd "$AD" || die "cannot cd into $AD"
 git rev-parse --git-dir >/dev/null 2>&1 || die "$AD is not a git checkout — nothing to upgrade"
 
-# Step 1: refuse on tracked-and-dirty files outside the expected-dirty set. Read that set from
-# .gitignore rather than hardcoding it, plus the always-tracked-but-per-install paths
-# CONTRIBUTING.md names (memory/, knowledge/, CLAUDE.md, .claude/settings.local.json is already
-# gitignored via *.local.json).
+# Step 1: refuse on tracked-and-dirty files outside the expected-dirty set. These are the paths
+# `lane init` itself edits (.claude/settings.json always; .gitignore and scripts/local/ only on a
+# private fork, where init rewrites .gitignore to track them) plus the per-install state
+# CONTRIBUTING.md names. Untracked files never block: git refuses a merge that would overwrite one.
+private=$(sed -n 's/^private:[[:space:]]*//p' "$AD/registry/config.yml" 2>/dev/null | head -1 | tr -d '"'"'"' ')
 dirty=$(git status --porcelain)
 if [ -n "$dirty" ]; then
   blocking=""
   while IFS= read -r line; do
     [ -n "$line" ] || continue
+    case "$line" in '??'*) continue ;; esac
     path="${line:3}"
     case "$path" in
-      registry/*|memory/*|knowledge/*|CLAUDE.md|.claude/settings.local.json) : ;;
+      registry/*|memory/*|knowledge/*|CLAUDE.md|.claude/settings.json|.claude/settings.local.json) : ;;
+      .gitignore|scripts/local/*) [ "$private" = true ] || blocking="$blocking$line
+" ;;
       *) blocking="$blocking$line
 " ;;
     esac
@@ -43,7 +49,8 @@ if [ -n "$dirty" ]; then
     echo "lane upgrade: uncommitted changes in tracked files outside the expected-dirty paths:" >&2
     printf '%s' "$blocking" | sed 's/^/  /' >&2
     echo "  commit or stash these first (registry/, memory/, knowledge/, CLAUDE.md and" >&2
-    echo "  .claude/settings.local.json are always allowed to be dirty — see CONTRIBUTING.md)" >&2
+    echo "  .claude/settings*.json are always allowed to be dirty, and so are .gitignore and" >&2
+    echo "  scripts/local/ when registry/config.yml says private: true — see CONTRIBUTING.md)" >&2
     exit 1
   fi
 fi
@@ -89,18 +96,72 @@ if [ "$local_ahead" -gt 0 ]; then
   die "$branch has local commits not on $upstream — refusing to touch it automatically"
 fi
 
+# Local edits that upstream also changes would make git refuse the fast-forward ("would be
+# overwritten"). .claude/settings.json is the one every plane has (lane init adds statusLine), so
+# it is handled: put it back to HEAD, fast-forward, then re-apply only the keys the local copy
+# changed. Any other dirty tracked file upstream also touches is refused here with a recipe that works.
+settings_saved=""
+touched=$(git diff --name-only HEAD "$upstream" 2>/dev/null)
+clash=""
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  git diff --quiet HEAD -- "$path" 2>/dev/null && continue    # not dirty locally
+  if [ "$path" = .claude/settings.json ]; then settings_saved=$(mktemp "${TMPDIR:-/tmp}/lane-upgrade-settings.XXXXXX"); cp "$path" "$settings_saved"
+  else clash="$clash  $path
+"; fi
+done <<<"$touched"
+if [ -n "$clash" ]; then
+  [ -z "$settings_saved" ] || rm -f "$settings_saved"
+  echo "lane upgrade: these files have local edits and upstream changes them too, so git cannot fast-forward over them:" >&2
+  printf '%s' "$clash" >&2
+  cat >&2 <<EOT
+Nothing was changed. Set your edits aside, upgrade, then put them back:
+
+  git stash
+  lane upgrade
+  git stash pop        # resolve any conflict in the file(s) above by hand
+EOT
+  exit 1
+fi
+old_settings=$(mktemp "${TMPDIR:-/tmp}/lane-upgrade-settings.XXXXXX"); git show HEAD:.claude/settings.json > "$old_settings" 2>/dev/null || : > "$old_settings"
+if [ -n "$settings_saved" ]; then git checkout -q HEAD -- .claude/settings.json || { rm -f "$settings_saved" "$old_settings"; die "could not set .claude/settings.json aside"; }; fi
+
 if ! git merge --ff-only "$upstream"; then
+  if [ -n "$settings_saved" ]; then cp "$settings_saved" .claude/settings.json; fi
+  rm -f "$settings_saved" "$old_settings"
   cat >&2 <<EOF
 lane upgrade: fast-forward failed unexpectedly. This should not happen given the checks above —
-see the manual recipe in docs/troubleshooting.md ("Upgrade friction") and, if $branch's own
-.claude/settings.json is involved:
+see the manual recipe in docs/troubleshooting.md ("Upgrade friction"). Your local edits
+were put back as they were; if a file is named above, set it aside first:
 
-  git checkout --theirs .claude/settings.json
-  git add .claude/settings.json
-  git commit
+  git stash
+  lane upgrade
+  git stash pop
 EOF
   exit 1
 fi
+
+if [ -n "$settings_saved" ]; then
+  # three-way merge by top-level key: base = the old HEAD copy, theirs = what just landed, ours = the saved local file
+  python3 - "$old_settings" "$settings_saved" .claude/settings.json <<'PY' || cp "$settings_saved" .claude/settings.json
+import json, sys
+base_p, ours_p, dst = sys.argv[1:]
+def load(p):
+    try: return json.load(open(p))
+    except (OSError, ValueError): return {}
+base, ours, theirs = load(base_p), load(ours_p), load(dst)
+kept = []
+for k, v in ours.items():
+    if base.get(k) == v: continue            # not a local edit
+    if k in theirs and theirs.get(k) != base.get(k):
+        print(f"  note: .claude/settings.json key '{k}' changed both locally and upstream - upstream's value kept")
+        continue
+    theirs[k] = v; kept.append(k)
+json.dump(theirs, open(dst, "w"), indent=2)
+if kept: print("kept your local .claude/settings.json edit(s): " + ", ".join(kept))
+PY
+fi
+rm -f "$settings_saved" "$old_settings"
 
 new_head=$(git rev-parse HEAD)
 if [ "$old_head" = "$new_head" ]; then

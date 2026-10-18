@@ -33,7 +33,7 @@ guards. So the half-made lane is **unguarded**:
 
 ```
 $ lane doctor
-guard.py compiles; 9/9 probes answered as they should:
+guard.py compiles; 11/11 probes answered as they should:
   …
 7/9 places point at guard.py: 3 lane(s), 5 worktree(s), the root
 !! the guard is healthy but NOT in force everywhere:
@@ -165,7 +165,7 @@ throwaway control plane under `$HOME` and deletes it on exit, so it is safe to r
 ### 2. A probe answered wrongly
 
 ```
-!! guard.py compiles but is not enforcing — 1/9 probes answered as they should:
+!! guard.py compiles but is not enforcing — 1/11 probes answered as they should:
   !! pass reading a .env — wanted deny
   !! pass a push to a default branch — wanted deny
   …
@@ -178,12 +178,12 @@ the failing line tells you which. This means an edit to `guard.py` changed behav
 that was the intention — `git diff scripts/hooks/guard.py` is the first thing to read, and
 `git log -p scripts/hooks/guard.py` the second.
 
-One of the nine is a control: *"ordinary work is untouched"* must come back `pass`. If it is the one
+One of the eleven is a control: *"ordinary work is untouched"* must come back `pass`. If it is the one
 that failed, the guard has become too strict rather than too loose, and every ordinary command in
 every session is being refused.
 
-Run `bash scripts/hooks/test-guard.sh` for the detail — 184 cases against the same guard will say
-far more than nine will. If you are keeping the change, add a case for it; a rule with no test is a
+Run `bash scripts/hooks/test-guard.sh` for the detail — well over a thousand cases against the same guard will say
+far more than eleven probes will. If you are keeping the change, add a case for it; a rule with no test is a
 rule that will quietly stop working.
 
 ### 3. Something is not pointing at the guard

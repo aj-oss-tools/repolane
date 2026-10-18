@@ -14,7 +14,9 @@ POST /api/amend             {lane,repo,message}      rewrites the last commit, r
 POST /api/commit            {lane,repo,message}
 POST /api/push | /api/pull  {lane,repo}
 POST /api/lane                {action:start|resume|park|done, id, repos?, note?}
-Every /api call needs header X-Token (printed at start, embedded in the page).
+Every /api call needs header X-Token (embedded in the page served at /; never printed).
+Every request, including GET / and the static files, must carry a Host (and Origin, if sent) of
+127.0.0.1 or localhost on this server's own port, so a DNS-rebound page cannot read the token.
 Never operates on repos/ (mirrors). Never returns, stages or commits secret files.
 """
 import glob, json, os, re, secrets, subprocess, sys, threading, time, urllib.parse, webbrowser
@@ -24,6 +26,11 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 AD = os.path.dirname(os.path.dirname(HERE))
 LANES, REPOS, LANES_DIR, BIN = f"{AD}/lanes", f"{AD}/repos", f"{AD}/registry/lanes", f"{AD}/bin"
 TOKEN = secrets.token_urlsafe(24)
+# The refresh loop runs `git status` every few seconds. By default that opportunistically rewrites
+# .git/index, taking index.lock, so a user's own `git add` could fail with "index.lock exists".
+os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+REFRESH_EVERY = float(os.environ.get("WS_BOARD_REFRESH", "3"))
+MAX_BODY = 1 << 20   # 1 MiB: every request body here is a few paths or a commit message
 
 # ---------------------------------------------------------------- multi-plane registry
 # ~/.local/share/lane/planes.json (docs/concepts.md — "the clone is the control plane", plus
@@ -57,8 +64,15 @@ def planes_list():
         out.append({"name": n, "path": info.get("path"), "active": n == data.get("active"), "home": info.get("path") and os.path.realpath(info["path"]) == AD})
     return {"planes": out, "home": AD, "active": data.get("active")}
 PORT = int(os.environ.get("WS_BOARD_PORT", "7777"))
-SECRET = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|[^/]*credentials[^/]*\.json|secrets?\.(json|ya?ml|toml))$")
-SAFE_SUFFIX = re.compile(r"\.(example|sample|template|dist)$")
+SECRET = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|id_(rsa|ed25519|ecdsa|dsa)|\.netrc|\.npmrc|\.pgpass|\.git-credentials|\.htpasswd|[^/]*\.(pem|key|p12|pfx|p8|jks|keystore|kdbx)|[^/]*credentials[^/]*\.json|service-account[^/]*\.json|secrets?\.(json|ya?ml|toml))$", re.I | re.M)
+SAFE_SUFFIX = re.compile(r"\.(example|sample|template|dist)$", re.I | re.M)
+# re.M so a name with an embedded newline ("é\n.env") is still matched line by line; the pattern TEXT
+# above is the guard's and gitstate.sh's, byte for byte (tests/t_secretnames.sh), only the flags differ.
+SLUG = re.compile(r"[A-Za-z0-9._-]+")
+
+def lane_ok(s):
+    """A lane id is a file name under registry/lanes and a folder under lanes/: never a path."""
+    return isinstance(s, str) and re.fullmatch(r"[A-Za-z0-9._-]+", s, re.A) is not None and s not in (".", "..")
 PR_CACHE = {}
 DEFAULTS = {}
 STARTED = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -72,7 +86,28 @@ def sh(args, cwd=None, timeout=60, inp=None):
     except subprocess.TimeoutExpired:
         return 124, "", "timed out"
 
-def git(cwd, *a): return sh(["git", "-C", cwd, *a])[1].rstrip("\n")
+def git(cwd, *a): return sh(["git", "--literal-pathspecs", "-C", cwd, *a])[1].rstrip("\n")
+
+def git_names(path, *a):
+    """NUL-separated file names from git, unquoted: the default output C-quotes names with quotes or
+    non-ASCII, and a quoted name no longer ends in `.pem`, so the secret check would miss it."""
+    return [n for n in sh(["git", "--literal-pathspecs", "-C", path, *a, "-z"])[1].split("\0") if n]
+
+def changes(path, *a):
+    """What a diff/show command changes, as (status, [paths]) with BOTH sides of a rename or copy.
+    `--name-only` lists only the new name of a rename, so `git mv .env notes.txt` looked harmless."""
+    toks = sh(["git", "--literal-pathspecs", "-C", path, *a, "--name-status", "-z", "-M", "-C", "--find-copies-harder"])[1].split("\0")
+    res = []; i = 0
+    while i < len(toks):
+        s = toks[i]; i += 1
+        if not s: continue
+        n = 2 if s[0] in "RC" else 1
+        res.append((s, [x for x in toks[i:i + n] if x])); i += n
+    return res
+
+def secret_changes(path, *a):
+    """Sorted names of changed paths in this diff that are secret, on either side of a rename/copy."""
+    return sorted({p for _, ps in changes(path, *a) for p in ps if is_secret(p)})
 
 def defaults(ad=None):
     """Each repo's integration branch as the registry declares it. The remote's own HEAD can be
@@ -113,13 +148,39 @@ def parse_ws(path):
             "repos": repos, "refs": refs, "links": links, "findings": findings, "goal": sect("Goal"),
             "note": re.sub(r"^_(\d{4}-\d{2}-\d{2})_:\s*", r"\1 — ", sect("Resume note"), flags=re.M)}
 
+def unpushed(path):
+    """Commits on HEAD that no origin branch has; None when git cannot say or there is no origin."""
+    if sh(["git", "-C", path, "remote", "get-url", "origin"])[0] != 0: return None
+    rc, out, _ = sh(["git", "-C", path, "rev-list", "--count", "HEAD", "--not", "--remotes=origin"])
+    return int(out) if rc == 0 and out.strip().isdigit() else None
+
+def dirty_count(path):
+    """Changed entries in a worktree, not counting UNTRACKED secret-named files: `lane park` leaves
+    those out of its commit on purpose, so they are not unfinished work (docs: lane done names them)."""
+    items = sh(["git", "--literal-pathspecs", "-C", path, "status", "--porcelain=v1", "-z"])[1].split("\0")
+    n = 0; i = 0
+    while i < len(items):
+        e = items[i]; i += 1
+        if not e: continue
+        if e[0] in "RC" and i < len(items): i += 1
+        if e[:2] != "??": n += 1; continue
+        name = e[3:]
+        if not name.endswith("/"):
+            n += 0 if is_secret(name) else 1
+        elif any(not is_secret(x) for x in git_names(path, "ls-files", "-o", "--exclude-standard", "--", name)): n += 1
+    return n
+
 def repo_state(path):
     if not os.path.exists(f"{path}/.git"): return {"exists": False}
-    st = git(path, "status", "--porcelain")
-    dirty = len([l for l in st.splitlines() if l])
+    dirty = dirty_count(path)
     up = git(path, "rev-parse", "--abbrev-ref", "@{u}")
-    ahead = git(path, "rev-list", "--count", "@{u}..HEAD") if up else None
-    behind = git(path, "rev-list", "--count", "HEAD..@{u}") if up else None
+    # "ahead" is what no origin branch has - the same definition as `lane status` (scripts/gitstate.sh).
+    # The configured upstream is origin/<base> for a lane branch, and a plain `git push origin <id>`
+    # never changes that, so counting against it said "to push" after a push.
+    n = unpushed(path)
+    ahead = str(n) if isinstance(n, int) else None
+    br = git(path, "branch", "--show-current")
+    behind = git(path, "rev-list", "--count", f"HEAD..origin/{br}") if br and git(path, "rev-parse", "-q", "--verify", f"refs/remotes/origin/{br}") else None
     # when HEAD last moved: Home says "touched today" rather than making you read a date
     last = git(path, "log", "-1", "--format=%ct")
     # how far this branch has drifted from the default branch it came from, which is the
@@ -172,7 +233,7 @@ def board_uncached():
         for r in w["repos"]:
             p = f"{LANES}/{w['id']}/{r['repo']}"; r.update(repo_state(p)); r["short"] = sh_.get(r["repo"], r["repo"]); r["path"] = p
             if r.get("exists"):
-                fl = files(p); r["staged"] = sum(1 for f in fl if f["staged"]); r["unstaged"] = sum(1 for f in fl if f["unstaged"])
+                fl = files(p); r["staged"], r["unstaged"] = change_counts(fl)
                 cached = PR_CACHE.get((p, r.get("branch")))
                 pr_ = cached[1] if cached else None
                 r["pr_failing"] = pr_live_failing(pr_)
@@ -192,7 +253,7 @@ def lane_path(ad, lane, repo):
     return p
 
 def numstat(path, cached):
-    out = sh(["git", "-C", path, "diff", "--numstat", *(["--cached"] if cached else [])])[1]
+    out = sh(["git", "--literal-pathspecs", "-C", path, "diff", "--numstat", *(["--cached"] if cached else [])])[1]
     res = {}
     for l in out.splitlines():
         parts = l.split("\t")
@@ -203,7 +264,7 @@ def numstat(path, cached):
     return res
 
 def files(path):
-    _, out, _ = sh(["git", "-C", path, "status", "--porcelain=v1", "-z", "--untracked-files=all"])
+    _, out, _ = sh(["git", "--literal-pathspecs", "-C", path, "status", "--porcelain=v1", "-z", "--untracked-files=all"])
     ns_w, ns_c = numstat(path, False), numstat(path, True)
     items = out.split("\0"); res = []; i = 0
     while i < len(items):
@@ -216,9 +277,14 @@ def files(path):
         cnt = ns_c.get(name) if staged and not unstaged else ns_w.get(name) if unstaged and not staged else None
         res.append({"file": name, "old": old, "index": x.strip(), "work": y.strip(), "untracked": x == "?",
                     "staged": staged, "unstaged": unstaged, "partial": staged and unstaged and x != "?",
-                    "secret": is_secret(name), "add": cnt[0] if cnt else None, "del": cnt[1] if cnt else None,
+                    "secret": is_secret(name) or bool(old and is_secret(old)), "add": cnt[0] if cnt else None, "del": cnt[1] if cnt else None,
                     "add_staged": (ns_c.get(name) or (None, None))[0], "del_staged": (ns_c.get(name) or (None, None))[1]})
     return sorted(res, key=lambda r: r["file"])
+
+def change_counts(fl):
+    """(staged, unstaged) file counts for the board; untracked secret-named files are left out (see dirty_count)."""
+    fl = [f for f in fl if not (f["untracked"] and f["secret"])]
+    return sum(1 for f in fl if f["staged"]), sum(1 for f in fl if f["unstaged"])
 
 def is_secret(name):
     return bool(SECRET.search(name)) and not SAFE_SUFFIX.search(name)
@@ -309,15 +375,19 @@ def sessions(repo, ad=None):
     code, out, _ = sh([f"{ad}/bin/lane-sessions", repo, "8"]); return out if code == 0 else ""
 
 def diff(path, file, staged, show_all=False):
-    if is_secret(file):
+    ent = [f for f in files(path) if f["file"] == file]
+    if is_secret(file) or (ent and ent[0]["secret"]):
         repo = os.path.basename(path)
         return {"secret": True, "mirror": f"repos/{repo}/{file}", "diff": "", "total_lines": 0, "truncated": False}
     rel = file
-    if staged: out = sh(["git", "-C", path, "diff", "--cached", "--", rel])[1]
+    # Only an exact changed file is diffed: a directory or `..` path would otherwise pull in
+    # secrets under it (or files outside the worktree via --no-index).
+    st = [f for f in files(path) if f["file"] == rel]
+    if not st: return {"diff": "", "total_lines": 0, "truncated": False}
+    if staged: out = sh(["git", "--literal-pathspecs", "-C", path, "diff", "--cached", "--", rel])[1]
     else:
-        st = [f for f in files(path) if f["file"] == rel]
-        if st and st[0]["untracked"]: out = sh(["git", "-C", path, "diff", "--no-index", "--", "/dev/null", rel])[1]
-        else: out = sh(["git", "-C", path, "diff", "--", rel])[1]
+        if st[0]["untracked"]: out = sh(["git", "--literal-pathspecs", "-C", path, "diff", "--no-index", "--", "/dev/null", rel])[1]
+        else: out = sh(["git", "--literal-pathspecs", "-C", path, "diff", "--", rel])[1]
     lines = out.split("\n"); total = len(lines)
     binary = any(l.startswith("Binary files") for l in lines[:12])
     if binary or total > 50000:
@@ -333,26 +403,43 @@ def show(path, sha, show_all=False):
     so their contents can never reach the page — the same rule the file diff follows."""
     if not re.fullmatch(r"[0-9a-fA-F]{4,40}", sha or ""):
         return {"error": "bad commit id"}
-    rc, meta, err = sh(["git", "-C", path, "show", "-s",
+    rc, meta, err = sh(["git", "--literal-pathspecs", "-C", path, "show", "-s",
                         "--format=%H%n%h%n%an%n%ad%n%s%n%b", "--date=format:%d %b %Y %H:%M", sha])
     if rc != 0:
         return {"error": (err or "no such commit").strip()}
     m = meta.split("\n")
     info = {"sha": m[0], "short": m[1], "author": m[2], "date": m[3], "subject": m[4],
             "body": "\n".join(m[5:]).strip()}
-    touched = [f for f in sh(["git", "-C", path, "show", "--name-only", "--format=", sha])[1].split("\n") if f.strip()]
-    safe = [f for f in touched if not is_secret(f)]
+    ch = changes(path, "show", "--format=", sha)
+    touched = list(dict.fromkeys(p for _, ps in ch for p in ps))
+    # a rename or copy to or from a secret carries the secret's content under a plain name
+    tainted = {p for _, ps in ch if any(is_secret(q) for q in ps) for p in ps}
+    safe = [f for f in touched if f not in tainted and not is_secret(f)]
     info["files"] = len(touched)
     info["hidden"] = len(touched) - len(safe)
     if not safe:
         return {**info, "diff": "", "total_lines": 0, "truncated": False}
-    out = sh(["git", "-C", path, "show", "--format=", sha, "--"] + safe)[1]
+    out = sh(["git", "--literal-pathspecs", "-C", path, "show", "--format=", sha, "--"] + safe)[1]
     lines = out.split("\n"); total = len(lines)
     if any(l.startswith("Binary files") for l in lines[:12]) and total < 20:
         return {**info, "diff": out, "total_lines": total, "truncated": False}
     if not show_all and total > DIFF_LIMIT:
         return {**info, "diff": "\n".join(lines[:DIFF_LIMIT]), "total_lines": total, "truncated": True}
     return {**info, "diff": out, "total_lines": total, "truncated": False}
+
+def expand_paths(path, names):
+    """Turn requested names into exact changed files: each must be a changed file or a directory
+    holding changed files. Anything else (`.`, globs, `-A`, `..`, unknown names) is refused rather
+    than handed to git as a pathspec, where `.` would stage .env. -> (files, error)."""
+    known = sorted({f["file"] for f in files(path)})
+    out = []
+    for n in names:
+        if n in known: out.append(n); continue
+        d = n.rstrip("/") + "/"
+        hit = [k for k in known if k.startswith(d)] if n.rstrip("/") not in ("", ".") and not n.startswith("/") else []
+        if not hit: return [], f"{n!r}: no uncommitted change to that path"
+        out += hit
+    return list(dict.fromkeys(out)), None
 
 def discard(path, names):
     """Throw away uncommitted changes to the named files. This destroys work that git cannot get back,
@@ -375,7 +462,7 @@ def discard(path, names):
         return {"error": "\n".join(refused)}
     out = []
     if tracked:
-        rc, o, e = sh(["git", "-C", path, "checkout", "--"] + tracked)
+        rc, o, e = sh(["git", "--literal-pathspecs", "-C", path, "checkout", "--"] + tracked)
         if rc != 0:
             return {"error": (e or o).strip()}
         out.append(f"reverted {len(tracked)} file(s)")
@@ -391,14 +478,14 @@ def discard(path, names):
 def amend(path, message):
     """Rewrite the last commit. Refused once that commit is on the remote — rewriting shared history
     is how people lose each other's work."""
-    branch = git(path, "branch", "--show-current")
-    upstream = git(path, "rev-parse", "--abbrev-ref", f"{branch}@{{u}}")
-    if upstream and not upstream.startswith("fatal"):
-        ahead = git(path, "rev-list", "--count", f"{upstream}..HEAD")
-        if ahead.strip() in ("", "0"):
-            return {"error": f"The last commit is already on {upstream}. Amending it would rewrite shared history — "
-                             f"make a new commit instead."}
-    args = ["git", "-C", path, "commit", "--amend"]
+    if unpushed(path) == 0:
+        return {"error": "The last commit is already on origin. Amending it would rewrite shared history — "
+                         "make a new commit instead."}
+    bad = secret_changes(path, "diff", "--cached")
+    if bad:
+        return {"error": "refusing to amend with secret file(s) staged: " + ", ".join(sorted(bad))
+                         + ". Unstage them first (git restore --staged)."}
+    args = ["git", "--literal-pathspecs", "-C", path, "commit", "--amend"]
     args += ["-m", message] if (message or "").strip() else ["--no-edit"]
     rc, o, e = sh(args)
     if rc != 0:
@@ -411,15 +498,16 @@ def tracker_url(ad=None):
     ad = ad or AD
     try:
         with open(f"{ad}/registry/config.yml") as fh:
-            m = re.search(r"^tracker:\s*$.*?^\s+url:\s*(\S+)\s*$", fh.read(), re.M | re.S)
-            return m.group(1).strip().strip("\"'") if m else ""
+            blk = re.search(r"^tracker:[ \t]*\n((?:[ \t]+[^\n]*\n?|[ \t]*\n)*)", fh.read(), re.M)
+            m = re.search(r"^[ \t]+url:[ \t]*([^\s#]*)", blk.group(1), re.M) if blk else None
+            return m.group(1).strip("\"'") if m else ""
     except OSError:
         return ""
 
 def run_ws(action, id_, repos=None, note=None, ad=None):
     ad = ad or AD
     bin_ = f"{ad}/bin"
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", id_ or ""): return 1, "", "bad id"
+    if not lane_ok(id_): return 1, "", "bad id"
     if action == "start":
         specs = [s for s in (repos or "").split() if re.fullmatch(r"[\w.:@/-]+", s)]
         if not specs: return 1, "", "repos required"
@@ -470,6 +558,22 @@ def memory_tree():
     return {"scopes": scopes, "duplicates": {k: v for k, v in dups.items() if len(v) > 1}, "findings": findings,
             "repos": sorted(os.listdir(REPOS))}
 
+def mem_slug_ok(s):
+    return isinstance(s, str) and bool(SLUG.fullmatch(s)) and not s.startswith("-") and s.strip(".") != ""
+
+def bad_memory_args(body):
+    """lane-memory builds paths from these values, so the board refuses anything that is not a plain
+    slug before it gets that far (no `/`, no `..`, no leading `-`), whatever lane-memory itself checks."""
+    act, f, to = body.get("action"), body.get("file", ""), body.get("to", "")
+    if act in ("file", "drop"):   # these slice off ".md" unconditionally below, so validate what is left
+        if not (isinstance(f, str) and f.endswith(".md") and mem_slug_ok(f[:-3])): return "bad memory name"
+    elif act in ("move", "rm"):
+        if not mem_slug_ok(f[:-3] if isinstance(f, str) and f.endswith(".md") else f): return "bad memory name"
+    if act in ("move", "file") and not (to == "cross" or (act == "file" and to in ("pref", "lane"))):
+        if not mem_slug_ok(to[5:] if isinstance(to, str) and to.startswith("repo:") else to): return "bad memory scope"
+    if act == "file" and to == "lane" and not mem_slug_ok(body.get("lane", "")): return "bad lane id"
+    return None
+
 def mem_path(scope, file):
     if not re.fullmatch(r"[\w.-]+\.md", file or ""): raise ValueError("bad file")
     if scope == "cross": p = f"{MEM}/{file}"
@@ -517,7 +621,7 @@ def compute_board():
             c = REPO.get((w["id"], r["repo"]))
             if c and c["state"].get("exists"):
                 r.update(c["state"]); fl = c["files"]
-                r["staged"] = sum(1 for x in fl if x["staged"]); r["unstaged"] = sum(1 for x in fl if x["unstaged"])
+                r["staged"], r["unstaged"] = change_counts(fl)
                 cached = PR_CACHE.get((p, r.get("branch"))); pr_ = cached[1] if cached else None
                 r["pr_failing"] = pr_live_failing(pr_)
                 r["pr_state"] = pr_.get("state") if isinstance(pr_, dict) else None
@@ -586,7 +690,7 @@ def compute_board_for(ad):
             p = f"{ad}/lanes/{w['id']}/{r['repo']}"; r["short"] = sh_.get(r["repo"], r["repo"]); r["path"] = p
             r.update(repo_state(p))
             if r.get("exists"):
-                fl = files(p); r["staged"] = sum(1 for x in fl if x["staged"]); r["unstaged"] = sum(1 for x in fl if x["unstaged"])
+                fl = files(p); r["staged"], r["unstaged"] = change_counts(fl)
                 pr_ = None  # never shells out to `gh` for a foreign plane on the hot path
                 rebase_target(p, r, pr_, r.get("base"), defaults_map=defaults_map)
         out.append(w)
@@ -632,6 +736,7 @@ def repo_payload(ad, lane, repo):
             "nextAction": next_action(st, c["files"], pr_), "computed": c["computed"]}
 
 class H(BaseHTTPRequestHandler):
+    timeout = 20   # a client that stops sending must not hold a handler thread forever
     def log_message(self, *a): pass
     def send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else (json.dumps(body) if ctype.startswith("application/json") else body).encode()
@@ -640,9 +745,19 @@ class H(BaseHTTPRequestHandler):
     def auth(self):
         if self.headers.get("X-Token") != TOKEN: self.send(403, {"error": "bad token"}); return False
         return True
+    def local_only(self):
+        """DNS rebinding makes a hostile page reach this server under its own hostname, same-origin,
+        so the page (which carries the token) could be read. A browser always sends the Host it
+        navigated to and an Origin on cross-origin and POST requests; both must be this server."""
+        ok = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+        host = (self.headers.get("Host") or "").lower()
+        origin = self.headers.get("Origin")
+        if host in ok and (origin is None or origin.lower() in {f"http://{h}" for h in ok}): return True
+        self.send(403, {"error": "host not allowed"}); return False
     def q(self):
         return {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()}
     def do_GET(self):
+        if not self.local_only(): return
         route = urllib.parse.urlparse(self.path).path
         if route == "/":
             html = open(f"{HERE}/index.html").read().replace("__TOKEN__", TOKEN); return self.send(200, html, "text/html")
@@ -653,6 +768,7 @@ class H(BaseHTTPRequestHandler):
         q = self.q()
         try:
             if route == "/api/planes": return self.send(200, planes_list())
+            if "lane" in q and not lane_ok(q["lane"]): return self.send(400, {"error": "bad lane id"})
             ad = resolve_ad(q.get("plane"))
             if route == "/api/board":
                 return self.send(200, board_for(ad))
@@ -664,7 +780,7 @@ class H(BaseHTTPRequestHandler):
                 p = mem_path(q.get("scope", ""), q.get("file", ""))
                 return self.send(200, {"content": open(p).read() if os.path.exists(p) else "", "path": os.path.relpath(p, AD)})
             if route == "/api/spec":
-                f = f"{ad}/registry/lanes/{q['lane']}.md"; return self.send(200, {"spec": open(f).read() if os.path.exists(f) and re.fullmatch(r"[\w.-]+", q["lane"]) else ""})
+                f = f"{ad}/registry/lanes/{q['lane']}.md"; return self.send(200, {"spec": open(f).read() if os.path.exists(f) else ""})
             if route == "/api/lanelog":
                 whole = q.get("all") == "1"
                 return self.send(200, {"log": lane_log(ad, q["lane"], whole=whole), "whole": whole})
@@ -672,12 +788,20 @@ class H(BaseHTTPRequestHandler):
             return self.send(404, {"error": "unknown api"})
         except Exception as e: return self.send(400, {"error": str(e)})
     def do_POST(self):
+        if not self.local_only(): return
         route = urllib.parse.urlparse(self.path).path
         if not self.auth(): return
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0")) or 0) or b"{}")
+            cl = (self.headers.get("Content-Length") or "0").strip()
+            if not (cl.isascii() and cl.isdigit()): return self.send(400, {"error": "bad Content-Length"})
+            if int(cl) > MAX_BODY: return self.send(413, {"error": "request body too large"})
+            body = json.loads(self.rfile.read(int(cl)) or b"{}")
+            if not isinstance(body, dict): return self.send(400, {"error": "body must be a JSON object"})
+            if "lane" in body and not lane_ok(body["lane"]): return self.send(400, {"error": "bad lane id"})
             if route == "/api/memory":
                 act = body.get("action")
+                bad = bad_memory_args(body)
+                if bad: return self.send(400, {"error": bad})
                 if act == "move":
                     to = body.get("to", "")
                     args = [f"{BIN}/lane-memory", "move", body.get("file", ""), "cross"] if to == "cross" else [f"{BIN}/lane-memory", "move", body.get("file", ""), "repo", to[5:] if to.startswith("repo:") else to]
@@ -685,14 +809,14 @@ class H(BaseHTTPRequestHandler):
                 elif act == "file":
                     sc = body.get("to", ""); slug = (body.get("file", "") or "")[:-3]
                     args = [f"{BIN}/lane-memory", "file", slug] + (["cross"] if sc == "cross" else ["pref"] if sc == "pref" else
-                            ["lane", body.get("lane", "")] if sc.startswith("lane") else ["repo", sc[5:] if sc.startswith("repo:") else sc])
+                            ["lane", body.get("lane", "")] if sc == "lane" else ["repo", sc[5:] if sc.startswith("repo:") else sc])
                 elif act == "drop": args = [f"{BIN}/lane-memory", "drop", (body.get("file", "") or "")[:-3]]
                 else: return self.send(400, {"error": "unknown memory action"})
                 code, out, err = sh(args, timeout=60)
                 return self.send(200 if code == 0 else 400, {"ok": code == 0, "output": (out + err).strip()})
             if route == "/api/ref":
                 ws_, act = body.get("lane", ""), body.get("action")
-                if not re.fullmatch(r"[A-Za-z0-9._-]+", ws_): return self.send(400, {"error": "bad id"})
+                if not lane_ok(ws_): return self.send(400, {"error": "bad id"})
                 if act == "add":
                     path = os.path.expanduser((body.get("path") or "").strip())
                     if not path: return self.send(400, {"error": "path required"})
@@ -727,34 +851,39 @@ class H(BaseHTTPRequestHandler):
                 if "error" in r: return self.send(400, r)
                 return self.send(200, r)
             if route == "/api/stage":
-                fl = [f for f in body.get("files", []) if isinstance(f, str) and not f.startswith("-")]
+                want = body.get("files", [])
+                if not isinstance(want, list): return self.send(400, {"error": "no files"})
+                fl, err = expand_paths(p, [f for f in want if isinstance(f, str)])
+                if err: return self.send(400, {"error": err})
                 if not fl: return self.send(400, {"error": "no files"})
                 # The diff of a secret file is withheld, so staging one would commit
                 # content nobody could review. Unstaging is always allowed.
                 if body.get("stage", True):
-                    bad = [f for f in fl if is_secret(f)]
+                    known = {f["file"]: f for f in files(p)}
+                    bad = [f for f in fl if is_secret(f) or known.get(f, {}).get("secret")]
                     if bad:
                         return self.send(400, {"error": "refusing to stage secret file(s): " + ", ".join(sorted(bad))
                                                         + ". Keep them out of git, or add them to .gitignore."})
-                code, out, err = sh(["git", "-C", p, "add", "--", *fl]) if body.get("stage", True) else sh(["git", "-C", p, "restore", "--staged", "--", *fl])
+                code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "add", "--", *fl]) if body.get("stage", True) else sh(["git", "--literal-pathspecs", "-C", p, "restore", "--staged", "--", *fl])
             elif route == "/api/commit":
                 msg = (body.get("message") or "").strip()
                 if not msg: return self.send(400, {"error": "commit message required"})
-                staged = git(p, "diff", "--cached", "--name-only")
+                staged = git_names(p, "diff", "--cached", "--name-only")
                 if not staged: return self.send(400, {"error": "nothing staged — tick files first"})
+                bad_sides = secret_changes(p, "diff", "--cached")
                 # Belt to the staging brace: a secret can only be staged from outside the
                 # board, and it must not become a commit from inside it.
-                bad = [f for f in staged.splitlines() if f.strip() and is_secret(f.strip())]
+                bad = sorted(set([f for f in staged if is_secret(f)] + bad_sides))
                 if bad:
                     return self.send(400, {"error": "refusing to commit secret file(s): " + ", ".join(sorted(bad))
                                                     + ". Unstage them first (git restore --staged)."})
-                code, out, err = sh(["git", "-C", p, "commit", "-F", "-"], inp=msg + "\n")
+                code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "commit", "-F", "-"], inp=msg + "\n")
                 if code == 0: out = git(p, "log", "-1", "--format=%h %s")
             elif route == "/api/push":
                 br = git(p, "branch", "--show-current")
-                code, out, err = sh(["git", "-C", p, "push", "-u", "origin", br], timeout=180)
+                code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "push", "-u", "origin", br], timeout=180)
             elif route == "/api/pull":
-                code, out, err = sh(["git", "-C", p, "pull", "--ff-only"], timeout=180)
+                code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "pull", "--ff-only"], timeout=180)
             else: return self.send(404, {"error": "unknown api"})
             if ad == AD:
                 refresh_repo(body["lane"], body["repo"])
@@ -771,7 +900,7 @@ def main():
     url = f"http://127.0.0.1:{port}/"
     DEFAULTS.update(defaults())
     refresh_all()
-    loop(refresh_all, 3, "git"); loop(pr_sweep, 60, "pr"); loop(sess_sweep, 45, "sessions"); loop(self_reload, 2, "reload")
+    loop(refresh_all, REFRESH_EVERY, "git"); loop(pr_sweep, 60, "pr"); loop(sess_sweep, 45, "sessions"); loop(self_reload, 2, "reload")
     print(f"lane-board  {url}   (Ctrl-C to stop)"); sys.stdout.flush()
     if not os.environ.get("WS_BOARD_NO_OPEN"): threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try: srv.serve_forever()

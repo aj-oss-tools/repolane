@@ -177,11 +177,11 @@ each rule and the line. The same is true of a YAML error: you get the line numbe
 traceback and not a shrug.
 
 `lane doctor` checks four things, and reports a fifth. It checks that the guard compiles, that it
-still answers nine named probes the way it should (eight refusals and one ordinary command it must leave alone), that every
+still answers eleven named probes the way it should (ten refusals and one ordinary command it must leave alone), that every
 rule in your `registry/rules.yaml` still refuses its own `example` — and is refused *by that rule*,
 not incidentally by a built-in — and that every lane and worktree is still wired to it. It prints each verdict, so the answer is something
 you can check rather than something you have to believe; `lane doctor -v` also runs the full
-184-case suite. A session whose `settings.local.json` lost
+guard suite. A session whose `settings.local.json` lost
 its hooks is unguarded even when the guard itself is perfectly healthy, so both are checked.
 
 It then reports one thing that is not a health check at all: **lanes nobody has touched in a

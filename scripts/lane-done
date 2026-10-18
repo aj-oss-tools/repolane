@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# lane-done <id> [--delete-branches] [--delete-sessions|--keep-sessions]: requires clean, pushed
-# worktrees. Removes worktrees, archives the file, and asks what to do with each repo's leftover
+# lane-done <id> [--delete-branches] [--delete-sessions|--keep-sessions] [--discard-ignored] [--pushed-to <remote>]:
+# requires clean, pushed worktrees (pushed = on some origin branch, however it got there; a repo
+# with no origin is local-only and has nothing to check). Refuses while a worktree holds an
+# ignored OR untracked secret file (.env, *.pem, ...) that removing it would delete, unless --discard-ignored
+# (untracked secrets, which lane park leaves out, are named but never counted as dirty work).
+# Removes worktrees, archives the file, and asks what to do with each repo's leftover
 # Claude session folder (see registry/config.yml `lanes: delete_sessions_on_done:` for the default).
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 id="${1:-}"; f=$(lane_file "$id"); [ -f "$f" ] || die "no lane '$id'"
 shift || true
-DELETE_BRANCHES=0; SESSIONS_MODE=""   # SESSIONS_MODE: "" (ask/report) | delete | keep
-for a in "$@"; do
+DELETE_BRANCHES=0; DISCARD_IGNORED=0; SESSIONS_MODE=""   # SESSIONS_MODE: "" (ask/report) | delete | keep
+PUSHED_TO=origin
+while [ $# -gt 0 ]; do a="$1"; shift
   case "$a" in
+    --pushed-to) [ $# -gt 0 ] && [ -n "$1" ] || die "lane done: --pushed-to needs a remote name"; PUSHED_TO="$1"; shift ;;
     --delete-branches) DELETE_BRANCHES=1 ;;
+    --discard-ignored) DISCARD_IGNORED=1 ;;
     --delete-sessions) SESSIONS_MODE=delete ;;
     --keep-sessions) SESSIONS_MODE=keep ;;
     *) die "lane done: unknown option $a" ;;
@@ -20,12 +28,19 @@ done
 cd "$AD" || exit 1
 # Check EVERY repo before touching ANY of them. Checking and removing in the same pass meant a
 # lane whose second repo had unpushed work lost the first repo's worktree before failing.
-problems=""
+problems=""; notes=""
+# ignored_secrets <worktree> : the ignored, non-symlink files in it that look like secrets, one line
+ignored_secrets(){
+  local out; out=$(git -C "$1" ls-files -o -i --exclude-standard -z 2>/dev/null | lane_drop_dep_paths | lane_secret_paths "$1" --skip-links | tr '\0' ' ')
+  printf '%s' "${out% }"
+}
 while read -r repo branch; do d="$LANES/$id/$repo"
   if [ ! -d "$d" ]; then
     # The folder is gone, so we cannot check whether its branch was pushed. Skipping it is how a
     # lane got archived with unpushed commits still on a branch nobody could see.
-    if git -C "$REPOS/$repo" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1; then
+    if ! lane_has_origin "$REPOS/$repo"; then
+      notes="$notes\n  $repo has no origin remote (local-only): nothing to push, the branch $branch stays in repos/$repo"
+    elif git -C "$REPOS/$repo" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1; then
       up="refs/remotes/origin/$branch"
       if ! git -C "$REPOS/$repo" rev-parse -q --verify "$up" >/dev/null 2>&1 \
          || [ -n "$(git -C "$REPOS/$repo" log --oneline "$up..refs/heads/$branch" 2>/dev/null)" ]; then
@@ -34,18 +49,54 @@ while read -r repo branch; do d="$LANES/$id/$repo"
     fi
     continue
   fi
-  [ -z "$(git -C "$d" status --porcelain)" ] || problems="$problems\n  $repo is dirty — commit it, or lane park first"
-  if ! git -C "$d" rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
-    problems="$problems\n  $repo/$branch was never pushed — push it, or delete the branch first"
-  elif [ -n "$(git -C "$d" log --oneline '@{u}..HEAD')" ]; then
-    n=$(git -C "$d" rev-list --count '@{u}..HEAD')
-    problems="$problems\n  $repo/$branch has $n unpushed commit(s)"
+  # Untracked secret-named files are not "dirty": lane park leaves them out of its commit on purpose
+  # and committing them is never right. They ARE destroyed with the worktree, so they are checked
+  # separately below (name them, ask for --discard-ignored) instead of dead-ending on "dirty".
+  [ "$(lane_dirty_count "$d")" = 0 ] || problems="$problems\n  $repo is dirty — commit it, or lane park first"
+  if [ "$PUSHED_TO" != origin ]; then
+    git -C "$d" remote get-url "$PUSHED_TO" >/dev/null 2>&1 || { problems="$problems\n  $repo has no remote called '$PUSHED_TO' (--pushed-to)"; continue; }
+    n=$(git -C "$d" rev-list --count HEAD --not --remotes="$PUSHED_TO" 2>/dev/null || echo '?')
+  else
+    n=$(lane_unpushed "$d")
+  fi
+  cur=$(git -C "$d" symbolic-ref -q --short HEAD 2>/dev/null || true)
+  if ! git -C "$d" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    notes="$notes\n  $repo has no commits (unborn HEAD): nothing to push"; n=0
+  elif [ -z "$cur" ] && [ "$n" != local ] && [ "$n" != "?" ] && [ "$n" -gt 0 ]; then
+    problems="$problems\n  $repo: HEAD is detached with $n commit(s) not on $PUSHED_TO — git switch -c <name> and push it, or git push $PUSHED_TO HEAD:refs/heads/<name>"
+    n=0
+  fi
+  if [ "$n" = local ]; then
+    notes="$notes\n  $repo has no origin remote (local-only): nothing to push, the branch $branch stays in repos/$repo"
+  elif [ "$n" = "?" ]; then
+    problems="$problems\n  $repo/$branch: could not tell whether it is pushed"
+  elif [ "$n" -gt 0 ]; then
+    if git -C "$d" rev-parse -q --verify "refs/remotes/$PUSHED_TO/$branch" >/dev/null 2>&1; then
+      problems="$problems\n  $repo/$branch has $n unpushed commit(s) — git push $PUSHED_TO $branch$( [ "$PUSHED_TO" = origin ] && printf '  (pushed to a fork instead? rerun with --pushed-to <remote>)')"
+    else
+      problems="$problems\n  $repo/$branch was never pushed ($n unpushed commit(s)) — git push $PUSHED_TO $branch, or delete the branch first$( [ "$PUSHED_TO" = origin ] && printf '  (pushed to a fork instead? rerun with --pushed-to <remote>)')"
+    fi
+  fi
+  # The worktree is deleted below, ignored files with it. Real (non-link) ignored secrets in there
+  # are the one thing that cannot be recreated from git or from the mirror.
+  untracked_sec=$(lane_untracked_secrets "$d" --skip-links)
+  if [ -n "$untracked_sec" ]; then
+    if [ "$DISCARD_IGNORED" = 1 ]; then
+      notes="$notes\n  $repo: untracked secret file(s) still on disk will be deleted with the worktree (--discard-ignored): $untracked_sec"
+    else
+      problems="$problems\n  $repo has untracked secret file(s) still on disk (lane park leaves them out of its commit) that deleting the worktree would destroy: $untracked_sec — move them into repos/$repo/ or somewhere safe, or rerun with --discard-ignored to delete them with the worktree"
+    fi
+  fi
+  if [ "$DISCARD_IGNORED" != 1 ]; then
+    lost=$(ignored_secrets "$d")
+    [ -z "$lost" ] || problems="$problems\n  $repo has ignored secret file(s) that deleting the worktree would destroy: $lost — move them into repos/$repo/ (lane start links from there) or rerun with --discard-ignored"
   fi
 done < <(lane_repos "$id")
 if [ -n "$problems" ]; then
   printf 'not finishing %s — nothing was removed:%b\n' "$id" "$problems" >&2
   exit 1
 fi
+[ -z "$notes" ] || printf 'note:%b\n' "$notes"
 
 # default answer for the interactive session-cleanup prompt below — config only ever changes
 # which way the prompt defaults, never whether it is asked
@@ -57,8 +108,20 @@ CFG_DELETE=$(sed -n 's/^[[:space:]]*delete_sessions_on_done:[[:space:]]*//p' "$A
 # (`< <(...)`), so a `read` for the session-delete prompt inside it must not use fd 0 — it would
 # read lane_repos's output instead of whatever the terminal (or pipe) actually sent.
 exec 3<&0
+REMOVE_FAILED=""
 while read -r repo branch; do d="$LANES/$id/$repo"; [ -d "$d" ] || continue
-  git -C "$REPOS/$repo" worktree remove "$d" && echo "removed worktree $d"
+  # An untracked secret file makes a plain `worktree remove` refuse ("use --force"). --force is passed
+  # only when the user gave --discard-ignored AND nothing but those files is in the way (the check above
+  # already proved no real change is left); a worktree that still will not go, for any other reason
+  # (locked, in use), is never rm -rf'd and its lane is never archived.
+  if git -C "$REPOS/$repo" worktree remove "$d" 2>/dev/null; then echo "removed worktree $d"
+  elif [ "$DISCARD_IGNORED" = 1 ] && [ "$(lane_dirty_count "$d")" = 0 ] && git -C "$REPOS/$repo" worktree remove --force "$d" 2>/dev/null; then echo "removed worktree $d"
+  else
+    REMOVE_FAILED="$REMOVE_FAILED $repo"
+    echo "could not remove worktree $d:" >&2
+    git -C "$REPOS/$repo" worktree remove "$d" 2>&1 | sed 's/^/  /' >&2 || true
+    continue
+  fi
   [ "$DELETE_BRANCHES" = 1 ] && git -C "$REPOS/$repo" branch -D "$branch" && echo "deleted branch $branch"
 
   sdir="$HOME/.claude/projects/$(claude_project_dir "$d")"
@@ -86,6 +149,10 @@ while read -r repo branch; do d="$LANES/$id/$repo"; [ -d "$d" ] || continue
     esac
   fi
 done < <(lane_repos "$id")
+if [ -n "$REMOVE_FAILED" ]; then
+  echo "not archiving $id — the worktree of:$REMOVE_FAILED could not be removed (see above); fix that and rerun lane done $id" >&2
+  exit 1
+fi
 rmdir "$LANES/$id" 2>/dev/null || rm -rf "$LANES/$id"
 if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then
   echo; echo "This lane has findings that will be archived with it:"

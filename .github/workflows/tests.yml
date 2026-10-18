@@ -1,0 +1,41 @@
+name: Tests
+
+# Every suite, one command each. All of them build their own throwaway control plane under a
+# temporary HOME with local bare repos as remotes: nothing here needs installing, logging in or
+# reaching the network.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  suites:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS runs on /bin/bash (3.2, what every Mac ships); Linux on the distro's bash
+          - os: ubuntu-latest
+            bash: bash
+          - os: macos-latest
+            bash: /bin/bash
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set a git identity (the suites commit in scratch repos)
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.com"
+      - name: Put matrix bash first on PATH (so `#!/usr/bin/env bash` and nested `bash` calls use it too)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pinned-bin"
+          ln -sf "$(command -v ${{ matrix.bash }})" "$RUNNER_TEMP/pinned-bin/bash"
+          echo "$RUNNER_TEMP/pinned-bin" >> "$GITHUB_PATH"
+      - name: Show the bash under test
+        run: ${{ matrix.bash }} --version | head -1
+      - name: Lane suite (dispatcher, memory, upgrade, park/done/brief, portability)
+        run: ${{ matrix.bash }} tests/run-all.sh
+      - name: Guard suite
+        run: ${{ matrix.bash }} scripts/hooks/test-guard.sh
+      - name: Board suite
+        run: ${{ matrix.bash }} scripts/board/smoke.sh

@@ -2,7 +2,7 @@
 # lane doctor — is the guard healthy, AND is it actually wired into every session?
 #
 #   guard-check         the evidence, in a few lines
-#   guard-check -v      the same, plus every wiring location and the full 184-case suite
+#   guard-check -v      the same, plus every wiring location and the full test suite
 #   guard-check -q      one line, for the top of the board; the detail appears only if it fails
 #
 # Exits non-zero, and explains, if any of it is wrong. Used by status-all and by `lane doctor`.
@@ -54,6 +54,8 @@ probe deny "a shell that prints a .env"           "$(bash_probe 'cat .env')"
 probe deny "writing a memory directly"            "$(file_probe Write "$AD/memory/brand-new-thing.md")"
 probe deny "a push to a default branch"           "$(bash_probe 'git push origin main')"
 probe deny "rewriting the git remote"             "$(bash_probe 'git remote set-url origin git@github.com:x/y.git')"
+probe deny "a push to main, written differently"  "$(bash_probe "git push origin 'main';")"
+probe deny "grepping a .env (Grep reaches it)"    '{"hook_event_name":"PreToolUse","tool_name":"Grep","cwd":"'"$AD"'","tool_input":{"pattern":"x","path":"'"$AD"'/repos/any/.env"}}'
 probe deny "deleting a GitHub repo"               "$(bash_probe 'gh repo delete your-org/api --yes')"
 # The control: ordinary work must come back undecided. A guard that refuses everything passes
 # every deny probe above and is still useless.
@@ -155,6 +157,16 @@ ad, verbose = sys.argv[1], sys.argv[2] == "1"
 guard = "scripts/hooks/guard.py"
 problems, seen = [], []
 
+def covers_search(hooks):
+    """Does the PreToolUse matcher that points at the guard include Glob and Grep? (No matcher at all means every tool.)"""
+    for m in hooks.get("PreToolUse") or []:
+        if not any(guard in (h.get("command") or "") for h in m.get("hooks", [])):
+            continue
+        pat = m.get("matcher")
+        if not pat or {"Glob", "Grep"} <= set(pat.split("|")):
+            return True
+    return False
+
 def check(path, label):
     seen.append(label)
     if not os.path.exists(path):
@@ -170,6 +182,8 @@ def check(path, label):
                 for arr in hooks.values() for m in arr for h in m.get("hooks", []))
     if not wired:
         problems.append(f"{label}: hooks do not point at guard.py — this session is UNGUARDED")
+    elif not covers_search(hooks):
+        problems.append(f"{label}: the PreToolUse matcher predates Glob/Grep, so searches skip the guard — run `lane resume` to rewrite it")
 
 lanes = f"{ad}/lanes"
 n_lanes = n_trees = 0
@@ -195,6 +209,8 @@ if os.path.exists(root):
         if not any(guard in (h.get("command") or "")
                    for arr in hooks.values() for m in arr for h in m.get("hooks", [])):
             problems.append("the control plane root: hooks do not point at guard.py")
+        elif not covers_search(hooks):
+            problems.append("the control plane root: the PreToolUse matcher predates Glob/Grep, so searches skip the guard — update .claude/settings.json")
     except Exception:
         problems.append("the control plane root: .claude/settings.json is not valid JSON")
 
@@ -285,13 +301,16 @@ for f in sorted(os.listdir(lanes_dir) if os.path.isdir(lanes_dir) else []):
         # Work happened here if the branch is ahead of its base, or was pushed at some point.
         if ahead_base != "0" or git(d, "rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}"):
             own += 1
-        if git(d, "rev-parse", "-q", "--verify", "@{u}"):
-            ahead_up = git(d, "rev-list", "--count", "@{u}..HEAD") or "0"
+        # The shared definition (scripts/gitstate.sh lane_unpushed): commits on HEAD that no origin/* branch
+        # has. Not @{u}: a lane branch is cut from origin/<base>, so its upstream is the base branch.
+        if not git(d, "remote", "get-url", "origin"):
+            tracked = False           # no origin at all: `lane done` will refuse it, so never suggest it
+        else:
+            ahead_up = git(d, "rev-list", "--count", "HEAD", "--not", "--remotes=origin") or "0"
             if ahead_up != "0":
                 unpushed += int(ahead_up)
                 tracked = False
-        else:
-            tracked = False           # never pushed: `lane done` will refuse it, so never suggest it
+            # (HEAD already on some origin/* branch: nothing is unpushed, whatever the upstream says)
     clean = dirty == 0 and unpushed == 0
     if contained and clean and tracked and own:
         bucket, why, cmd = "finished", "merged into its base and fully pushed", f"lane done {lid}"
@@ -539,8 +558,11 @@ fi
 if [ "$VERBOSE" = 1 ]; then
   echo
   echo "the full suite (it builds its own throwaway control plane; your lanes are not touched):"
-  bash "$(dirname "$G")/test-guard.sh" | sed 's/^/  /' || exit 1
+  # the suite's own exit status, not sed's: a failing suite must fail `lane doctor -v`
+  suite_rc=0; bash "$(dirname "$G")/test-guard.sh" > "${TMPDIR:-/tmp}/guard-suite.$$.txt" 2>&1 || suite_rc=$?
+  sed 's/^/  /' "${TMPDIR:-/tmp}/guard-suite.$$.txt"; rm -f "${TMPDIR:-/tmp}/guard-suite.$$.txt"
+  [ "$suite_rc" = 0 ] || exit "$suite_rc"
 elif [ "$QUIET" = 0 ]; then
-  echo "184 more cases behind this:  lane doctor -v"
+  echo "hundreds more cases behind this (the whole suite):  lane doctor -v"
 fi
 exit 0
