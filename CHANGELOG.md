@@ -10,6 +10,24 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 Nothing yet.
 
+## [0.9.1] — 2026-10-18
+
+### Fixed
+
+- **A session inside a lane can now save its Goal and Findings.** The dispatcher text and the control
+  plane's `CLAUDE.md` tell a lane session to write its lane file (`registry/lanes/<id>.md`), and the
+  guard allows exactly that edit, but the file sits in the control plane root, outside the lane's
+  folder, and Claude Code refuses a path outside the session's folder unless a rule allows it: the
+  session could not even read its own lane file ("you haven't granted it yet") and had to suggest
+  leaving the lane to write the Goal from the root. `lane start`, `lane with` and every refresh now write an
+  allow rule for that one file (`Read` and `Edit`, as an absolute `//` path, which is the form Claude
+  Code accepts) into the lane's settings. Nothing else under `registry/` is reachable from a lane, and
+  another lane's file stays refused by both layers; `tests/t_lanefile.sh` covers the rules, the refresh
+  and the guard, and the edit was checked with real Claude Code. A lane made earlier picks the rule up the
+  next time `lane start`, `resume`, `done`, `merge` or `ref` refreshes it. The `CLAUDE.md` template now
+  names this exception to "change the control plane from the root" (rule 12); an existing control
+  plane keeps the `CLAUDE.md` it already has, so add that sentence by hand if you want it there.
+
 ## [0.9.0] — 2026-10-18
 
 ### Added
@@ -616,7 +634,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/aj-oss-tools/repolane/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/aj-oss-tools/repolane/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/aj-oss-tools/repolane/compare/v0.7.2...v0.8.0
