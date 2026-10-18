@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # lane-add <git-url|path-to-existing-checkout> [name] [--local <path-you-already-have>]
-# implements `lane add`. Not to be confused with lane-with, which implements `lane with` (add a
-# repo to a lane already started) — see scripts/README.md's naming note if these get mixed up again.
 # Brings a repo under management at any time: clone (or copy an existing checkout's .git), register in
 # registry/repos.yaml, create memory/<name>, and point the repo's Claude project memory at it.
 # A local checkout with no origin remote is registered as local-only — no push/fetch/PR features
 # until an origin is added with: git -C repos/<name> remote add origin <url>.
+
+# Not to be confused with lane-with, which implements `lane with` (add a repo to a lane already
+# started) — see scripts/README.md's naming note if these get mixed up again.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 url="${1:-}"; [ -n "$url" ] || die "usage: lane-add <git-url|path-to-existing-checkout> [name]"
 name="${2:-}"; [ "${name#--}" != "$name" ] && name=""
 from=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--from" ] && j=$((i+1)) && from="${!j}"; done
@@ -105,7 +107,9 @@ if [ -n "$candidates" ]; then
     read -r yn || true
     case "${yn:-n}" in
       [yY]*)
-        mapfile -t cand_arr <<< "$candidates"
+        # (not `mapfile`: macOS ships bash 3.2, which does not have it)
+        cand_arr=()
+        while IFS= read -r cand_line; do [ -z "$cand_line" ] || cand_arr+=("$cand_line"); done <<< "$candidates"
         "$AD/scripts/repo-secrets" "$name" add "${cand_arr[@]}"
         ;;
       *) echo "  skipped. To deny a real secret later: lane secrets $name add <path>...  To dismiss a false positive without denying it: lane secrets $name ignore <path>..." ;;

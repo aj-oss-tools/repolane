@@ -5,6 +5,7 @@
 # Refs live in the lane frontmatter (refs:), appear as symlinks under lanes/<id>/refs/<name>, and are
 # granted read access by the guard + additionalDirectories. --rw allows edits there too.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 id="${1:-}"; cmd="${2:-list}"; f=$(lane_file "$id"); [ -f "$f" ] || die "no lane '$id'"
 case "$cmd" in
   add)
@@ -15,7 +16,7 @@ case "$cmd" in
     mode=read; note=""; shift 3
     for a in "$@"; do [ "$a" = "--rw" ] && mode=rw || note="$a"; done
     name=$(basename "$src"); mkdir -p "$LANES/$id/refs"
-    [ -e "$LANES/$id/refs/$name" ] && [ "$(readlink "$LANES/$id/refs/$name")" != "$src" ] && name="$name-$(printf '%s' "$src" | md5 | cut -c1-6)"
+    [ -e "$LANES/$id/refs/$name" ] && [ "$(readlink "$LANES/$id/refs/$name")" != "$src" ] && name="$name-$(printf '%s' "$src" | python3 -c 'import hashlib,sys;print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:6])')"
     ln -sfn "$src" "$LANES/$id/refs/$name"
     python3 - "$f" "$src" "$note" "$mode" "$name" <<'PY'
 import sys,re

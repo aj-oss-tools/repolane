@@ -80,7 +80,9 @@ for spec in "$@"; do
   if git -C "$REPOS/$repo" show-ref --verify -q "refs/heads/$branch"; then
     git -C "$REPOS/$repo" fetch -q origin 2>/dev/null || true
     git -C "$REPOS/$repo" worktree add -q "$dst" "$branch"; echo "worktree $dst on existing branch $branch"
+    # the upstream is only a base when it is another branch: after `git push -u origin <id>` it is origin/<id> itself
     base=$(git -C "$REPOS/$repo" rev-parse --abbrev-ref "$branch@{u}" 2>/dev/null || echo "$def")
+    case "$base" in */"$branch") base="$def" ;; esac
   else
     ref=$(resolve_base "$repo" "$base") || die "cannot start $repo: no such base"
     git -C "$REPOS/$repo" worktree add -q -b "$branch" "$dst" "$ref"; echo "worktree $dst on new branch $branch (from $ref)"

@@ -2,6 +2,7 @@
 # Claude Code status line (design A): line 1 = where you are, line 2 = only repos that need attention.
 AD="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd)"
 input=$(cat)
+source "$AD/scripts/gitstate.sh" 2>/dev/null || { lane_unpushed(){ echo "?"; }; lane_dirty_count(){ git -C "$1" status --porcelain 2>/dev/null | wc -l | tr -d " "; }; }
 read -r cwd model ctx <<<"$(printf '%s' "$input" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
 cwd=d.get("cwd") or d.get("workspace",{}).get("current_dir","")
@@ -21,8 +22,8 @@ case "$cwd" in
     items=(); n=0
     for d in "$AD/lanes/$id"/*/; do r=$(basename "$d"); [ -e "$d/.git" ] || continue
       n=$((n+1))
-      dirty=$(git -C "$d" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-      up=$(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null); [ -z "$up" ] && up="?"
+      dirty=$(lane_dirty_count "$d" 2>/dev/null || echo 0)
+      up=$(lane_unpushed "$d"); [ "$up" = local ] && up=0; [ -z "$up" ] && up="?"
       s=$(short "$r")
       if [ "$dirty" != 0 ] || [ "$up" != 0 ]; then
         it="$s"; [ "$up" != 0 ] && it="$it ↑$up"; [ "$dirty" != 0 ] && it="$it ✎$dirty"

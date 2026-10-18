@@ -12,8 +12,8 @@
 # the registry helper installed alongside it), then execs THAT checkout's own real `lane`
 # dispatcher — the one with the full command table — with the original arguments unchanged.
 #
-# The one thing it handles itself is `lane use`, because that command mutates the registry rather
-# than delegating to any one checkout.
+# The one thing it handles itself is `lane use` (list, switch, or `--remove <name>` to forget a
+# plane), because that command mutates the registry rather than delegating to any one checkout.
 set -u
 
 PY="$HOME/.local/share/lane/planes.py"
@@ -26,7 +26,10 @@ fi
 
 cmd="${1:-}"
 if [ "$cmd" = "use" ]; then
-  if [ -n "${2:-}" ]; then
+  if [ "${2:-}" = "--remove" ]; then
+    [ -n "${3:-}" ] || { echo "usage: lane use --remove <name>   (forget a registered plane; its folder is not touched)" >&2; exit 2; }
+    python3 "$PY" unregister "$3"
+  elif [ -n "${2:-}" ]; then
     python3 "$PY" use "$2" "$CWD"
   else
     python3 "$PY" list "$CWD"

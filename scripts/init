@@ -310,7 +310,9 @@ fi
 if [ -f "$AD/CLAUDE.md" ]; then
   kept "CLAUDE.md"
 elif [ -f "$AD/CLAUDE.md.template" ]; then
-  sed "s/the owner/$OWNER/g" "$AD/CLAUDE.md.template" > "$AD/CLAUDE.md"; made "CLAUDE.md"
+  # the template's placeholder is {{owner}}; escape the name so a "/" or "&" in it cannot break the substitution
+  OWNER_SED=$(printf '%s' "$OWNER" | sed 's/[\/&]/\\&/g')
+  sed "s/{{owner}}/$OWNER_SED/g" "$AD/CLAUDE.md.template" > "$AD/CLAUDE.md"; made "CLAUDE.md"
 fi
 
 # ---------------------------------------------------------------- 3b. private: true tracks the files that are gitignored by default
@@ -381,9 +383,11 @@ PY
 fi
 
 # ---------------------------------------------------------------- 4. memory where Claude looks for it
-# Claude Code keeps per-project data under ~/.claude/projects/<path with / and _ turned into ->.
+# Claude Code keeps per-project data under ~/.claude/projects/<path with every character outside A-Za-z0-9- turned into ->.
 # Pointing that folder's `memory` at ours keeps memory versioned here instead of in a cache.
-slug=$(printf '%s' "$AD" | sed 's#[/_]#-#g')
+# The same rule as claude_project_dir in scripts/lib.sh (init runs before a plane has a lib to source).
+claude_project_dir(){ printf '%s' "$1" | LC_ALL=C sed 's#[^A-Za-z0-9-]#-#g'; }
+slug=$(claude_project_dir "$AD")
 proj="$CLAUDE_HOME/projects/$slug"
 mkdir -p "$proj"
 if [ -L "$proj/memory" ]; then

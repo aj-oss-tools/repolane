@@ -33,7 +33,8 @@ while [ $# -gt 0 ]; do
 done
 
 PROJ="$CLAUDE_HOME/projects"
-[ -d "$PROJ" ] || { echo "No Claude conversations on this machine yet ($PROJ)."; exit 0; }
+# exit 1 when there is nothing to show, so a script can tell "found none" from "found some"
+[ -d "$PROJ" ] || { echo "No Claude conversations on this machine yet ($PROJ)."; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 1. Scan. For each transcript: which folder it belonged to, when, how long, and
@@ -116,7 +117,7 @@ rows.sort(key=lambda r: -r["sort"])
 print(json.dumps(rows))
 PY
 COUNT=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$SCAN")
-[ "$COUNT" = 0 ] && { echo "No conversations found under $PROJ."; exit 0; }
+[ "$COUNT" = 0 ] && { echo "No conversations found under $PROJ."; exit 1; }
 
 show(){ python3 - "$SCAN" "$1" <<'PY'
 import json, sys

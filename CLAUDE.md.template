@@ -23,7 +23,7 @@ It is loaded into every session started anywhere below it.
    or repo set; anything under `~/.claude`, shell rc files or other global config; deleting, renaming or pushing
    anything; scope, design or approach choices. One question at a time. Silence is not consent.
 2. Stay in the lane you are in. Never `cd` out of it — a cd moves the session and the way back is
-   EnterWorktree, so one cd for convenience strands you. The `lane-*` scripts run from anywhere without a cd; reach
+   EnterWorktree, so one cd for convenience strands you. The `lane-*` scripts run from anywhere without a cd, but call them by ABSOLUTE path (`<control-plane>/scripts/lane-brief`; SessionStart prints the real scripts dir) — a relative `scripts/…` does not exist from the lane root and exits 127; reach
    another repo of the lane with `git -C ../<repo>` or an absolute path; write temporary files by absolute
    path under /tmp. Moving around inside your own lane is fine.
 3. From the dispatcher root, a lane's files are out of reach — no reading, no editing, no Bash touching

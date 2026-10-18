@@ -12,7 +12,7 @@
 # The shared repo's root is expected to hold: rules.yaml (required, same schema as
 # registry/rules.yaml), and optionally scripts.d/ (files copied into scripts/local/) and
 # knowledge.d/ (files copied into knowledge/shared/ — see below).
-#
+
 # Security properties, all load-bearing — see docs/extending.md before changing any of them:
 #   - SHA-pinned, never tracking a branch tip. Advancing the pin is always an explicit, separate
 #     step (--latest), never a side effect of an ordinary pull.
@@ -151,18 +151,27 @@ PY
 
     if [ -d "$REPO_DIR/scripts.d" ]; then
       mkdir -p "$AD/scripts/local"
-      n=0
+      n=0; kept=""
+      # Names an earlier pull put in scripts/local/. Anything else already there is the user's own
+      # file (docs/extending.md: that folder is theirs) and a shared script must not replace it.
+      MANIFEST="$CACHE/scripts-pulled"; touch "$MANIFEST"
       for f in "$REPO_DIR/scripts.d"/*; do
         # A symlink passes [ -f ] (it follows the link) -- reject it explicitly first, so a
         # shared repo can't ship a symlink to an arbitrary file readable by whoever pulls it and
         # have its contents copied in under an innocent-looking name.
         [ -L "$f" ] && { echo "  skipped scripts.d/$(basename "$f") — a symlink, not a plain file" >&2; continue; }
         [ -f "$f" ] || continue
-        cp "$f" "$AD/scripts/local/$(basename "$f")"
-        chmod +x "$AD/scripts/local/$(basename "$f")"
+        b=$(basename "$f")
+        if [ -e "$AD/scripts/local/$b" ] && ! grep -qxF "$b" "$MANIFEST" && ! cmp -s "$f" "$AD/scripts/local/$b"; then
+          kept="$kept $b"; continue
+        fi
+        cp "$f" "$AD/scripts/local/$b"
+        chmod +x "$AD/scripts/local/$b"
+        grep -qxF "$b" "$MANIFEST" || echo "$b" >> "$MANIFEST"
         n=$((n+1))
       done
       [ "$n" -gt 0 ] && echo "copied $n script(s) from scripts.d/ into scripts/local/"
+      [ -z "$kept" ] || echo "kept your own scripts/local/ file(s), did not overwrite:$kept — rename or delete yours to take the shared one" >&2
     fi
 
     # knowledge.d/ (optional) — plain markdown, read by a session, not enforced by anything, so

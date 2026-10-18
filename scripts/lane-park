@@ -1,12 +1,66 @@
 #!/usr/bin/env bash
 # lane-park <id> "<resume note>": wip-commit any dirty worktree on its branch, record the note, status=parked.
+# Files whose NAME says secret (.env, *.pem, *credentials*.json, ... — the guard's list) are never
+# committed: they stay on disk, untracked, and park says which it left out.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
+export GIT_LITERAL_PATHSPECS=1   # every path below is a literal name, never a glob (a file called ".env*" must not pull .env in)
 id="${1:-}"; note="${2:-}"; f=$(lane_file "$id"); [ -f "$f" ] || die "no lane '$id'"
 # The note is what you read in a week. The board already insists on a real one; so does this.
 [ "${#note}" -ge 10 ] || die "the resume note needs at least 10 characters — where things stand, next step, blockers"
 [ -n "$note" ] || die "a resume note is required"
+# changed_paths <worktree> : NUL-separated paths git status reports as changed, secret by name.
+# Renames and copies carry a second (origin) path in -z output; it is read and dropped.
+changed_paths(){
+  git -C "$1" status --porcelain -z --untracked-files=all | python3 -c '
+import sys
+f = sys.stdin.buffer.read().split(b"\0"); i = 0
+while i < len(f):
+    e = f[i]; i += 1
+    if len(e) < 4: continue
+    if e[:1] in b"RC" or e[1:2] in b"RC": i += 1
+    sys.stdout.buffer.write(e[3:] + b"\0")'
+}
+park_worktree(){ # $1 = repo, $2 = worktree
+  local repo="$1" d="$2" all secret staged_secret allow
+  all=$(mktemp "${TMPDIR:-/tmp}/lane-park.XXXXXX"); secret=$(mktemp "${TMPDIR:-/tmp}/lane-park.XXXXXX")
+  changed_paths "$d" > "$all"
+  lane_secret_paths "$d" < "$all" > "$secret"
+  # a secret somebody already staged would ride along in the commit: stop rather than unstage it for them
+  staged_secret=$(git -C "$d" diff --cached --name-only -z | lane_secret_paths "$d" | tr '\0' ' ')
+  if [ -n "$staged_secret" ]; then
+    rm -f "$all" "$secret"
+    die "$repo has secret file(s) staged: ${staged_secret% } — unstage them (git -C $d reset -- <file>) and park again; nothing was committed"
+  fi
+  # Stage everything that changed except the secrets, by explicit path. Done in python so that an
+  # empty list stages nothing (`xargs git add -A --` with no paths would stage the whole tree on GNU).
+  python3 - "$d" "$all" "$secret" <<'PY'
+import subprocess, sys
+d, allf, secf = sys.argv[1:]
+skip = set(open(secf, "rb").read().split(b"\0"))
+paths = [p for p in open(allf, "rb").read().split(b"\0") if p and p not in skip]
+for i in range(0, len(paths), 200):
+    subprocess.run([b"git", b"--literal-pathspecs", b"-C", d.encode(), b"add", b"-A", b"--"] + paths[i:i+200], check=True)
+PY
+  # Belt and braces: whatever got staged, re-check it against the secret filter. A match means the
+  # staging did something other than what was asked: unstage it and stop before committing.
+  staged_secret=$(git --literal-pathspecs -C "$d" diff --cached --name-only -z | lane_secret_paths "$d" | tr '\0' ' ')
+  if [ -n "$staged_secret" ]; then
+    git --literal-pathspecs -C "$d" diff --cached --name-only -z | lane_secret_paths "$d" \
+      | xargs -0 git --literal-pathspecs -C "$d" reset -q -- 2>/dev/null
+    rm -f "$all" "$secret"
+    die "$repo: secret file(s) ended up staged (${staged_secret% }) — unstaged them, nothing was committed"
+  fi
+  if ! git -C "$d" diff --cached --quiet; then
+    git -C "$d" commit -q -m "wip: park $id $(date +%F)" && echo "wip commit in $repo"
+  fi
+  if [ -s "$secret" ]; then
+    echo "  left out of the commit (secret file names, still on disk): $(tr '\0' ' ' < "$secret" | sed 's/ $//')"
+  fi
+  rm -f "$all" "$secret"
+}
 while read -r repo branch; do d="$LANES/$id/$repo"; [ -d "$d" ] || continue
-  if [ -n "$(git -C "$d" status --porcelain)" ]; then git -C "$d" add -A && git -C "$d" commit -q -m "wip: park $id $(date +%F)" && echo "wip commit in $repo"; fi
+  if [ -n "$(git -C "$d" status --porcelain)" ]; then park_worktree "$repo" "$d"; fi
 done < <(lane_repos "$id")
 python3 - "$f" "$note" <<'PY'
 import sys,re,datetime

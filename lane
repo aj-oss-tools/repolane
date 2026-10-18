@@ -25,7 +25,7 @@ map(){ case "$1" in
   resume)      echo "$S/lane-resume|pick work back up: lane resume <id>" ;;
   park)        echo "$S/lane-park|leave work for later: lane park <id> \"<note>\"" ;;
   done)        echo "$S/lane-done|finish and clean up: lane done <id>" ;;
-  status)      echo "$S/status-all|where everything stands" ;;
+  status)      echo "$S/status-all|where everything stands (fetches origin in each repo first)" ;;
   brief)       echo "$S/lane-brief|catch up on one piece of work: lane brief <id>" ;;
   board)       echo "$S/lane-board|open the board in a browser" ;;
   with)        echo "$S/lane-with|add a repo to work already started: lane with <id> <repo>" ;;
@@ -61,7 +61,7 @@ usage(){
     line=$(map "$c"); printf "    \e[1m%-10s\e[0m %s\n" "$c" "${line#*|}"
   done
   printf '\n    %-10s %s\n' "install" "put lane on your PATH so it works from anywhere"
-  printf '    %-10s %s\n\n' "use" "switch which registered plane is active (handled by the stable ~/.local/bin/lane dispatcher)"
+  printf '    %-10s %s\n\n' "use" "switch which registered plane is active; lane use --remove <name> forgets one (stable ~/.local/bin/lane dispatcher)"
   # scripts/local/<name> (docs/extending.md): any executable there is a `lane <name>` too. Listed
   # separately, after the built-ins, so a shadowed name is never confused for one of them.
   if [ -d "$AD/scripts/local" ]; then
@@ -97,8 +97,9 @@ cmd="${1:-}"
 # line `lane help` shows, plus the script's own usage comment.
 if [ $# -ge 2 ] && { [ "$2" = "--help" ] || [ "$2" = "-h" ]; } && entry=$(map "$cmd"); then
   printf '\n  \e[1mlane %s\e[0m — %s\n\n' "$cmd" "${entry#*|}"
-  # the usage block is the comment lines at the top of the script, before the first blank
-  sed -n '2,/^$/p' "${entry%%|*}" | sed -n '/^#/p' | sed 's/^# \{0,1\}//' | sed 's/^/  /'
+  # The usage block is the comment lines directly under the shebang, up to the first line that is
+  # not a comment. Comments further down are for whoever maintains the script, not for the user.
+  awk 'NR==1{next} /^#/{print; next} {exit}' "${entry%%|*}" | sed 's/^# \{0,1\}//' | sed 's/^/  /'
   echo
   exit 0
 fi
@@ -180,15 +181,16 @@ case "$cmd" in
     # The 27 long-form names (lane-start, lane-brief, guard-check, …) had the exact same
     # ambiguity bare `lane` did. Each is now a tiny stub that routes THROUGH the stable
     # dispatcher's own resolution rather than reimplementing it 27 times. The short-name mapping
-    # is 1:1 and mechanical for 25 of them (strip `lane-`); `lane-memory` -> `note` and
-    # `guard-check` -> `doctor` are the two documented exceptions (see `map()` above) — spelled
-    # out here rather than guessed at.
+    # is 1:1 and mechanical for most of them (strip `lane-`); the exceptions (see `map()` above)
+    # are spelled out in longform_short() rather than guessed at.
     LONGFORM_NAMES="lane-add lane-audit lane-board lane-brief lane-done lane-env-check lane-env-keys \
       lane-find lane-gh lane-help lane-import lane-init lane-memory lane-menu lane-merge \
       lane-merge-plan lane-nested lane-park lane-ref lane-resume lane-run lane-sessions \
       lane-start lane-status lane-with lane-workspace guard-check"
     longform_short(){ case "$1" in
       lane-memory) echo note ;;
+      lane-env-check) echo env ;;
+      lane-env-keys) echo keys ;;
       lane-merge-plan) echo plan ;;
       guard-check) echo doctor ;;
       lane-*) echo "${1#lane-}" ;;
@@ -267,14 +269,18 @@ except Exception:
     case ":$PATH:" in
       *":$dest:"*) echo "ready — run: lane" ;;
       *) echo; echo "add this to your shell profile, then open a new terminal:"; echo "  export PATH=\"$dest:\$PATH\"" ;;
-    esac; exit 0 ;;
+    esac
+    echo
+    echo "note: Claude can make mistakes. The hooks are a guardrail, not a sandbox: review what Claude changes."
+    echo "      Provided as is, without warranty, under Apache-2.0 (see LICENSE)."
+    exit 0 ;;
 esac
 
 if entry=$(map "$cmd"); then
   # Before `lane init` there is no registry, and these commands used to fail with raw git
   # or Python errors. Say the one thing that helps.
   case "$cmd" in
-    init|help|"") : ;;
+    init|help) : ;;
     *) [ -f "$AD/registry/repos.yaml" ] || {
          printf '\e[31mlane: this control plane is not set up yet\e[0m\n' >&2
          echo "  run:  lane init" >&2

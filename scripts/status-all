@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # status-all: one board — repos, lanes, drift.
+# Runs `git fetch origin` in every repo under repos/ first (quietly; a failed fetch is ignored),
+# so "behind origin" is current. That is the only network access it makes.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
+source "$AD/scripts/gitstate.sh"
 "$AD/scripts/hooks/guard-check" -q || echo "   (fix guard.py before trusting any of the state below)"
 echo "== control plane (this checkout itself — docs/concepts.md: \"the clone is the control plane\")"
 if [ -d "$AD/.git" ] || [ -f "$AD/.git" ]; then
@@ -8,8 +11,8 @@ if [ -d "$AD/.git" ] || [ -f "$AD/.git" ]; then
   # No upstream configured (a fresh clone that's never been pushed) makes `git log @{u}..HEAD`
   # exit non-zero; under lib.sh's `set -euo pipefail` that kills the whole script right here,
   # silently truncating everything below -- `|| true` so an absent upstream just reads as 0.
-  cp_unpushed=$(git -C "$AD" log --oneline '@{u}..HEAD' 2>/dev/null | wc -l | tr -d ' ' || true)
-  cp_unpushed=${cp_unpushed:-0}
+  # same definition as every other count: commits no origin branch has (gitstate.sh), not "ahead of @{u}"
+  cp_unpushed=$(lane_unpushed "$AD"); case "$cp_unpushed" in local|'?'|'') cp_unpushed=0 ;; esac
   if git -C "$AD" remote get-url origin >/dev/null 2>&1; then
     cp_push_url=$(git -C "$AD" remote get-url --push origin 2>/dev/null || echo "")
     if [ "$cp_push_url" = "DISABLED-set-a-private-remote-first" ]; then
@@ -25,7 +28,8 @@ else
   echo "  not a git repo — memory/, knowledge/, CLAUDE.md are not tracked anywhere"
 fi
 echo "== repos (primary mirrors)"
-for r in "$REPOS"/*/; do n=$(basename "$r"); def=$(repo_default "$n")
+for r in "$REPOS"/*/; do [ -e "$r/.git" ] || continue   # no repos yet: the glob stays literal
+  n=$(basename "$r"); def=$(repo_default "$n")
   git -C "$r" fetch -q origin 2>/dev/null || true
   b=$(git -C "$r" rev-list --count "$def..origin/$def" 2>/dev/null || echo ?)
   dirty=$(git -C "$r" status --porcelain | wc -l | tr -d ' '); cur=$(git -C "$r" branch --show-current)
@@ -41,7 +45,7 @@ echo "== lanes"
 for f in "$LANES_DIR"/*.md; do [ -f "$f" ] || continue; id=$(basename "$f" .md)
   echo "  $id [$(lane_get "$id" status)] updated $(lane_get "$id" updated) ticket=$(lane_get "$id" ticket)"
   while read -r repo branch; do d="$LANES/$id/$repo"
-    if [ -d "$d" ]; then echo "     $repo/$branch: $(git -C "$d" status --porcelain | wc -l | tr -d ' ') dirty, $(git -C "$d" log --oneline '@{u}..HEAD' 2>/dev/null | wc -l | tr -d ' ') unpushed"; else echo "     $repo/$branch: no worktree (lane-resume recreates)"; fi
+    if [ -d "$d" ]; then echo "     $repo/$branch: $(lane_dirty_count "$d") dirty, $(lane_unpushed_text "$d")"; else echo "     $repo/$branch: no worktree (lane-resume recreates)"; fi
   done < <(lane_repos "$id")
 done
 echo "== drift: checkouts outside the control plane (should be none; work happens here)"

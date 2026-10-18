@@ -13,6 +13,8 @@ The registry itself lives at ~/.local/share/lane/planes.json:
   {"planes": {"<name>": {"path": "<absolute-checkout-path>", "registered": "<ISO date>"}},
    "active": "<name-or-null>"}
 
+Subcommands: resolve, list, use, register, unregister, doctor, find-by-path.
+
 Resolution order (see resolve_ad and CONTRIBUTING.md's incident writeup): the plane whose path
 contains the caller's cwd wins outright, over whatever is "active" — being physically inside a
 project's directory tree always wins, which is the actual fix for the cross-contamination bug
@@ -118,6 +120,25 @@ def cmd_use(name, cwd):
     return 0
 
 
+def cmd_unregister(name):
+    """Forget a plane. Only the registry entry goes: the checkout itself is never touched. If it
+    was the active plane there is none afterwards (guessing a replacement is how the wrong
+    project's data got used once) -- `lane use <name>` picks one."""
+    data = load()
+    if name not in data["planes"]:
+        sys.stderr.write(f"lane: no such plane '{name}' registered — `lane use` lists them\n")
+        return 1
+    path = data["planes"].pop(name).get("path", "")
+    was_active = data.get("active") == name
+    if was_active:
+        data["active"] = None
+    save(data)
+    print(f"unregistered plane '{name}' ({path}) — the folder itself was not touched")
+    if was_active:
+        print("no active plane now — run `lane use <name>` to choose one")
+    return 0
+
+
 def cmd_register(name, path, make_active, force=False):
     data = load()
     path = norm(path)
@@ -192,6 +213,11 @@ def main():
             sys.stderr.write("usage: planes.py use <name> [cwd]\n")
             return 2
         return cmd_use(args[1], args[2] if len(args) > 2 else os.getcwd())
+    if sub == "unregister":
+        if len(args) < 2:
+            sys.stderr.write("usage: planes.py unregister <name>\n")
+            return 2
+        return cmd_unregister(args[1])
     if sub == "register":
         if len(args) < 3:
             sys.stderr.write("usage: planes.py register <name> <path> [--make-active] [--force]\n")

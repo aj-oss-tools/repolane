@@ -2,4 +2,4 @@
 # lane-env-keys [path|dir]  — variable NAMES defined in an env file, never the values. Default: ./.env
 f="${1:-.env}"; [ -d "$f" ] && f="$f/.env"
 [ -f "$f" ] || { echo "no such env file: $f" >&2; exit 1; }
-echo "variables in $f (names only):"; sed -n 's/^[[:space:]]*\(export[[:space:]]\+\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*=.*/  \2/p' "$f" | sort -u
+echo "variables in $f (names only):"; sed -n 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*=.*/  \2/p' "$f" | sort -u
