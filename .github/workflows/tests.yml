@@ -22,6 +22,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # full history and tags: tests/t_upgrade_path.sh installs the latest release tag and runs
+          # that release's own `lane upgrade` onto this checkout
+          fetch-depth: 0
       - name: Set a git identity (the suites commit in scratch repos)
         run: |
           git config --global user.name "ci"
@@ -33,7 +37,7 @@ jobs:
           echo "$RUNNER_TEMP/pinned-bin" >> "$GITHUB_PATH"
       - name: Show the bash under test
         run: ${{ matrix.bash }} --version | head -1
-      - name: Lane suite (dispatcher, memory, upgrade, park/done/brief, portability)
+      - name: Lane suite (dispatcher, memory, upgrade, upgrade path from the last release, park/done/brief, portability)
         run: ${{ matrix.bash }} tests/run-all.sh
       - name: Guard suite
         run: ${{ matrix.bash }} scripts/hooks/test-guard.sh
