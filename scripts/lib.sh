@@ -95,7 +95,8 @@ lf="/"+ad+"/registry/lanes/"+id_+".md"
 OWN=(f"Read({lf})",f"Edit({lf})")+tuple(f"Read(/{ad}/{x}/**)" for x in ("memory","knowledge",".cache/memory-inbox"))
 own_prefix=("Read(/"+ad+"/registry/lanes/","Edit(/"+ad+"/registry/lanes/")   # an earlier lane's rule, or one for another id, is dropped
 perm["allow"]=sorted({x for x in perm.get("allow",[]) if x not in RETIRED and not x.startswith(own_prefix)}
-                     |{f"Bash({c}:*)" for c in READONLY_LANE+OWN_WRITES}|set(OWN))
+                     |{f"Bash({c}:*)" for c in READONLY_LANE+OWN_WRITES}
+                     |{f"Bash({ad}/scripts/{c}:*)" for c in READONLY_LANE+OWN_WRITES}|set(OWN))   # CLAUDE.md tells a session to call them by absolute path
 cur["autoMemoryDirectory"]=mem
 g=f"{ad}/scripts/hooks/guard.py"
 hk=lambda m=None,to=30:[{**({"matcher":m} if m else {}),"hooks":[{"type":"command","command":g,"timeout":to}]}]

@@ -58,6 +58,19 @@ echo "-- Claude Code refuses Edit/Write outside the worktree of a session that e
 echo "-- so a lane session saves its Goal and drafts through lane-memory, which runs without asking"
 assert_contains "lane-memory goal is pre-approved" "$(cat "$S1")" "Bash(lane-memory goal:*)"
 assert_contains "lane-memory draft is pre-approved" "$(cat "$S1")" "Bash(lane-memory draft:*)"
+for c in lane-brief lane-status "lane-memory goal" "lane-memory draft"; do
+  assert_contains "$c is pre-approved by absolute path too (CLAUDE.md says to call them that way)" "$(cat "$S1")" "Bash($PLANE/scripts/$c:*)"
+done
+assert_not_contains "filing a memory still asks" "$(cat "$S1")" "Bash($PLANE/scripts/lane-memory file"
+echo "-- every pre-approved command exists under scripts/ by the name CLAUDE.md gives (a session calls it by absolute path)"
+python3 - "$S1" "$PLANE" > "$T/cmds.txt" <<'PY'
+import json,sys,re
+d=json.load(open(sys.argv[1])); ad=sys.argv[2]
+for x in d["permissions"]["allow"]:
+    m=re.match(r"Bash\("+re.escape(ad)+r"/scripts/(lane-[a-z-]+)",x)
+    if m: print(m.group(1))
+PY
+for c in $(sort -u "$T/cmds.txt"); do assert_eq "scripts/$c exists and runs" "yes" "$([ -x "$PLANE/scripts/$c" ] && echo yes || echo no)"; done
 assert_not_contains "filing a memory still asks" "$(cat "$S1")" "Bash(lane-memory file"
 for d in memory knowledge .cache/memory-inbox; do
   assert_contains "Read of $d/ is allowed (Glob and Grep follow the Read rule)" "$(cat "$S1")" "Read(/$PLANE/$d/**)"

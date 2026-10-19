@@ -22,6 +22,10 @@ written down. Inside a git checkout it also says how far past the release tag yo
   rule to its search tools too, which the headless test here could not exercise). The control plane's `CLAUDE.md` and the hook's reminders say to use these
   commands instead of Edit or Write. `tests/t_lanefile.sh` covers the commands, the rules and the guard,
   and a real Claude Code session that entered a worktree saved a Goal and a draft and read both folders.
+  The same trace found that `CLAUDE.md` tells a session to call the `lane-*` scripts by absolute path while
+  the pre-approved rules named only the bare commands, so following the instructions meant an approval prompt for
+  every call; the rules now cover both forms. `lane-status`, `lane-menu` and `lane-sessions` also exist under
+  `scripts/` now, so the absolute path `CLAUDE.md` gives no longer ends in "No such file" (exit 127).
   A lane made earlier picks the rules up the next time `lane start`, `with`, `resume`, `done`, `merge` or `ref` refreshes it.
 
 ## [0.9.1] — 2026-10-18
