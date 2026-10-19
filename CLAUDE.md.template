@@ -51,11 +51,13 @@ It is loaded into every session started anywhere below it.
 12. Never write memory or preference files directly — the hook refuses it. Four scopes, decided by how long the thing
    stays true: `pref` (how to work with {{owner}}, always) · `cross` (true in every repo) · `repo` (one repo, still true
    after this ticket ships) · `lane` (only while this lane is live, archived with it — its `## Findings`).
-   `lane-memory draft <slug>`, write the draft, ask {{owner}} which scope with a recommendation, then
+   `lane-memory draft <slug> "<draft>"` (or `-` and a heredoc), ask {{owner}} which scope with a recommendation, then
    `lane-memory file <slug> lane|repo <repo>|cross|pref`. Editing a memory that already exists is allowed from a
    dispatcher session at the root (its scope is settled); creating one never is. Same for the control plane (scripts, CLAUDE.md, registry,
    .claude): propose it, and change it from a dispatcher session, never from inside a lane. The one exception is your own
-   lane file, `registry/lanes/<id>.md` (Goal, Findings, log): edit that one directly. Nothing else under `registry/` is yours.
+   lane file, `registry/lanes/<id>.md`: you may read it, and you set its Goal with `lane-memory goal "<text>"`
+   (Findings go in through `lane-memory file … lane`, the log and resume note through `lane park`). Do not try Edit or Write on it, or on
+   anything outside your lane folder: Claude Code refuses those once a session is in a worktree. Nothing else under `registry/` is yours.
 13. One checkout exists for you: the worktree you are in. Report git state only in the STATE form that arrives
    with each prompt (where you are, branch, ahead/behind origin, uncommitted). Never mention `repos/` or the old
    checkouts; they are frozen and the hook blocks them. In a resumed conversation, translate old paths silently.
@@ -93,7 +95,7 @@ the main one, and nothing needs it. **Never exit and re-enter to change repo.** 
 **Start new work** — propose first: the id (ticket key or slug), the repo(s), the base branch (default branch unless
 they say otherwise or the ticket clearly builds on another branch), in one line, and wait. On their yes:
 `lane start <id> <repo>[:<branch>][@<base>] ...`, then EnterWorktree `name: "<id>"`. Then draft the Goal
-section of `registry/lanes/<id>.md` from what they said and show it to them.
+from what they said, show it to them, and on their yes save it with `lane-memory goal "<text>"`.
 **Add a repo to the current lane** — `lane with <id> <repo>[:<branch>]`. The new worktree sits beside the
 current one; reach it by absolute path (the hook allows edits anywhere under lanes/<id>/).
 **Attach outside code or docs as a reference** — `lane ref <id> add <path> [note] [--rw]`. It appears under

@@ -54,5 +54,52 @@ echo "-- the CLAUDE.md template names the one exception"
 assert_contains "template rule 12 carves out the lane's own file" "$(cat "$PRODUCT/CLAUDE.md.template")" "your own"
 assert_contains "and says nothing else under registry/ is theirs" "$(cat "$PRODUCT/CLAUDE.md.template")" "Nothing else under \`registry/\` is yours"
 
+echo "-- Claude Code refuses Edit/Write outside the worktree of a session that entered one, whatever the rules say,"
+echo "-- so a lane session saves its Goal and drafts through lane-memory, which runs without asking"
+assert_contains "lane-memory goal is pre-approved" "$(cat "$S1")" "Bash(lane-memory goal:*)"
+assert_contains "lane-memory draft is pre-approved" "$(cat "$S1")" "Bash(lane-memory draft:*)"
+assert_not_contains "filing a memory still asks" "$(cat "$S1")" "Bash(lane-memory file"
+for d in memory knowledge .cache/memory-inbox; do
+  assert_contains "Read of $d/ is allowed (Glob and Grep follow the Read rule)" "$(cat "$S1")" "Read(/$PLANE/$d/**)"
+done
+lm_in(){ # <lane> <args...> : run lane-memory from inside that lane's folder, stdin passed through
+  local l="$1"; shift; (cd "$PLANE/lanes/$l" && "$PLANE/scripts/lane-memory" "$@" 2>&1); }
+out=$(printf 'Compare the two repos.\nDone is a short comparison.\n' | lm_in L1 goal -); rc=$?
+assert_eq "goal from inside the lane succeeds" 0 "$rc"
+assert_contains "the Goal is the text given" "$(cat "$F1")" "Compare the two repos."
+assert_not_contains "the placeholder is gone" "$(cat "$F1")" "one paragraph: what done looks like"
+assert_contains "the other sections are kept: resume note" "$(cat "$F1")" "## Resume note"
+assert_contains "the other sections are kept: findings" "$(cat "$F1")" "## Findings"
+assert_contains "the other sections are kept: log" "$(cat "$F1")" "started"
+assert_contains "frontmatter is kept" "$(head -3 "$F1")" "id: L1"
+printf 'Second goal.\n' | lm_in L1 goal - >/dev/null
+assert_not_contains "a second goal replaces the first" "$(cat "$F1")" "Compare the two repos."
+assert_eq "and appears once" 1 "$(grep -c '^## Goal' "$F1")"
+before=$(cat "$F2"); out=$(printf 'x\n' | lm_in L1 goal L2 -); rc=$?
+assert_eq "a lane session cannot set another lane's Goal" 1 "$rc"
+assert_eq "and the other lane's file is untouched" "$before" "$(cat "$F2")"
+out=$(printf '   \n' | lm_in L1 goal -); assert_eq "an empty Goal is refused" 1 "$?"
+out=$(printf 'x\n' | lm_in L1 goal ../x -); assert_eq "a path is not a lane id" 1 "$?"
+out=$(printf 'From the root.\n' | (cd "$PLANE" && "$PLANE/scripts/lane-memory" goal L2 - 2>&1)); assert_eq "from the plane root any lane's Goal can be set" 0 "$?"
+assert_contains "and it landed" "$(cat "$F2")" "From the root."
+printf -- '---\nname: dr1\ndescription: a finding that only matters now\nmetadata:\n  type: project\n---\n\nbody text\n' | lm_in L1 draft dr1 - >/dev/null
+assert_contains "draft read from stdin lands in the inbox" "$(cat "$PLANE/.cache/memory-inbox/dr1.md")" "body text"
+lm_in L1 file dr1 lane >/dev/null
+out=$(lm_in L1 goal "Quoted argument goal."); assert_eq "the text can also be one quoted argument" 0 "$?"
+assert_contains "and it is saved" "$(cat "$F1")" "Quoted argument goal."
+out=$(lm_in L1 draft dr2 "one line draft"); assert_contains "a draft can be one quoted argument" "$(cat "$PLANE/.cache/memory-inbox/dr2.md")" "one line draft"
+out=$(lm_in L1 goal "x" "y" "z"); assert_eq "extra arguments are refused" 1 "$?"
+assert_contains "filing it as a lane memory adds it to the Findings" "$(cat "$F1")" "a finding that only matters now"
+out=$(printf 'x\n' | lm_in L1 draft ../evil -); assert_eq "a draft name cannot be a path" 1 "$?"
+bash_decision(){ printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":%s},"cwd":"%s/lanes/L1","session_id":"s1"}' "$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")" "$PLANE" \
+    | CLAUDE_PROJECT_DIR="$PLANE/lanes/L1" python3 "$PLANE/scripts/hooks/guard.py" 2>/dev/null | grep -q '"deny"' && echo deny || echo "no deny"; }
+assert_eq "the guard lets the goal heredoc through" "no deny" "$(bash_decision "lane-memory goal - <<'EOF'
+text
+EOF")"
+assert_eq "the guard lets the draft heredoc through" "no deny" "$(bash_decision "lane-memory draft s1 - <<'EOF'
+text
+EOF")"
+assert_eq "but still refuses a shell write to another lane's file" "deny" "$(bash_decision "echo hi > $F2")"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

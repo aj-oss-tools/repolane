@@ -8,7 +8,21 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **A session that entered a lane through `EnterWorktree` can now save its Goal, draft a memory, and
+  read `memory/` and `knowledge/`.** 0.9.1 let such a session read and edit its own lane file by
+  permission rule, but Claude Code has a second check that no setting turns off: once a session is
+  inside a worktree, its Edit and Write tools refuse any path outside that folder ("This session is
+  isolated in the worktree … Edit the worktree copy"), and the lane file and the draft inbox live in
+  the control plane root. Those writes now go through `lane-memory`, which runs from inside the lane
+  without asking: `lane-memory goal "<text>"` sets the lane's own Goal (and refuses another lane's),
+  and `lane-memory draft <slug> "<draft>"` (or `-` with the text on stdin) fills the inbox. Reads of
+  `memory/`, `knowledge/` and the inbox are allowed in every lane's settings (Claude Code applies a Read
+  rule to its search tools too, which the headless test here could not exercise). The control plane's `CLAUDE.md` and the hook's reminders say to use these
+  commands instead of Edit or Write. `tests/t_lanefile.sh` covers the commands, the rules and the guard,
+  and a real Claude Code session that entered a worktree saved a Goal and a draft and read both folders.
+  A lane made earlier picks the rules up the next time `lane start`, `with`, `resume`, `done`, `merge` or `ref` refreshes it.
 
 ## [0.9.1] — 2026-10-18
 

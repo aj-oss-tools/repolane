@@ -81,16 +81,21 @@ seen=set(); perm["deny"]=[x for x in keep+deny if not (x in seen or seen.add(x))
 # markdown) and lane-workspace (rewrites the .code-workspace files) are NOT here; the read-only lane-memory verbs are.
 READONLY_LANE=["lane-merge-plan","lane-status","lane-brief","lane-find","lane-menu","lane-sessions","lane-env-check","lane-env-keys",
                "lane-memory list","lane-memory show","lane-memory audit"]
+OWN_WRITES=["lane-memory goal","lane-memory draft"]   # write this lane's Goal / a draft in the inbox, nothing else
 RETIRED=("Bash(lane-memory:*)","Bash(lane-workspace:*)")   # earlier versions approved these; a refresh has to take that back
 # A session in this lane records its Goal and Findings in registry/lanes/<id>.md, which sits in the control plane root,
 # outside the lane's folder; Claude Code refuses a path outside the session's folder unless a rule allows it (the guard
 # already does). Allow exactly this lane's file, nothing else under registry/. A leading // is an absolute path in a rule;
 # a single / is relative to the project and would match nothing.
 lf="/"+ad+"/registry/lanes/"+id_+".md"
-OWN=(f"Read({lf})",f"Edit({lf})")
+# Reads of what the rules tell a session to open: memory/, knowledge/ and the draft inbox. Claude Code's Read rule also
+# covers Glob and Grep, so a session can search them too. Writes there are NOT allowed here: a session that entered a worktree
+# cannot use Edit/Write outside that folder at all (no setting lifts it), so they go through `lane-memory draft <slug> -` and
+# `lane-memory goal`, which write only this lane's file and the inbox and run without asking.
+OWN=(f"Read({lf})",f"Edit({lf})")+tuple(f"Read(/{ad}/{x}/**)" for x in ("memory","knowledge",".cache/memory-inbox"))
 own_prefix=("Read(/"+ad+"/registry/lanes/","Edit(/"+ad+"/registry/lanes/")   # an earlier lane's rule, or one for another id, is dropped
 perm["allow"]=sorted({x for x in perm.get("allow",[]) if x not in RETIRED and not x.startswith(own_prefix)}
-                     |{f"Bash({c}:*)" for c in READONLY_LANE}|set(OWN))
+                     |{f"Bash({c}:*)" for c in READONLY_LANE+OWN_WRITES}|set(OWN))
 cur["autoMemoryDirectory"]=mem
 g=f"{ad}/scripts/hooks/guard.py"
 hk=lambda m=None,to=30:[{**({"matcher":m} if m else {}),"hooks":[{"type":"command","command":g,"timeout":to}]}]
