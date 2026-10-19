@@ -10,6 +10,28 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 Nothing yet.
 
+## [0.9.2] — 2026-10-19
+
+### Fixed
+
+- **A session that entered a lane through `EnterWorktree` can now save its Goal, draft a memory, and
+  read `memory/` and `knowledge/`.** 0.9.1 let such a session read and edit its own lane file by
+  permission rule, but Claude Code has a second check that no setting turns off: once a session is
+  inside a worktree, its Edit and Write tools refuse any path outside that folder ("This session is
+  isolated in the worktree … Edit the worktree copy"), and the lane file and the draft inbox live in
+  the control plane root. Those writes now go through `lane-memory`, which runs from inside the lane
+  without asking: `lane-memory goal "<text>"` sets the lane's own Goal (and refuses another lane's),
+  and `lane-memory draft <slug> "<draft>"` (or `-` with the text on stdin) fills the inbox. Reads of
+  `memory/`, `knowledge/` and the inbox are allowed in every lane's settings (Claude Code applies a Read
+  rule to its search tools too, which the headless test here could not exercise). The control plane's `CLAUDE.md` and the hook's reminders say to use these
+  commands instead of Edit or Write. `tests/t_lanefile.sh` covers the commands, the rules and the guard,
+  and a real Claude Code session that entered a worktree saved a Goal and a draft and read both folders.
+  The same trace found that `CLAUDE.md` tells a session to call the `lane-*` scripts by absolute path while
+  the pre-approved rules named only the bare commands, so following the instructions meant an approval prompt for
+  every call; the rules now cover both forms. `lane-status`, `lane-menu` and `lane-sessions` also exist under
+  `scripts/` now, so the absolute path `CLAUDE.md` gives no longer ends in "No such file" (exit 127).
+  A lane made earlier picks the rules up the next time `lane start`, `with`, `resume`, `done`, `merge` or `ref` refreshes it.
+
 ## [0.9.1] — 2026-10-18
 
 ### Fixed
@@ -634,7 +656,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/aj-oss-tools/repolane/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/aj-oss-tools/repolane/compare/v0.8.0...v0.8.1
