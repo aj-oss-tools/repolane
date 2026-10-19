@@ -167,8 +167,8 @@ def memory_brief(lane):
             d = dict(re.findall(r"    (\w+): (.*)", m.group(2)))
             parts.append(f"  - {d.get('name', os.path.basename(m.group(1)))}  [{d.get('mode','read')}]  {m.group(1)}" + (f"  — {d['note']}" if d.get("note") else ""))
     parts.append(SCOPES)
-    parts.append("TO SAVE A MEMORY: never write the file yourself. `lane-memory draft <slug>`, write the draft at the path it "
-                 "prints, ASK __OWNER__ which scope (recommend one), then `lane-memory file <slug> lane|repo <repo>|cross|pref`. "
+    parts.append("TO SAVE A MEMORY: never write the file yourself. `lane-memory draft <slug> \"<draft>\"` "
+                 "(or `-` and a heredoc), ASK __OWNER__ which scope (recommend one), then `lane-memory file <slug> lane|repo <repo>|cross|pref`. "
                  "The index line is written for you. Findings of this lane are in its spec under ## Findings.")
     return "\n".join(parts)
 def rules_brief(lane, repo):
@@ -722,7 +722,7 @@ SCOPES = """MEMORY SCOPES — where a thing belongs is decided by how long it st
 MEMORY_GATE = (
     "Memories are not written directly — the scope is __OWNER__'s decision.\n" + SCOPES + "\n"
     "Do this instead:\n"
-    "  1. lane-memory draft <slug>        (prints a path in .cache/memory-inbox/ — write the draft there)\n"
+    "  1. lane-memory draft <slug> \"<draft>\"   (or `-` and a heredoc; do not use Edit/Write, a worktree session cannot)\n"
     "  2. ASK __OWNER__ in one line: what it says, and which of the four scopes it is. Recommend one, using the\n"
     "     survival test: does it stay true after this ticket ships? after leaving this repo?\n"
     "  3. lane-memory file <slug> lane | repo <repo> | cross | pref     (files it and writes the index line)")

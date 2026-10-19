@@ -2,6 +2,8 @@
 # lane-memory — the only way memories and preferences get written. Scope is always decided by the owner.
 #
 #   lane-memory draft <slug>                 print the inbox path; Claude writes the draft there
+#   lane-memory draft <slug> "<draft>"|-    same, with the draft as one argument or on stdin (no file tool needed)
+#   lane-memory goal  [<id>] "<text>"|-      replace the ## Goal of registry/lanes/<id>.md (inside a lane: its own; - = stdin)
 #   lane-memory show  <slug>                 show a pending draft
 #   lane-memory list                         pending drafts
 #   lane-memory file  <slug> repo <repo>     -> memory/<repo>/<slug>.md   + index line
@@ -31,13 +33,47 @@ valid_name(){ # $1 = what it is called in the error, $2 = the value
   # "é" passed here in some locales while the board refused it
   lane_valid_id "$2" || die "invalid $1 '$2' — use letters, digits, '.', '_' and '-' only"
 }
+# A session that entered a worktree cannot use Claude Code's Edit/Write on anything outside that
+# folder ("This session is isolated in the worktree ..."), and no setting lifts it. The lane file and
+# the inbox live in the control plane root, so what a lane session writes there goes through here.
+lane_of_cwd(){ python3 -c "import os;p=os.path.realpath('$PWD');w=os.path.realpath('$LANES')+'/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')"; }
 case "$cmd" in
   draft|show|drop) [ -n "$slug" ] || die "usage: lane-memory $cmd <slug>"; valid_name slug "$slug" ;;
   file) [ -n "$slug" ] || die "usage: lane-memory file <slug> repo <repo> | cross | pref | lane [<id>]"; valid_name slug "$slug" ;;
 esac
 case "$cmd" in
+  goal)
+    # goal "<text>" | goal <id> "<text>" | goal [<id>] -   (the last reads the text from stdin)
+    shift; gid=""; text=""; from_stdin=""
+    case $# in
+      0) die "usage: lane-memory goal \"<text>\"   |   lane-memory goal <id> \"<text>\"   |   lane-memory goal [<id>] -" ;;
+      1) if [ "$1" = - ]; then from_stdin=1; else text="$1"; fi ;;
+      2) gid="$1"; if [ "$2" = - ]; then from_stdin=1; else text="$2"; fi ;;
+      *) die "usage: lane-memory goal [<id>] \"<text>\"   (quote the text)" ;;
+    esac
+    here=$(lane_of_cwd); gid="${gid:-$here}"
+    [ -n "$gid" ] || die "name the lane: lane-memory goal <lane-id> \"<text>\""
+    lane_valid_id "$gid" || die "invalid lane id '$gid'"
+    # inside a lane it is that lane's Goal only (the command runs without asking there); from the root any lane
+    [ -z "$here" ] || [ "$here" = "$gid" ] || die "this session is in lane '$here', so it can only set that lane's Goal"
+    gf=$(lane_file "$gid"); [ -f "$gf" ] || die "no lane '$gid'"
+    if [ -n "$from_stdin" ]; then text=$(cat; printf x); text="${text%x}"; fi
+    [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] || die "the Goal is empty"
+    [ "${#text}" -le 20000 ] || die "the Goal is too long (over 20000 characters)"
+    GOAL_TEXT="$text" python3 - "$gf" <<'PY'
+import os,re,sys
+f=sys.argv[1]; new=os.environ["GOAL_TEXT"].strip("\n"); t=open(f).read()
+if re.search(r"^## Goal\n",t,re.M):
+    t=re.sub(r"(^## Goal\n).*?(?=^## |\Z)",lambda m:m.group(1)+new+"\n\n",t,count=1,flags=re.S|re.M)
+else:
+    t=t.rstrip("\n")+"\n\n## Goal\n"+new+"\n"
+open(f,"w").write(t)
+PY
+    echo "Goal saved in $(basename "$gf")";;
   draft)
     echo "$INBOX/$slug.md"
+    if [ "${3:-}" = "-" ]; then cat > "$INBOX/$slug.md"; exit 0; fi
+    if [ -n "${3:-}" ]; then printf '%s\n' "$3" > "$INBOX/$slug.md"; exit 0; fi   # the draft as one quoted argument
     [ -f "$INBOX/$slug.md" ] || cat > "$INBOX/$slug.md" <<EOT
 ---
 name: $slug
@@ -65,7 +101,7 @@ EOT
     case "$scope" in
       repo) [ -d "$REPOS/$repo" ] || die "unknown repo '$repo'"; dst="$AD/memory/$repo/$slug.md"; idx="$AD/memory/$repo/MEMORY.md";;
       cross) dst="$AD/memory/$slug.md"; idx="$AD/memory/MEMORY.md";;
-      lane) laneid="${repo:-$(python3 -c "import os;p=os.path.realpath('$PWD');w='$LANES/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')")}"
+      lane) laneid="${repo:-$(lane_of_cwd)}"
           [ -n "$laneid" ] && [ -f "$(lane_file "$laneid")" ] || die "usage: lane-memory file <slug> lane <lane-id>"
           dst=""; idx="";;
       pref) dst=""; idx="";;
