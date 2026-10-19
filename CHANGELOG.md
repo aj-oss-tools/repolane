@@ -8,6 +8,10 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.9.2] — 2026-10-19
+
 ### Fixed
 
 - **A session that entered a lane through `EnterWorktree` can now save its Goal, draft a memory, and
@@ -652,7 +656,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/aj-oss-tools/repolane/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/aj-oss-tools/repolane/compare/v0.8.0...v0.8.1
