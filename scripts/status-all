@@ -3,8 +3,8 @@
 # Runs `git fetch origin` in every repo under repos/ first (quietly; a failed fetch is ignored),
 # so "behind origin" is current. That is the only network access it makes.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
-"$AD/scripts/hooks/guard-check" -q || echo "   (fix guard.py before trusting any of the state below)"
+source "$PRODUCT/scripts/gitstate.sh"
+"$PRODUCT/scripts/hooks/guard-check" -q || echo "   (fix guard.py before trusting any of the state below)"
 echo "== control plane (this checkout itself — docs/concepts.md: \"the clone is the control plane\")"
 if [ -d "$AD/.git" ] || [ -f "$AD/.git" ]; then
   cp_dirty=$(git -C "$AD" status --porcelain | wc -l | tr -d ' ')
@@ -37,7 +37,7 @@ for r in "$REPOS"/*/; do [ -e "$r/.git" ] || continue   # no repos yet: the glob
   echo "  $n: $cur, behind origin by $b, worktrees=$(( $(git -C "$r" worktree list | wc -l) - 1 ))$flag"
   git -C "$r" worktree list --porcelain | sed -n 's/^worktree //p' | tail -n +2 | { grep -v "^$LANES/" || true; } | sed 's/^/     !! worktree outside lanes\/: /'
 done
-nested=$("$AD/scripts/lane-nested" 2>/dev/null || true)
+nested=$("$PRODUCT/scripts/lane-nested" 2>/dev/null || true)
 if [ -n "$nested" ]; then echo "  !! nested worktrees (a worktree inside another) — fix with: lane-nested --fix"; printf '%s\n' "$nested"; fi
 big=$(find "$LANES" -name settings.local.json -size +20k 2>/dev/null | sed "s|$AD/||" || true)
 if [ -n "$big" ]; then echo "  !! oversized guard files (rules are repeating) — fix with: lane-resume <id>"; printf '%s\n' "$big" | sed 's/^/     /'; fi

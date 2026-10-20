@@ -8,7 +8,11 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- Repolane's own files (`lane`, `scripts/`, templates, `VERSION`) and your data (`registry/`, `lanes/`, `repos/`,
+  `memory/`, `knowledge/`) are located through two separate roots, which are the same folder in a clone, so nothing
+  behaves differently. The repo also builds a Python package (`repolane`) whose `lane` runs the bundled product.
 
 ## [0.9.2] — 2026-10-19
 

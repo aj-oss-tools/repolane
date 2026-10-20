@@ -1,8 +1,8 @@
 name: Tests
 
 # Every suite, one command each. All of them build their own throwaway control plane under a
-# temporary HOME with local bare repos as remotes: nothing here needs installing, logging in or
-# reaching the network.
+# temporary HOME with local bare repos as remotes: nothing here needs logging in or reaching the
+# network, except tests/t_package.sh, which builds the Python package (uv fetches the build backend).
 
 on:
   push:
@@ -35,9 +35,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pinned-bin"
           ln -sf "$(command -v ${{ matrix.bash }})" "$RUNNER_TEMP/pinned-bin/bash"
           echo "$RUNNER_TEMP/pinned-bin" >> "$GITHUB_PATH"
+      # tests/t_package.sh builds the wheel with it; skipped locally without one, required here (CI is set)
+      - name: Install uv (the package test's wheel builder)
+        uses: astral-sh/setup-uv@v6
       - name: Show the bash under test
         run: ${{ matrix.bash }} --version | head -1
-      - name: Lane suite (dispatcher, memory, upgrade, upgrade path from the last release, park/done/brief, portability)
+      - name: Lane suite (dispatcher, memory, upgrade, upgrade path from the last release, park/done/brief, portability, the two roots, the Python package)
         run: ${{ matrix.bash }} tests/run-all.sh
       - name: Guard suite
         run: ${{ matrix.bash }} scripts/hooks/test-guard.sh

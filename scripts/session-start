@@ -12,7 +12,7 @@ fi
 # context for Claude: the board, the dispatcher procedure, and — for resumed conversations — which repo
 # the conversation belongs to and the exact choices to offer the owner before anything else.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 input=""; [ -t 0 ] || input=$(cat)
 printf '%s' "$input" > "$AD/.cache/last-session-start.json" 2>/dev/null || true
 read -r source sid scwd <<<"$(printf '%s' "$input" | python3 -c 'import json,sys
@@ -34,7 +34,7 @@ cur=$(python3 -c "import os;p=os.path.realpath('$scwd');w='$LANES/';print(p[len(
 # ---- human screen (systemMessage) -------------------------------------------------------------
 if [ -n "${LANE_SCREEN:-}" ]; then
   if [ -n "$cur" ] && [ -f "$(lane_file "$cur")" ]; then
-    "$AD/scripts/lane-brief" "$cur" 2>/dev/null
+    "$PRODUCT/scripts/lane-brief" "$cur" 2>/dev/null
     echo; echo "commands: ! lane-menu   (prefix any lane-* command with \"! \" to run it here without a model call)"
   else
     echo "LANES"
@@ -46,7 +46,7 @@ if [ -n "${LANE_SCREEN:-}" ]; then
       echo "$line"
     done
     [ "$source" = "resume" ] && [ -n "$repo" ] && echo && echo "RESUMED conversation belongs to: $repo — Claude will offer where to continue."
-    echo; "$AD/scripts/menu"
+    echo; "$PRODUCT/scripts/menu"
   fi
   exit 0
 fi
@@ -69,7 +69,7 @@ PY
   wts=$(ls -d "$LANES"/*/"$repo" 2>/dev/null | sed "s|$LANES/||; s|/$repo||" || true)
   if [ -n "$cur" ]; then
     if [ -d "$LANES/$cur/$repo" ]; then echo "You are already inside lane '$cur', which has this repo. Re-anchor every path to $LANES/$cur/$repo and continue."
-    else echo "WARNING: you are inside lane '$cur' but it has no worktree for '$repo'. Offer: $AD/scripts/lane-with $cur $repo, or switch lane."; fi
+    else echo "WARNING: you are inside lane '$cur' but it has no worktree for '$repo'. Offer: $PRODUCT/scripts/lane-with $cur $repo, or switch lane."; fi
   else
     echo
     echo "YOUR FIRST MESSAGE, before answering anything else, must say which repo this is and offer these choices:"
@@ -87,8 +87,8 @@ if [ "${1:-}" = "--worktree" ] || [ -n "$cur" ]; then
     echo "## lane — session in lane '$id' ($(basename "$scwd"))"; echo
     cat "$(lane_file "$id")"; echo
     echo "Read memory/<repo>/MEMORY.md for each repo above, then brief $OWNER in five lines and continue the work."
-    echo "Scope: only lanes/$id/. Park with $AD/scripts/lane-park $id \"<note>\" before they switch away."
-    echo "Lane scripts: call them by ABSOLUTE path, $AD/scripts/<name> (e.g. $AD/scripts/lane-brief $id). You are in the lane, so a relative scripts/<name> does not exist here and exits 127."
+    echo "Scope: only lanes/$id/. Park with $PRODUCT/scripts/lane-park $id \"<note>\" before they switch away."
+    echo "Lane scripts: call them by ABSOLUTE path, $PRODUCT/scripts/<name> (e.g. $PRODUCT/scripts/lane-brief $id). You are in the lane, so a relative scripts/<name> does not exist here and exits 127."
   fi
   exit 0
 fi
@@ -109,9 +109,9 @@ done
 echo
 echo "Repos: $(ls "$REPOS" | tr '\n' ' ')"
 echo
-echo "Scripts dir (absolute): $AD/scripts"
-echo "After EnterWorktree the session sits in the lane, not here: call every lane script by absolute path, $AD/scripts/<name>"
-echo "(e.g. $AD/scripts/lane-brief <id>). A relative scripts/<name> exits 127 from the lane root. The scripts/<name> paths below are relative to the control plane: prefix them with the absolute dir above."
+echo "Scripts dir (absolute): $PRODUCT/scripts"
+echo "After EnterWorktree the session sits in the lane, not here: call every lane script by absolute path, $PRODUCT/scripts/<name>"
+echo "(e.g. $PRODUCT/scripts/lane-brief <id>). A relative scripts/<name> exits 127 from the lane root. The scripts/<name> paths below are relative to the control plane: prefix them with the absolute dir above."
 cat <<'TXT'
 Dispatcher instructions (details in CLAUDE.md "Dispatcher mode"):
 - Discuss before deciding: propose ids, repos, branches, deletions, global-config changes and design choices in one
@@ -127,4 +127,4 @@ Dispatcher instructions (details in CLAUDE.md "Dispatcher mode"):
 - Leave: scripts/lane-park <id> "<note>" then ExitWorktree keep.
 - If asked what they can do, show the menu below verbatim.
 TXT
-"$AD/scripts/menu"
+"$PRODUCT/scripts/menu"

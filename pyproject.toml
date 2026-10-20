@@ -1,0 +1,55 @@
+# The Python package: `pipx install repolane` puts `lane` on PATH. The package is a thin launcher (src/repolane) around
+# the same product files a clone runs (lane, scripts/, templates, VERSION), bundled under repolane/_product. The
+# user's data (registry/, memory/, knowledge/, repos/, lanes/) is never part of it.
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "repolane"
+dynamic = ["version"]
+description = "A local control plane for multi-repository development with Claude Code. The command is `lane`."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.9"
+authors = [{ name = "Repolane contributors" }]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.urls]
+Homepage = "https://repolane.dev"
+Documentation = "https://repolane.dev/docs/concepts/"
+Source = "https://github.com/aj-oss-tools/repolane"
+Changelog = "https://github.com/aj-oss-tools/repolane/blob/main/CHANGELOG.md"
+
+[project.scripts]
+lane = "repolane.cli:main"
+
+# VERSION stays the one place the number is written down (scripts/release-plan bumps it)
+[tool.hatch.version]
+path = "VERSION"
+pattern = "(?P<version>\\S+)"
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "lane", "scripts", ".claude/agents", ".claude/commands", ".claude/settings.json", "CLAUDE.md.template",
+                "knowledge/preferences.md.example", "VERSION", "LICENSE", "NOTICE", "README.md", "CHANGELOG.md", "pyproject.toml",
+                "hatch_build.py"]
+exclude = ["scripts/local", "**/__pycache__"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/repolane"]
+
+# The product files, bundled by hatch_build.py under repolane/_product/: everything the runtime reads through PRODUCT and
+# nothing else. No tests/, docs/, .github/, no user data, not the repo's own release tooling (scripts/release*), and no
+# bin/ (links into scripts/, which a wheel cannot carry).
+[tool.hatch.build.targets.wheel.hooks.custom]
+include = ["lane", "scripts", ".claude/agents", ".claude/commands", ".claude/settings.json", "CLAUDE.md.template",
+           "knowledge/preferences.md.example", "VERSION", "LICENSE", "NOTICE"]
+exclude = ["scripts/local", "*/__pycache__/*", "*.pyc", "*.DS_Store", "scripts/release", "scripts/release-*"]

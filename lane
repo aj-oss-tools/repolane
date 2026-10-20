@@ -14,8 +14,11 @@ while [ -L "$_self" ]; do
   _l=$(readlink "$_self")
   case "$_l" in /*) _self="$_l" ;; *) _self="$(dirname "$_self")/$_l" ;; esac
 done
-AD="$(cd "$(dirname "$_self")" && pwd)"
-S="$AD/scripts"
+# PRODUCT is where Repolane's own files are (this file, scripts/, VERSION); AD is the workspace with the user's
+# data (registry/, lanes/, …). One folder in a clone; LANE_PRODUCT / LANE_WORKSPACE split them (scripts/lib.sh).
+PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "$_self")" && pwd)}"
+AD="${LANE_WORKSPACE:-$PRODUCT}"
+S="$PRODUCT/scripts"
 
 # command → implementation, and the one line shown in `lane help`
 map(){ case "$1" in
@@ -112,14 +115,17 @@ case "$cmd" in
     # cannot carry — how far past that tag this checkout has drifted.
     # the redirection itself is what fails when VERSION is absent, so the subshell, not tr, is
     # what has to be silenced
-    v=$( (tr -d '[:space:]' < "$AD/VERSION") 2>/dev/null ); [ -n "$v" ] || v=unknown
+    v=$( (tr -d '[:space:]' < "$PRODUCT/VERSION") 2>/dev/null ); [ -n "$v" ] || v=unknown
     extra=""
-    if g=$(cd "$AD" && git describe --tags --long --dirty --match 'v[0-9]*' 2>/dev/null); then
+    # Only a checkout of its own has a git answer: an installed package (or a tarball) unpacked somewhere inside an
+    # unrelated repo would otherwise report that repo's commits as its own.
+    if [ ! -e "$PRODUCT/.git" ]; then :
+    elif g=$(cd "$PRODUCT" && git describe --tags --long --dirty --match 'v[0-9]*' 2>/dev/null); then
       # v0.1.0-3-gabc1234[-dirty]: the middle field is the commit count since the tag
       n=${g#v*-}; n=${n%%-*}
       case "$g" in *-dirty) d=", uncommitted changes" ;; *) d="" ;; esac
       if [ "$n" = 0 ]; then extra="$d"; else extra=" (+$n commits$d)"; fi
-    elif h=$(cd "$AD" && git rev-parse --short HEAD 2>/dev/null); then
+    elif h=$(cd "$PRODUCT" && git rev-parse --short HEAD 2>/dev/null); then
       # a checkout with no release tag in its history: before the first tag, or a shallow clone
       extra=" (untagged, $h)"
     fi
@@ -166,9 +172,9 @@ case "$cmd" in
     # just the link; removing the link first guarantees each write below lands on a fresh regular
     # file at `dest/…`, never back into any checkout.
     rm -f "$dest/lane"
-    cp "$AD/scripts/lane-stable-dispatcher" "$dest/lane" && chmod +x "$dest/lane"
+    cp "$S/lane-stable-dispatcher" "$dest/lane" && chmod +x "$dest/lane"
     rm -f "$PY"
-    cp "$AD/scripts/lane-planes.py" "$PY"
+    cp "$S/lane-planes.py" "$PY"
     echo "installed the stable dispatcher: $dest/lane (routes by plane — see: lane use)"
 
     if [ -n "$migrated_from" ] && [ "$migrated_from" != "$AD" ]; then

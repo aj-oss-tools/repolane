@@ -35,6 +35,9 @@ assert_not_contains(){
 in: $(printf '%s' "$2" | head -c 600)" ;; *) ok "$1" ;; esac
 }
 
+# every sandbox plane is both roots by its own location (scripts/lib.sh); a caller's overrides must not reach it
+unset LANE_PRODUCT LANE_WORKSPACE
+
 # git identity and no host config leaking in
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0

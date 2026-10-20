@@ -22,7 +22,7 @@
 #   repo   true in one repo, still true after this ticket ships
 #   lane     only matters while this lane is live (archived with it)
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 INBOX="$AD/.cache/memory-inbox"; mkdir -p "$INBOX"
 cmd="${1:-list}"; slug="${2:-}"
 # Every name that reaches a path below (slug, repo, lane id, memory name) goes through this first.

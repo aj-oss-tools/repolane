@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lane-brief [id]  — everything you need to pick a lane back up, no model involved.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 id="${1:-}"; [ -z "$id" ] && id=$(python3 -c "import os;p=os.path.realpath('$PWD');w='$LANES/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')")
 [ -n "$id" ] || die "usage: lane-brief <id>  (or run inside lanes/<id>/…)"
 lane_valid_id "$id" || die "invalid lane id '$id' — letters, digits, '.', '_' and '-' only"
@@ -40,7 +40,7 @@ done < <(lane_repos "$id")
 if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then echo "FINDINGS (live only — archived when this lane finishes)"; sed -n '/^## Findings/,/^## Log/p' "$f" | grep '^- ' | cut -c1-150 | sed 's/^/  /'; fi
 if grep -q '^  - path: ' "$f"; then
   if [ "$archived" = 1 ]; then echo "REFERENCES (were attached; links removed with the lane)"; sed -n 's/^  - path: /  /p' "$f"
-  else echo "REFERENCES (lanes/$id/refs/)"; "$AD/bin/lane-ref" "$id" list 2>/dev/null | grep -v '^ref'; fi
+  else echo "REFERENCES (lanes/$id/refs/)"; "$PRODUCT/scripts/lane-ref" "$id" list 2>/dev/null | grep -v '^ref'; fi
 fi
 echo "LOG (last 5)"; sed -n '/^## Log/,$p' "$f" | { grep '^- ' || true; } | tail -5 | sed 's/^/  /'
 exit 0

@@ -20,7 +20,7 @@
 # Goal, resume note and findings are appended under dated headings; references are unioned.
 # Branches are never deleted. Stops on a conflict and leaves the worktree for you to resolve.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 
 A="${1:-}"; B="${2:-}"; shift 2 2>/dev/null || true
 NEWBR=""; NEWID=""; RUN=""
@@ -62,7 +62,7 @@ for id in "$A" "$B"; do
 done
 if [ -n "$dirty" ]; then printf "uncommitted work — commit it or lane-park first:\n%b" "$dirty"; exit 1; fi
 
-nested=$("$AD/scripts/lane-nested" 2>/dev/null || true)
+nested=$("$PRODUCT/scripts/lane-nested" 2>/dev/null || true)
 if [ -n "$nested" ]; then
   printf "there are nested worktrees to sort out first:\n%s\n" "$nested"
   echo "fix them with:  lane-nested --fix    (removes the inner one; branches are never deleted)"
@@ -239,7 +239,7 @@ for id in "$A" "$B"; do
   [ -d "$LANES/$id" ] && rm -rf "$LANES/$id"
 done
 write_lane_claude "$TARGET" 2>/dev/null || true
-"$AD/scripts/lane-workspace" >/dev/null 2>&1
+"$PRODUCT/scripts/lane-workspace" >/dev/null 2>&1
 refresh_guards
 echo
 echo "done — continue in $TARGET"

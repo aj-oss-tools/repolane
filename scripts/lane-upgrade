@@ -22,8 +22,10 @@
 set -u
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 
-cd "$AD" || die "cannot cd into $AD"
-git rev-parse --git-dir >/dev/null 2>&1 || die "$AD is not a git checkout — nothing to upgrade"
+# What is upgraded is the git checkout the product came from. In a clone that is the workspace too (the expected-dirty
+# paths below are the workspace's files living in it); the workspace's own settings are still read from $AD.
+cd "$PRODUCT" || die "cannot cd into $PRODUCT"
+git rev-parse --git-dir >/dev/null 2>&1 || die "$PRODUCT is not a git checkout — nothing to upgrade"
 
 # Step 1: refuse on tracked-and-dirty files outside the expected-dirty set. These are the paths
 # `lane init` itself edits (.claude/settings.json always; .gitignore and scripts/local/ only on a
@@ -65,7 +67,7 @@ upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) \
   || die "$branch has no upstream to compare against"
 
 old_head=$(git rev-parse HEAD)
-old_version=$(cat "$AD/VERSION" 2>/dev/null || echo unknown)
+old_version=$(cat "$PRODUCT/VERSION" 2>/dev/null || echo unknown)
 
 # Step 2/3: only ever a clean fast-forward, never a merge. `--ff-only` itself refuses if this
 # turns out not to be one, which is the actual safety property this relies on, but check first so
@@ -169,7 +171,7 @@ if [ "$old_head" = "$new_head" ]; then
   exit 0
 fi
 
-new_version=$(cat "$AD/VERSION" 2>/dev/null || echo unknown)
+new_version=$(cat "$PRODUCT/VERSION" 2>/dev/null || echo unknown)
 echo
 echo "upgraded: VERSION $old_version -> $new_version"
 
@@ -207,4 +209,4 @@ rm -f "$diff_file"
 
 echo
 echo "running lane doctor..."
-exec "$(dirname "$0")/hooks/guard-check"
+exec "$PRODUCT/scripts/hooks/guard-check"

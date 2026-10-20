@@ -8,7 +8,7 @@
 # Not to be confused with lane-with, which implements `lane with` (add a repo to a lane already
 # started) — see scripts/README.md's naming note if these get mixed up again.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 url="${1:-}"; [ -n "$url" ] || die "usage: lane-add <git-url|path-to-existing-checkout> [name]"
 name="${2:-}"; [ "${name#--}" != "$name" ] && name=""
 from=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--from" ] && j=$((i+1)) && from="${!j}"; done
@@ -47,7 +47,7 @@ fi
 
 dst="$REPOS/$name"; [ -e "$dst" ] && die "$dst already exists"
 if [ -n "$from" ]; then
-  "$AD/scripts/copy-repo.sh" "$from" "$dst" || die "could not copy the checkout at $from"
+  "$PRODUCT/scripts/copy-repo.sh" "$from" "$dst" || die "could not copy the checkout at $from"
 else
   git clone -q "$url" "$dst" || { rm -rf "$dst"; die "could not clone $url"; }
   echo "cloned $url -> $dst"
@@ -96,7 +96,7 @@ echo "registered $name (default $def); memory -> memory/$name. Edit registry/rep
 # guard.py already denies a fixed set of secret-shaped filenames globally; every repo can also have
 # its own (service-account.json, .npmrc, id_rsa, …) that set was never going to cover. Scan by
 # filename only, never contents.
-candidates=$("$AD/scripts/repo-secrets" "$name" scan 2>/dev/null || true)
+candidates=$("$PRODUCT/scripts/repo-secrets" "$name" scan 2>/dev/null || true)
 if [ -n "$candidates" ]; then
   if [ -t 0 ] && [ -t 2 ]; then
     echo
@@ -110,7 +110,7 @@ if [ -n "$candidates" ]; then
         # (not `mapfile`: macOS ships bash 3.2, which does not have it)
         cand_arr=()
         while IFS= read -r cand_line; do [ -z "$cand_line" ] || cand_arr+=("$cand_line"); done <<< "$candidates"
-        "$AD/scripts/repo-secrets" "$name" add "${cand_arr[@]}"
+        "$PRODUCT/scripts/repo-secrets" "$name" add "${cand_arr[@]}"
         ;;
       *) echo "  skipped. To deny a real secret later: lane secrets $name add <path>...  To dismiss a false positive without denying it: lane secrets $name ignore <path>..." ;;
     esac
@@ -140,7 +140,7 @@ if [ -n "$local_path" ]; then
     if [ -t 0 ] && [ -t 2 ]; then
       printf "  look at them now and turn them into a lane? [y/N]: " >&2
       read -r yn || true
-      case "${yn:-n}" in [yY]*) exec "$AD/scripts/lane-import" ;; esac
+      case "${yn:-n}" in [yY]*) exec "$PRODUCT/scripts/lane-import" ;; esac
     fi
     echo "  see them any time:  lane import --list"
   fi

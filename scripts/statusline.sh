@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Claude Code status line (design A): line 1 = where you are, line 2 = only repos that need attention.
-AD="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd)"
+# PRODUCT (this script's own files) and AD (the workspace it reports on): one folder in a clone, see scripts/lib.sh
+PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd)}"
+AD="${LANE_WORKSPACE:-$PRODUCT}"
 input=$(cat)
-source "$AD/scripts/gitstate.sh" 2>/dev/null || { lane_unpushed(){ echo "?"; }; lane_dirty_count(){ git -C "$1" status --porcelain 2>/dev/null | wc -l | tr -d " "; }; }
+source "$PRODUCT/scripts/gitstate.sh" 2>/dev/null || { lane_unpushed(){ echo "?"; }; lane_dirty_count(){ git -C "$1" status --porcelain 2>/dev/null | wc -l | tr -d " "; }; }
 read -r cwd model ctx <<<"$(printf '%s' "$input" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
 cwd=d.get("cwd") or d.get("workspace",{}).get("current_dir","")

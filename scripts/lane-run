@@ -10,7 +10,7 @@
 # The session does not move: no cd, no EnterWorktree. Output and exit code are the command's own.
 # The command you pass is judged by the same rules as any other command — this is a shortcut, not a bypass.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 
 lane=""
 if [ "${1:-}" = "--lane" ]; then lane="${2:-}"; shift 2; fi

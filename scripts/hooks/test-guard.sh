@@ -7,6 +7,8 @@
 # or memory. A run that cannot build its fixture FAILS: a safety suite that exits 0 without
 # having asserted anything is worse than no suite at all.
 set -u
+# guard.py takes its roots from these when set; the fixture is both roots by its own location, so they must not leak in
+unset LANE_PRODUCT LANE_WORKSPACE
 cd "$(dirname "$0")/../.." || exit 1
 SRC=$PWD; fail=0; cases=0; passed=0
 

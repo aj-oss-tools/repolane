@@ -3,6 +3,7 @@
 # (a copy of scripts/ and bin/ with one lane in it, under a throwaway HOME), checks every endpoint,
 # then runs the regression suite. Every check is an assertion: any failure makes this script exit 1.
 src="$(cd "$(dirname "$0")/../.." && pwd)"
+unset LANE_PRODUCT LANE_WORKSPACE   # the throwaway plane is both roots, by its own location
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/board-smoke.XXXXXX") || exit 1
 log="$tmp/board.log"; BP=""
 cleanup(){ [ -z "$BP" ] || kill "$BP" 2>/dev/null; rm -rf "$tmp"; }

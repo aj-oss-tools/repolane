@@ -17,8 +17,7 @@ while [ -L "$_self" ]; do
   _l=$(readlink "$_self")
   case "$_l" in /*) _self="$_l" ;; *) _self="$(dirname "$_self")/$_l" ;; esac
 done
-AD="$(cd "$(dirname "$_self")/.." && pwd)"
-source "$AD/scripts/lib.sh"
+source "$(cd "$(dirname "$_self")" && pwd)/lib.sh"   # sets PRODUCT and AD
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 
 LIST_ONLY=0; INTO=""; PICKS=""
@@ -200,7 +199,7 @@ if [ ! -f "$AD/registry/lanes/$INTO.md" ]; then
   [ -n "$REPOS" ] || { echo "Cannot create '$INTO': none of those conversations map to a managed repo."; exit 1; }
   echo
   echo "Creating lane '$INTO' with: $REPOS"
-  "$AD/scripts/lane-start" "$INTO" $REPOS || exit 1
+  "$PRODUCT/scripts/lane-start" "$INTO" $REPOS || exit 1
 fi
 
 # ---------------------------------------------------------------------------

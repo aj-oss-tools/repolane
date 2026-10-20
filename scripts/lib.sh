@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # shared helpers for the lane-* scripts
 set -euo pipefail
-AD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Two roots. PRODUCT holds Repolane's own files (scripts/, the hooks, templates, VERSION, the board); AD is the
+# workspace, the user's data (registry/, memory/, knowledge/, repos/, lanes/, .cache/, CLAUDE.md, .claude/). A clone
+# of the repo is both at once, so by default they are one folder: the one this file sits in. LANE_PRODUCT and
+# LANE_WORKSPACE point either one somewhere else (an installed package, a separate workspace folder).
+PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+AD="${LANE_WORKSPACE:-$PRODUCT}"
 
 # Who this control plane belongs to. One line in registry/config.yml; a neutral word if unset,
 # so a fresh clone nobody has configured yet still reads sensibly.
 lane_owner(){ sed -n 's/^[[:space:]]*name:[[:space:]]*//p' "$AD/registry/config.yml" 2>/dev/null \
               | head -1 | tr -d '\042\047' ; }
 OWNER="$(lane_owner)"; [ -n "$OWNER" ] || OWNER="the user"
-source "$AD/scripts/env.sh"
+source "$PRODUCT/scripts/env.sh"
 LANES_DIR="$AD/registry/lanes"; LANES="$AD/lanes"; REPOS="$AD/repos"
 die(){ echo "error: $*" >&2; exit 1; }
 # A repo's integration branch comes from its definition in registry/repos.yaml, not from the
@@ -61,9 +66,9 @@ lane_set_status(){
 # permission guard for a session rooted at $1: deny repos/ and every other lane
 write_guard(){ # $1 = dir to write .claude/settings.local.json in, $2 = this lane id, $3 = memory dir
   local dir="$1" id="$2" mem="$3"; mkdir -p "$dir/.claude"
-  python3 - "$dir" "$id" "$mem" "$AD" <<'PY'
-import json,os,sys
-d,id_,mem,ad=sys.argv[1:]
+  python3 - "$dir" "$id" "$mem" "$AD" "$PRODUCT" <<'PY'
+import json,os,shlex,sys
+d,id_,mem,ad,prod=sys.argv[1:]
 deny=[f"Read({ad}/repos/**)",f"Edit({ad}/repos/**)"]  # Edit covers Write/MultiEdit; Write() rules are ignored
 for pat in ("**/.env","**/.env.local","**/.env.*.local","**/.env.development","**/.env.production","**/.env.staging","**/.env.test","**/*.pem","**/*.key",
             "**/*.p12","**/*.pfx","**/*.p8","**/*.jks","**/*.keystore","**/*.kdbx","**/id_rsa","**/id_ed25519","**/id_ecdsa","**/id_dsa",
@@ -96,11 +101,14 @@ OWN=(f"Read({lf})",f"Edit({lf})")+tuple(f"Read(/{ad}/{x}/**)" for x in ("memory"
 own_prefix=("Read(/"+ad+"/registry/lanes/","Edit(/"+ad+"/registry/lanes/")   # an earlier lane's rule, or one for another id, is dropped
 perm["allow"]=sorted({x for x in perm.get("allow",[]) if x not in RETIRED and not x.startswith(own_prefix)}
                      |{f"Bash({c}:*)" for c in READONLY_LANE+OWN_WRITES}
-                     |{f"Bash({ad}/scripts/{c}:*)" for c in READONLY_LANE+OWN_WRITES}|set(OWN))   # CLAUDE.md tells a session to call them by absolute path
+                     |{f"Bash({prod}/scripts/{c}:*)" for c in READONLY_LANE+OWN_WRITES}|set(OWN))   # CLAUDE.md tells a session to call them by absolute path
 cur["autoMemoryDirectory"]=mem
-g=f"{ad}/scripts/hooks/guard.py"
+# A hook runs in Claude Code's environment, not ours, so when the two roots differ the command itself names them. When
+# they are one folder (a clone) it stays the bare path it has always been.
+pre="" if prod==ad else f"LANE_PRODUCT={shlex.quote(prod)} LANE_WORKSPACE={shlex.quote(ad)} "
+g=f"{pre}{prod}/scripts/hooks/guard.py"
 hk=lambda m=None,to=30:[{**({"matcher":m} if m else {}),"hooks":[{"type":"command","command":g,"timeout":to}]}]
-cur["hooks"]={"SessionStart":[{"matcher":"startup|resume|clear|compact|fork","hooks":[{"type":"command","command":f"{ad}/scripts/session-start --worktree","timeout":60}]}],
+cur["hooks"]={"SessionStart":[{"matcher":"startup|resume|clear|compact|fork","hooks":[{"type":"command","command":f"{pre}{prod}/scripts/session-start --worktree","timeout":60}]}],
   "PreToolUse":hk("Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree|Glob|Grep"),"PostToolUse":hk("Edit|Write|MultiEdit|NotebookEdit"),
   "WorktreeCreate":hk(None,120),"WorktreeRemove":hk(),
   "UserPromptSubmit":hk(),"PreCompact":hk(),"SessionEnd":hk()}

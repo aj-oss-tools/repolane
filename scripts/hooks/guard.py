@@ -42,7 +42,12 @@ def _crash(et, ev, tb):
     os._exit(0 if _EVENT == "PreToolUse" else 1)
 sys.excepthook = _crash
 
-AD = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))  # lane, wherever the session was launched
+# Two roots, as in scripts/lib.sh: PRODUCT holds Repolane's own files (this one, scripts/, templates), AD is the workspace
+# with the user's data (registry/, lanes/, repos/, memory/, …). A clone is both, so by default they are the one folder
+# this file sits in, wherever the session was launched; LANE_PRODUCT / LANE_WORKSPACE point either somewhere else.
+# Real paths, always: every rule below compares real paths.
+PRODUCT = os.path.realpath(os.environ.get("LANE_PRODUCT") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+AD = os.path.realpath(os.environ.get("LANE_WORKSPACE") or PRODUCT)
 HOME = os.path.expanduser("~")
 
 
@@ -1658,6 +1663,7 @@ _OTHER_HOME = re.compile(r"^(/Users|/home)/[^/]+(/|$)|^(/var)?/root(/|$)")      
 def _outside(a):
     in_home = HOME not in ("", "/") and (a == HOME or a.startswith(HOME + "/"))
     if a == AD or a.startswith(AD + "/"): return None          # inside the control plane
+    if a == PRODUCT or a.startswith(PRODUCT + "/"): return None  # the product's own files, wherever they are installed
     # /tmp is the scratchpad, unless the home directory itself lives under it
     if SCRATCH.match(a) and not in_home: return None
     if in_home: return a
@@ -1702,7 +1708,7 @@ def ref_add_refusal(raw, base):
     """Why `lane-ref add <raw>` is refused, or None. A reference is read by every session of the lane, so it may not be
     the home directory, an ancestor of it or of the plane, a system directory, a credential directory or a secret file."""
     rp = os.path.realpath(abs_of(raw, base))
-    if rp == "/" or HOME == rp or HOME.startswith(rp + "/") or AD.startswith(rp + "/") or rp == AD:
+    if rp == "/" or HOME == rp or HOME.startswith(rp + "/") or any(r.startswith(rp + "/") or rp == r for r in (AD, PRODUCT)):
         return "that folder holds the home directory or the control plane itself"
     if any(rp == d or rp.startswith(d + "/") for d in SYSTEM_DIRS):
         return "that is a system directory"
@@ -1711,10 +1717,12 @@ def ref_add_refusal(raw, base):
     if is_secret(rp, base): return "that is a secret file"
     return None
 
-PLANE_TOP = ("scripts", "docs", ".claude", "bin", ".github", ".git")
+PLANE_TOP = ("scripts", "src", "docs", ".claude", "bin", ".github", ".git")   # src/: the package launcher, product code like scripts/
 def plane_target(rp):
     """What part of the control plane a path belongs to, or None."""
     if rp == AD: return "plane"
+    # the product installed apart from the workspace is the plane's code all the same
+    if PRODUCT != AD and (rp == PRODUCT or rp.startswith(PRODUCT + "/")): return "plane"
     if not rp.startswith(AD + "/"): return None
     rel = rp[len(AD) + 1:]
     top = rel.split("/")[0]
@@ -1804,9 +1812,9 @@ def plane_script(w0, base):
     """Is this command word a script of THIS plane (scripts/ or bin/)? A bare name counts only if the plane really has it; a path
     counts only if it leads there from `base`. `scripts/lane-evil` in a repo that has its own scripts/ is just another program."""
     if not w0: return False
-    if "/" not in w0: return bool(re.fullmatch(r"lane-[\w-]+", w0)) and (os.path.isfile(f"{AD}/scripts/{w0}") or os.path.lexists(f"{AD}/bin/{w0}"))
+    if "/" not in w0: return bool(re.fullmatch(r"lane-[\w-]+", w0)) and (os.path.isfile(f"{PRODUCT}/scripts/{w0}") or os.path.lexists(f"{PRODUCT}/bin/{w0}"))
     p = os.path.normpath(w0 if os.path.isabs(w0) else os.path.join(base, w0))
-    return os.path.dirname(p) in (f"{AD}/scripts", f"{AD}/bin") and os.path.lexists(p)
+    return os.path.dirname(p) in (f"{PRODUCT}/scripts", f"{PRODUCT}/bin") and os.path.lexists(p)
 def ours_word(w0, base):
     """One of OUR lane-* scripts, as opposed to lane-run / lane-gh (which carry someone else's command)."""
     return bool(re.fullmatch(r"(\S*/)?lane-[\w-]+", w0)) and not re.fullmatch(r"(\S*/)?lane-(run|gh)", w0) and plane_script(w0, base)
@@ -2783,7 +2791,8 @@ if event == "WorktreeCreate":
             print(f"lane: no lane '{lane_id}'. To start new work name a repo too: <id>/<repo>.\n"
                   f"  repos: {', '.join(known)}\n  lanes: {', '.join(active)}", file=sys.stderr)
             sys.exit(1)
-        r = subprocess.run([f"{AD}/scripts/lane-resume", lane_id], capture_output=True, text=True)
+        # inherits LANE_PRODUCT / LANE_WORKSPACE when they were set, so it acts on the workspace this guard judged
+        r = subprocess.run([f"{PRODUCT}/scripts/lane-resume", lane_id], capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stdout + r.stderr, file=sys.stderr); sys.exit(1)
         live = [x for x in rs if os.path.exists(f"{LANES}/{lane_id}/{x}/.git")]

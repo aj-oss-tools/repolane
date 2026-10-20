@@ -7,7 +7,7 @@
 # Removes worktrees, archives the file, and asks what to do with each repo's leftover
 # Claude session folder (see registry/config.yml `lanes: delete_sessions_on_done:` for the default).
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 id="${1:-}"; f=$(lane_file "$id"); [ -f "$f" ] || die "no lane '$id'"
 shift || true
 DELETE_BRANCHES=0; DISCARD_IGNORED=0; SESSIONS_MODE=""   # SESSIONS_MODE: "" (ask/report) | delete | keep
@@ -159,5 +159,5 @@ if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then
   sed -n '/^## Findings/,/^## Log/p' "$f" | grep '^- ' | sed 's/^/   /'
   echo "   Anything still true after this ships belongs in repo memory — lane-memory draft <slug> then lane-memory file <slug> repo <repo>."
 fi
-lane_set_status "$id" done; mkdir -p "$LANES_DIR/done"; mv "$f" "$LANES_DIR/done/"; "$AD/scripts/lane-workspace" >/dev/null
+lane_set_status "$id" done; mkdir -p "$LANES_DIR/done"; mv "$f" "$LANES_DIR/done/"; "$PRODUCT/scripts/lane-workspace" >/dev/null
 refresh_guards; echo "done: $id -> registry/lanes/done/"
