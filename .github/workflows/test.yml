@@ -6,9 +6,9 @@ name: Guard test suite
 
 on:
   push:
-    branches: [main, release]
+    branches: [main, release, next]
   pull_request:
-    branches: [main, release]
+    branches: [main, release, next]   # next: where a larger change is built before it goes to release as one
 
 jobs:
   test:
