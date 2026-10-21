@@ -8,11 +8,31 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
+### Added
+
+- **Workspaces.** A folder with a `.repolane/` folder in it is a workspace: your own `CLAUDE.md`, `.claude/` and
+  `lanes/` stay at the top, and everything else Repolane keeps (`registry/`, `memory/`, `knowledge/`, `repos/`,
+  `cache/`, `config.yml`, `env.sh`) lives under `.repolane/`. An installed `lane` finds the workspace by looking up
+  from the current folder; `LANE_WORKSPACE` still names one directly. A git clone of Repolane keeps its layout and
+  keeps acting on itself, whatever folder you run it from.
+- A workspace's hooks are `lane hook <event>` commands (`lane hook pre-tool-use`, `lane hook session-start`, …), in
+  `.claude/settings.json` and in every lane's settings, so no hook names a file inside the installed product.
+- `.repolane/REPOLANE.md` holds the rules every session gets (your `CLAUDE.md` imports it with
+  `@.repolane/REPOLANE.md`) and `.repolane/LANE.md` the rules for a session inside a lane. Neither carries your
+  name: the hooks name the owner when a session starts. Both are rewritten on the first `lane` command or hook after
+  the installed version changes; your data is never overwritten.
+- A session that enters a lane with `EnterWorktree`, or starts inside one, is handed `LANE.md` right away. It says
+  plainly that Edit and Write outside the lane folder are refused, and to save the Goal with
+  `lane-memory goal "<text>"` and memories with `lane-memory draft <slug> "<text>"`.
+- The Python package installs the long command names (`lane-memory`, `lane-brief`, `lane-run`, …) next to `lane`.
+
 ### Changed
 
 - Repolane's own files (`lane`, `scripts/`, templates, `VERSION`) and your data (`registry/`, `lanes/`, `repos/`,
   `memory/`, `knowledge/`) are located through two separate roots, which are the same folder in a clone, so nothing
   behaves differently. The repo also builds a Python package (`repolane`) whose `lane` runs the bundled product.
+- `lane doctor` no longer writes a `__pycache__` folder into Repolane's own files, and the guard refuses a tool call
+  (instead of letting it through) if its path resolver is missing.
 
 ## [0.9.2] — 2026-10-19
 

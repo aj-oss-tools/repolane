@@ -14,7 +14,7 @@ fi
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 source "$PRODUCT/scripts/gitstate.sh"
 input=""; [ -t 0 ] || input=$(cat)
-printf '%s' "$input" > "$AD/.cache/last-session-start.json" 2>/dev/null || true
+printf '%s' "$input" > "$CACHE_DIR/last-session-start.json" 2>/dev/null || true
 read -r source sid scwd <<<"$(printf '%s' "$input" | python3 -c 'import json,sys
 try: d=json.load(sys.stdin)
 except Exception: d={}
@@ -55,11 +55,11 @@ if [ "$source" = "resume" ] && [ -n "$repo" ]; then
   echo "## RESUMED CONVERSATION — it belongs to repo '$repo' (transcript lives in that repo's project folder)."
   echo "Its earlier turns refer to OLD checkout paths. Those copies are frozen and blocked. Translate every mention:"
   echo "    old path in the transcript                                   -> what it means now"
-  python3 - "$repo" "$LANES" <<'PY'
+  python3 - "$repo" "$LANES" "$REGISTRY" <<'PY'
 import json,sys,os,glob
-repo,LANES=sys.argv[1:]
+repo,LANES,REGISTRY=sys.argv[1:]
 AD=os.path.dirname(LANES)
-olds=[k for k in json.load(open(f"{AD}/registry/old-checkouts.json")) if k.rstrip("/").endswith("/"+repo)]
+olds=[k for k in json.load(open(f"{REGISTRY}/old-checkouts.json")) if k.rstrip("/").endswith("/"+repo)]
 wts=sorted(glob.glob(f"{LANES}/*/{repo}"))
 target=(wts[0] if len(wts)==1 else ("lanes/<id>/"+repo+" (the lane you enter)")).replace(AD+"/","")
 for o in olds: print(f"    {o:60} -> {target}")
@@ -89,12 +89,16 @@ if [ "${1:-}" = "--worktree" ] || [ -n "$cur" ]; then
     echo "Read memory/<repo>/MEMORY.md for each repo above, then brief $OWNER in five lines and continue the work."
     echo "Scope: only lanes/$id/. Park with $PRODUCT/scripts/lane-park $id \"<note>\" before they switch away."
     echo "Lane scripts: call them by ABSOLUTE path, $PRODUCT/scripts/<name> (e.g. $PRODUCT/scripts/lane-brief $id). You are in the lane, so a relative scripts/<name> does not exist here and exits 127."
+    # a workspace hands the lane's rules (LANE.md) to a session started inside the lane too, not only after EnterWorktree
+    if [ "$LANE_MODE" = workspace ]; then echo; python3 -B "$PRODUCT/scripts/roots.py" lane-context "$id" </dev/null; fi
   fi
   exit 0
 fi
 
 echo "## lane dispatcher — board at $(date '+%F %H:%M')"
 echo
+# REPOLANE.md never carries a name (it is the product's text); the owner is named here, at run time
+[ "$LANE_MODE" = workspace ] && { echo "Owner of this workspace: $OWNER (REPOLANE.md calls them \"the owner\")."; echo; }
 for f in "$LANES_DIR"/*.md; do [ -f "$f" ] || continue; id=$(basename "$f" .md)
   st=$(lane_get "$id" status); up=$(lane_get "$id" updated)
   line="- **$id** [$st, updated $up]"

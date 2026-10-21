@@ -24,10 +24,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.realpath(__file__))   # the page and its static files
 # PRODUCT holds the lane-* scripts this server runs, AD is the workspace it shows: one folder in a clone, split by
-# LANE_PRODUCT / LANE_WORKSPACE (scripts/lib.sh).
-PRODUCT = os.path.realpath(os.environ.get("LANE_PRODUCT") or os.path.dirname(os.path.dirname(HERE)))
-AD = os.path.realpath(os.environ.get("LANE_WORKSPACE") or PRODUCT)
-LANES, REPOS, LANES_DIR = f"{AD}/lanes", f"{AD}/repos", f"{AD}/registry/lanes"
+# LANE_PRODUCT / LANE_WORKSPACE. scripts/roots.py decides both and every data path, for a workspace (data under
+# .repolane/) and a clone alike; nothing here builds a data path from AD itself.
+sys.dont_write_bytecode = True   # the product is only read
+sys.path.insert(0, os.path.dirname(HERE))
+import roots as _roots
+sys.path.pop(0)
+R = _roots.Roots(os.path.dirname(os.path.dirname(HERE)))
+PRODUCT, AD = R.product, R.ad
+LANES, REPOS, LANES_DIR = R.lanes, R.repos, R.lanes_dir
+_ROOTS = {AD: R}
+def roots_of(ad):
+    """The data paths of plane `ad`: this server's own, or another registered plane's, laid out the way that one is."""
+    if ad not in _ROOTS: _ROOTS[ad] = _roots.Roots(PRODUCT, env={"LANE_WORKSPACE": ad})
+    return _ROOTS[ad]
 TOKEN = secrets.token_urlsafe(24)
 # The refresh loop runs `git status` every few seconds. By default that opportunistically rewrites
 # .git/index, taking index.lock, so a user's own `git add` could fail with "index.lock exists".
@@ -127,7 +137,7 @@ def defaults(ad=None):
     stale - api still advertises master while the team moved to develop - so the
     registry wins over git here."""
     ad = ad or AD
-    t = open(f"{ad}/registry/repos.yaml").read()
+    t = open(f"{roots_of(ad).registry}/repos.yaml").read()
     out = {m.group(1): m.group(2) for m in
            re.finditer(r"^  ([\w.-]+):\n(?:    .*\n)*?    default_branch: (\S+)", t, re.M)}
     # compare_branch overrides default_branch where a repo integrates somewhere else
@@ -137,12 +147,12 @@ def defaults(ad=None):
 
 def shorts(ad=None):
     ad = ad or AD
-    t = open(f"{ad}/registry/repos.yaml").read()
+    t = open(f"{roots_of(ad).registry}/repos.yaml").read()
     return {m.group(1): m.group(2) for m in re.finditer(r"^  ([\w.-]+):\n(?:    .*\n)*?    short: (\S+)", t, re.M)}
 
 def lane_files(ad=None):
     ad = ad or AD
-    return sorted(f for f in os.listdir(f"{ad}/registry/lanes") if f.endswith(".md"))
+    return sorted(f for f in os.listdir(roots_of(ad).lanes_dir) if f.endswith(".md"))
 
 def parse_ws(path):
     t = open(path).read()
@@ -326,7 +336,7 @@ def lane_log(ad, lane, n=60, whole=False):
     """Every repo of a lane, interleaved newest first. Each row says which repo it came from,
     because across four repos a subject line alone does not tell you where you are."""
     ad = ad or AD
-    f = f"{ad}/registry/lanes/{lane}.md"
+    f = f"{roots_of(ad).lanes_dir}/{lane}.md"
     if not re.fullmatch(r"[\w.-]+", lane) or not os.path.exists(f): raise ValueError("unknown lane")
     spec = parse_ws(f); sh_ = shorts(ad); rows = []
     for r in spec["repos"]:
@@ -510,7 +520,7 @@ def tracker_url(ad=None):
     and the page shows keys as plain text rather than guessing a host."""
     ad = ad or AD
     try:
-        with open(f"{ad}/registry/config.yml") as fh:
+        with open(roots_of(ad).config) as fh:
             blk = re.search(r"^tracker:[ \t]*\n((?:[ \t]+[^\n]*\n?|[ \t]*\n)*)", fh.read(), re.M)
             m = re.search(r"^[ \t]+url:[ \t]*([^\s#]*)", blk.group(1), re.M) if blk else None
             return m.group(1).strip("\"'") if m else ""
@@ -531,7 +541,7 @@ def run_ws(action, id_, repos=None, note=None, ad=None):
     if action == "done": return run_tool(ad, "lane-done", id_, timeout=120)
     return 1, "", "unknown action"
 
-MEM = f"{AD}/memory"; KNOW = f"{AD}/knowledge"; INBOX = f"{AD}/.cache/memory-inbox"
+MEM = R.memory; KNOW = R.knowledge; INBOX = f"{R.cache}/memory-inbox"
 CROSSISH = re.compile(r"\b(always|never|every repo|all repos|any repo|in every|house style|preference|standing)\b", re.I)
 
 def mem_meta(path):
@@ -697,7 +707,7 @@ def compute_board_for(ad):
     the board switcher: read-only, on demand, for whichever plane the client asked to view."""
     sh_ = shorts(ad); defaults_map = defaults(ad); out = []
     for f in lane_files(ad):
-        w = parse_ws(f"{ad}/registry/lanes/{f}")
+        w = parse_ws(f"{roots_of(ad).lanes_dir}/{f}")
         for r in w["repos"]:
             p = f"{ad}/lanes/{w['id']}/{r['repo']}"; r["short"] = sh_.get(r["repo"], r["repo"]); r["path"] = p
             r.update(repo_state(p))
@@ -708,7 +718,7 @@ def compute_board_for(ad):
         out.append(w)
     order = {"active": 0, "parked": 1}
     out.sort(key=lambda w: (order.get(w["status"], 2), w["id"].lower()))
-    return {"lanes": out, "repos": sorted(os.listdir(f"{ad}/repos")), "generated": time.strftime("%H:%M:%S"),
+    return {"lanes": out, "repos": sorted(os.listdir(roots_of(ad).repos)), "generated": time.strftime("%H:%M:%S"),
             "serverStartedAt": STARTED, "tracker": tracker_url(ad)}
 
 def board_for(ad):
@@ -738,7 +748,7 @@ def repo_payload(ad, lane, repo):
         if sess is None: threading.Thread(target=sessions_cached, args=(repo,), daemon=True).start(); sess = ""
     spec_base = None
     try:
-        spec_base = next((x.get("base") for x in parse_ws(f"{ad}/registry/lanes/{lane}.md")["repos"] if x["repo"] == repo), None)
+        spec_base = next((x.get("base") for x in parse_ws(f"{roots_of(ad).lanes_dir}/{lane}.md")["repos"] if x["repo"] == repo), None)
     except Exception: pass
     rebase_target(c["path"], st, pr_, spec_base, defaults_map=(DEFAULTS if ad == AD else defaults(ad)))
     # both lists share a cap: widening the range must never show fewer commits than narrowing it
@@ -792,7 +802,7 @@ class H(BaseHTTPRequestHandler):
                 p = mem_path(q.get("scope", ""), q.get("file", ""))
                 return self.send(200, {"content": open(p).read() if os.path.exists(p) else "", "path": os.path.relpath(p, AD)})
             if route == "/api/spec":
-                f = f"{ad}/registry/lanes/{q['lane']}.md"; return self.send(200, {"spec": open(f).read() if os.path.exists(f) else ""})
+                f = f"{roots_of(ad).lanes_dir}/{q['lane']}.md"; return self.send(200, {"spec": open(f).read() if os.path.exists(f) else ""})
             if route == "/api/lanelog":
                 whole = q.get("all") == "1"
                 return self.send(200, {"log": lane_log(ad, q["lane"], whole=whole), "whole": whole})
@@ -852,7 +862,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200 if code == 0 else 400, {"ok": code == 0, "output": (out + err).strip()})
             p = lane_path(ad, body["lane"], body["repo"])
             if route == "/api/pr":
-                w = parse_ws(f"{ad}/registry/lanes/{body['lane']}.md"); base = next((r.get("base") for r in w["repos"] if r["repo"] == body["repo"]), None)
+                w = parse_ws(f"{roots_of(ad).lanes_dir}/{body['lane']}.md"); base = next((r.get("base") for r in w["repos"] if r["repo"] == body["repo"]), None)
                 url = compare_url(p, base); return self.send(200 if url else 400, {"ok": bool(url), "url": url, "output": "" if url else "origin is not a GitHub URL"})
             if route == "/api/discard":
                 r = discard(p, body.get("files") or [])

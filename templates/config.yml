@@ -1,0 +1,24 @@
+# Who this workspace belongs to, and how it should talk to them. Yours to edit; Repolane never rewrites it.
+owner:
+  # Named in hook messages and agent prompts: "ask <name> first", "work <name> asked for".
+  name: {{owner}}
+
+tracker:
+  # Where a ticket key links to. {key} is replaced with the key found in a lane's
+  # `ticket:` field, or at the front of its id (ABC-123-short-name -> ABC-123).
+  # Blank means keys show as plain text instead of links.
+  url:
+
+lanes:
+  # A lane nobody has touched in this many days is reported as stale by `lane doctor`,
+  # with the one command that clears it out. Nothing is ever done automatically.
+  # 0 turns the check off.
+  stale_days: 21
+  # Default answer for the "delete this lane's Claude sessions?" prompt `lane done` shows when
+  # it finds any. It only changes the default answer; the prompt is always asked.
+  delete_sessions_on_done:
+
+protection:
+  # `lane doctor` reminds you to run `lane sync` for a repo whose GitHub branch protection
+  # has not been checked in this many days (or never). 0 turns the reminder off.
+  sync_days:

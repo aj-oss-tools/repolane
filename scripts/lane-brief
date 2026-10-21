@@ -35,7 +35,7 @@ while read -r repo branch; do d="$LANES/$id/$repo"
     [ -n "$(git -C "$d" status --porcelain)" ] && git -C "$d" status --short | head -10 | sed 's/^/  /'
   elif [ "$archived" = 1 ]; then echo "  worktree removed when the lane finished"
   else echo "  no worktree (lane-resume $id recreates it)"; fi
-  m="$AD/memory/$repo/MEMORY.md"; [ -f "$m" ] && { echo "  memory index ($m):"; { grep '^- ' "$m" || true; } | head -8 | cut -c1-140 | sed 's/^/    /'; }
+  m="$MEMORY_DIR/$repo/MEMORY.md"; [ -f "$m" ] && { echo "  memory index ($m):"; { grep '^- ' "$m" || true; } | head -8 | cut -c1-140 | sed 's/^/    /'; }
 done < <(lane_repos "$id")
 if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then echo "FINDINGS (live only — archived when this lane finishes)"; sed -n '/^## Findings/,/^## Log/p' "$f" | grep '^- ' | cut -c1-150 | sed 's/^/  /'; fi
 if grep -q '^  - path: ' "$f"; then

@@ -23,7 +23,8 @@ for f in repolane/__init__.py repolane/cli.py $P/lane $P/VERSION $P/LICENSE $P/N
          $P/scripts/statusline.sh $P/scripts/lane-stable-dispatcher $P/scripts/lane-planes.py \
          $P/scripts/hooks/guard.py $P/scripts/hooks/guard-check $P/scripts/hooks/test-guard.sh \
          $P/scripts/board/server.py $P/scripts/board/index.html $P/scripts/board/board.js $P/scripts/board/board.css \
-         $P/knowledge/preferences.md.example $P/.claude/settings.json; do
+         $P/knowledge/preferences.md.example $P/.claude/settings.json $P/scripts/roots.sh $P/scripts/roots.py \
+         $P/templates/REPOLANE.md $P/templates/LANE.md $P/templates/config.yml $P/templates/env.sh; do
   assert_contains "wheel has $f" "$names" "$f"
 done
 # every script the dispatcher maps to must be in the wheel, or `lane <cmd>` dies on an installed copy
@@ -46,6 +47,12 @@ out=$(cd "$T" && "$T/venv/bin/lane" --version 2>&1)
 assert_eq "lane --version prints VERSION" "lane $(tr -d '[:space:]' < "$SRC/VERSION")" "$out"
 inst=$("$T/venv/bin/python" -c 'import repolane.cli;print(repolane.cli.product_dir())')
 assert_contains "lane help runs from the installed copy" "$(cd "$T" && "$T/venv/bin/lane" help 2>&1)" "lane"
+
+for n in lane-memory lane-brief lane-status lane-run lane-gh lane-with lane-park guard-check; do
+  assert "the long name $n is installed as a command" test -x "$T/venv/bin/$n"
+done
+out=$(cd "$T" && "$T/venv/bin/lane-memory" --help 2>&1)
+assert_contains "lane-memory runs \`lane note\`" "$out" "lane note"
 
 echo "-- the installed product still runs after an installer dropped the +x bits"
 chmod -R a-x "$inst/scripts" "$inst/lane"; chmod -R u+X "$inst/scripts"   # directories stay enterable

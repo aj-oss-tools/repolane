@@ -31,7 +31,7 @@ git rev-parse --git-dir >/dev/null 2>&1 || die "$PRODUCT is not a git checkout â
 # `lane init` itself edits (.claude/settings.json always; .gitignore and scripts/local/ only on a
 # private fork, where init rewrites .gitignore to track them) plus the per-install state
 # CONTRIBUTING.md names. Untracked files never block: git refuses a merge that would overwrite one.
-private=$(sed -n 's/^private:[[:space:]]*//p' "$AD/registry/config.yml" 2>/dev/null | head -1 | tr -d '"'"'"' ')
+private=$(sed -n 's/^private:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d '"'"'"' ')
 dirty=$(git status --porcelain)
 if [ -n "$dirty" ]; then
   blocking=""

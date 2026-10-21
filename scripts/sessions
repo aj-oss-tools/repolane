@@ -28,7 +28,7 @@ else
     done < <(sed -n '/^---$/,/^---$/p' "$lf" | awk '/^  - repo:/{r=$3} /^    branch:/{print r, $2}')
   done
   # source #3: the pre-Repolane checkout this repo was added from, if any
-  old_path=$(sed -n "/^  $repo:\$/,/^  [a-z]/p" "$AD/registry/repos.yaml" | sed -n 's/^      - //p' | head -1)
+  old_path=$(sed -n "/^  $repo:\$/,/^  [a-z]/p" "$REGISTRY/repos.yaml" | sed -n 's/^      - //p' | head -1)
   old_n=0
   if [ -n "$old_path" ]; then
     olddir="$HOME/.claude/projects/$(claude_project_dir "$old_path")"

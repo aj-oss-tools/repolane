@@ -43,6 +43,7 @@ mkdir -p "$AD"/{scripts/hooks,docs,memory/docs,knowledge,registry/lanes,.claude}
 # A copy, never a symlink: guard.py locates the control plane from its own real path, so a
 # symlinked guard would judge every case against the developer's real plane instead.
 cat "$SRC/scripts/hooks/guard.py" > "$AD/scripts/hooks/guard.py" || die "cannot copy guard.py"
+cat "$SRC/scripts/roots.py" > "$AD/scripts/roots.py" || die "cannot copy roots.py"   # guard.py's resolver, imported beside it
 cat "$SRC/registry/config.yml" > "$AD/registry/config.yml" 2>/dev/null || : > "$AD/registry/config.yml"
 : > "$AD/registry/repos.yaml"; : > "$AD/CLAUDE.md"; : > "$AD/docs/rules.md"
 echo '{}' > "$AD/.claude/settings.json"
@@ -543,7 +544,7 @@ tool_case allow "$W" Glob "{\"pattern\":\"*\",\"path\":\"$AD/lanes/docs/refs/cli
 
 section "item 17: the matcher is written in two places and they must agree"
 SYNC=$TMPROOT/sync; mkdir -p "$SYNC/scripts" "$SYNC/registry/lanes" "$SYNC/lanes/x" "$SYNC/memory" && : > "$SYNC/registry/config.yml" || die "cannot lay out the matcher fixture"
-cp "$SRC/scripts/lib.sh" "$SRC/scripts/env.sh" "$SYNC/scripts/" || die "cannot copy lib.sh"
+cp "$SRC/scripts/lib.sh" "$SRC/scripts/env.sh" "$SRC/scripts/roots.sh" "$SRC/scripts/roots.py" "$SYNC/scripts/" || die "cannot copy lib.sh"
 mkdir -p "$SYNC/lanes/x/.claude" && echo '{"permissions":{"allow":["Bash(lane-memory:*)","Bash(lane-workspace:*)","Bash(npm test:*)"]}}' > "$SYNC/lanes/x/.claude/settings.local.json"   # what an older version wrote
 (cd "$SYNC" && HOME="$FAKEHOME" bash -c 'source scripts/lib.sh && write_guard "$PWD/lanes/x" x "$PWD/memory"') >/dev/null 2>&1 || die "lib.sh write_guard did not run"
 jget(){ python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));exec(sys.argv[2])' "$1" "$2"; }
@@ -1590,7 +1591,7 @@ bash_case pass 'alembic upgrade head'
 
 section "K: an internal error while judging a tool call is a deny with exit status 0, never a bare crash"
 CRASH=$TMPROOT/crash/plane
-mkdir -p "$CRASH"/{scripts/hooks,registry/lanes,lanes/docs/docs,repos} && cp "$AD/scripts/hooks/guard.py" "$CRASH/scripts/hooks/guard.py" && : > "$CRASH/registry/config.yml" \
+mkdir -p "$CRASH"/{scripts/hooks,registry/lanes,lanes/docs/docs,repos} && cp "$AD/scripts/hooks/guard.py" "$CRASH/scripts/hooks/guard.py" && cp "$AD/scripts/roots.py" "$CRASH/scripts/roots.py" && : > "$CRASH/registry/config.yml" \
   && printf 'gitdir: x\n' > "$CRASH/lanes/docs/docs/.git" && printf -- '---\nid: docs\n---\n' > "$CRASH/registry/lanes/docs.md" \
   && : > "$CRASH/.cache" || die "cannot lay out the crash fixture"      # .cache is a FILE, so the per-session cache cannot be created
 crash_case(){ # crash_case <label> <cwd> <command>

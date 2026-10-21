@@ -53,7 +53,7 @@ else
   echo "cloned $url -> $dst"
 fi
 def=$(repo_default "$name")
-python3 - "$AD/registry/repos.yaml" "$name" "$url" "$def" "$local_path" <<'PY'
+python3 - "$REGISTRY/repos.yaml" "$name" "$url" "$def" "$local_path" <<'PY'
 import sys; p,name,url,default,frm=sys.argv[1:]
 t=open(p).read()
 if f"\n  {name}:\n" in t: sys.exit(0)
@@ -73,7 +73,7 @@ PY
 # there instead of in a lane, and so the guard can refuse to read it. Three readers of
 # registry/old-checkouts.json existed before this; nothing ever wrote it.
 if [ -n "$local_path" ]; then
-  python3 - "$AD/registry/old-checkouts.json" "$local_path" <<'OLDCHK'
+  python3 - "$REGISTRY/old-checkouts.json" "$local_path" <<'OLDCHK'
 import json, os, subprocess, sys
 path, src = sys.argv[1:]
 def git(*a):
@@ -87,10 +87,10 @@ json.dump(d, open(path, "w"), indent=2, sort_keys=True)
 OLDCHK
   echo "  recorded $local_path as an old checkout — lane status flags work that happens there"
 fi
-mkdir -p "$AD/memory/$name"; [ -f "$AD/memory/$name/MEMORY.md" ] || printf '# Memory Index — %s\n' "$name" > "$AD/memory/$name/MEMORY.md"
+mkdir -p "$MEMORY_DIR/$name"; [ -f "$MEMORY_DIR/$name/MEMORY.md" ] || printf '# Memory Index — %s\n' "$name" > "$MEMORY_DIR/$name/MEMORY.md"
 slug=$(claude_project_dir "$dst"); proj="$HOME/.claude/projects/$slug"; mkdir -p "$proj"
-if [ -d "$proj/memory" ] && [ ! -L "$proj/memory" ]; then cp -an "$proj/memory/." "$AD/memory/$name/" && rm -rf "$proj/memory"; fi
-[ -L "$proj/memory" ] || ln -s "$AD/memory/$name" "$proj/memory"
+if [ -d "$proj/memory" ] && [ ! -L "$proj/memory" ]; then cp -an "$proj/memory/." "$MEMORY_DIR/$name/" && rm -rf "$proj/memory"; fi
+[ -L "$proj/memory" ] || ln -s "$MEMORY_DIR/$name" "$proj/memory"
 echo "registered $name (default $def); memory -> memory/$name. Edit registry/repos.yaml: stack/product."
 
 # guard.py already denies a fixed set of secret-shaped filenames globally; every repo can also have

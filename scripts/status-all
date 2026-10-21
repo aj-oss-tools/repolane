@@ -49,8 +49,8 @@ for f in "$LANES_DIR"/*.md; do [ -f "$f" ] || continue; id=$(basename "$f" .md)
   done < <(lane_repos "$id")
 done
 echo "== drift: checkouts outside the control plane (should be none; work happens here)"
-[ -f "$AD/registry/old-checkouts.json" ] || exit 0
-python3 - "$AD/registry/old-checkouts.json" <<'PY'
+[ -f "$REGISTRY/old-checkouts.json" ] || exit 0
+python3 - "$REGISTRY/old-checkouts.json" <<'PY'
 import json,subprocess,sys
 for p,h in json.load(open(sys.argv[1])).items():
     try: cur=subprocess.check_output(["git","-C",p,"rev-parse","HEAD"],text=True,stderr=subprocess.DEVNULL).strip()

@@ -26,7 +26,7 @@ repo=""
 while read -r r _b; do
   short=$(python3 -c "
 import re,sys
-t=open('$AD/registry/repos.yaml').read()
+t=open('$REGISTRY/repos.yaml').read()
 m=re.search(r'^  '+re.escape(sys.argv[1])+r':\n(?:    .*\n)*?    short: (\S+)', t, re.M)
 print(m.group(1) if m else '')" "$r")
   if [ "$r" = "$want" ] || [ "$(printf '%s' "${short:-}" | tr A-Z a-z)" = "$(printf '%s' "$want" | tr A-Z a-z)" ]; then repo="$r"; break; fi

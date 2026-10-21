@@ -33,7 +33,7 @@ def ensure_executable(root):
                 pass
 
 
-def main():
+def run(args):
     prod = product_dir()
     lane = os.path.join(prod, "lane")
     if not os.path.isfile(lane):
@@ -43,4 +43,28 @@ def main():
     env = dict(os.environ, LANE_PRODUCT=prod)
     # through bash, not the file's own +x: the dispatcher runs even where ensure_executable could not help
     bash = shutil.which("bash") or "/bin/bash"
-    os.execve(bash, [bash, lane, *sys.argv[1:]], env)
+    os.execve(bash, [bash, lane, *args], env)
+
+
+def main():
+    return run(sys.argv[1:])
+
+
+# The long names the rules and the lane settings use (lane-memory, lane-brief, …): each is `lane <short>`, installed as a
+# command of its own so a session in a workspace can run what REPOLANE.md and LANE.md tell it to. The same table as
+# `lane install`'s stubs.
+LONGFORM = {"lane-add": "add", "lane-audit": "audit", "lane-board": "board", "lane-brief": "brief", "lane-done": "done",
+            "lane-env-check": "env", "lane-env-keys": "keys", "lane-find": "find", "lane-gh": "gh", "lane-help": "help",
+            "lane-import": "import", "lane-init": "init", "lane-memory": "note", "lane-menu": "menu", "lane-merge": "merge",
+            "lane-merge-plan": "plan", "lane-nested": "nested", "lane-park": "park", "lane-ref": "ref", "lane-resume": "resume",
+            "lane-run": "run", "lane-sessions": "sessions", "lane-start": "start", "lane-status": "status", "lane-with": "with",
+            "lane-workspace": "workspace", "guard-check": "doctor"}
+
+
+def longform():
+    name = os.path.basename(sys.argv[0])
+    short = LONGFORM.get(name)
+    if not short:
+        sys.stderr.write(f"repolane: '{name}' is not one of the lane commands\n")
+        return 2
+    return run([short, *sys.argv[1:]])

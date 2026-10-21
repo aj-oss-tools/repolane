@@ -15,10 +15,17 @@ while [ -L "$_self" ]; do
   case "$_l" in /*) _self="$_l" ;; *) _self="$(dirname "$_self")/$_l" ;; esac
 done
 # PRODUCT is where Repolane's own files are (this file, scripts/, VERSION); AD is the workspace with the user's
-# data (registry/, lanes/, …). One folder in a clone; LANE_PRODUCT / LANE_WORKSPACE split them (scripts/lib.sh).
+# data. One folder in a clone; LANE_PRODUCT / LANE_WORKSPACE split them, and an installed product finds its workspace
+# from the current folder (scripts/roots.sh decides all of it, for every script).
 PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "$_self")" && pwd)}"
-AD="${LANE_WORKSPACE:-$PRODUCT}"
 S="$PRODUCT/scripts"
+source "$S/roots.sh"
+# A hook runs in the session's current folder, which a cd can move; the folder the session was started in is the one
+# that says which workspace it belongs to.
+if [ "${1:-}" = hook ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then lane_resolve_roots "$CLAUDE_PROJECT_DIR"
+else lane_resolve_roots; fi
+# a workspace takes the installed version's rule files (and data migrations) on the first run after an upgrade
+lane_refresh_workspace
 
 # command → implementation, and the one line shown in `lane help`
 map(){ case "$1" in
@@ -67,9 +74,9 @@ usage(){
   printf '    %-10s %s\n\n' "use" "switch which registered plane is active; lane use --remove <name> forgets one (stable ~/.local/bin/lane dispatcher)"
   # scripts/local/<name> (docs/extending.md): any executable there is a `lane <name>` too. Listed
   # separately, after the built-ins, so a shadowed name is never confused for one of them.
-  if [ -d "$AD/scripts/local" ]; then
+  if [ -d "$DATA/scripts/local" ]; then
     locals=""
-    for f in "$AD/scripts/local"/*; do
+    for f in "$DATA/scripts/local"/*; do
       [ -x "$f" ] && [ ! -d "$f" ] || continue
       locals="$locals $f"
     done
@@ -109,6 +116,18 @@ fi
 
 case "$cmd" in
   -h|--help|help) usage; exit 0 ;;
+  hook)
+    # `lane hook <event>`: what a workspace's .claude/settings.json runs, so no hook names a file in the product. The
+    # hook's JSON passes through on stdin to the same implementations a clone's settings name by path.
+    ev="${2:-}"
+    case "$ev" in
+      session-start) exec "$S/session-start" ;;
+      pre-tool-use|post-tool-use|user-prompt-submit|pre-compact|session-end|worktree-create|worktree-remove)
+        # -B: the product is never written to, not even a __pycache__ for the modules the guard imports
+        exec python3 -B "$S/hooks/guard.py" ;;
+      *) echo "lane hook: unknown event '$ev' (session-start, pre-tool-use, post-tool-use, user-prompt-submit, pre-compact, session-end, worktree-create, worktree-remove)" >&2
+         exit 1 ;;
+    esac ;;
   --version|version)
     # VERSION is the one place the number is written down, so a tarball with no .git still knows
     # what it is. The release tag is always v<VERSION>; git is asked only for the detail a file
@@ -287,7 +306,7 @@ if entry=$(map "$cmd"); then
   # or Python errors. Say the one thing that helps.
   case "$cmd" in
     init|help) : ;;
-    *) [ -f "$AD/registry/repos.yaml" ] || {
+    *) [ -f "$REGISTRY/repos.yaml" ] || {
          printf '\e[31mlane: this control plane is not set up yet\e[0m\n' >&2
          echo "  run:  lane init" >&2
          exit 2
@@ -305,9 +324,9 @@ fi
 # A separate variable, not $cmd itself, so a rejected name still shows correctly in the "no
 # command named" error below rather than printing blank.
 local_cmd="$cmd"; case "$local_cmd" in */*) local_cmd="" ;; esac
-if [ -n "$local_cmd" ] && [ -x "$AD/scripts/local/$local_cmd" ] && [ ! -d "$AD/scripts/local/$local_cmd" ]; then
+if [ -n "$local_cmd" ] && [ -x "$DATA/scripts/local/$local_cmd" ] && [ ! -d "$DATA/scripts/local/$local_cmd" ]; then
   shift 2>/dev/null || true
-  exec "$AD/scripts/local/$local_cmd" "$@"
+  exec "$DATA/scripts/local/$local_cmd" "$@"
 fi
 
 # not a command — say so, and guess what was meant

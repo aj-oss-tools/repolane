@@ -21,7 +21,7 @@ for a in "$@"; do
 done
 [ -n "$q" ] || die "usage: lane-find <text> [--all]"
 
-python3 - "$AD" "$q" "$all" <<'PY'
+python3 - "$DATA" "$q" "$all" <<'PY'
 import os, re, subprocess, sys
 
 AD, q, show_all = sys.argv[1], sys.argv[2], sys.argv[3] == "1"

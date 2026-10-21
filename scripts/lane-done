@@ -100,7 +100,7 @@ fi
 
 # default answer for the interactive session-cleanup prompt below — config only ever changes
 # which way the prompt defaults, never whether it is asked
-CFG_DELETE=$(sed -n 's/^[[:space:]]*delete_sessions_on_done:[[:space:]]*//p' "$AD/registry/config.yml" 2>/dev/null | head -1 | tr -d '"'"'"' ')
+CFG_DELETE=$(sed -n 's/^[[:space:]]*delete_sessions_on_done:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d '"'"'"' ')
 [ "$CFG_DELETE" = "true" ] || CFG_DELETE="false"
 
 # everything checked out; now it is safe to remove

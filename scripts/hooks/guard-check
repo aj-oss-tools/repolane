@@ -24,12 +24,15 @@ VERBOSE=0; QUIET=0
 case "${1:-}" in -v|--verbose) VERBOSE=1 ;; -q|--quiet) QUIET=1 ;; -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   "") : ;; *) echo "guard-check: unknown option '$1' (try -v)" >&2; exit 2 ;; esac
 
-# PRODUCT holds guard.py, AD is the workspace it guards: one folder in a clone (scripts/lib.sh). guard.py resolves both
-# the same way (the same variables, the same default), so the probes judge the workspace whose wiring is checked here.
+# PRODUCT holds guard.py, AD is the workspace it guards: one folder in a clone. scripts/roots.sh decides both and every
+# data path, and guard.py resolves them the same way (scripts/roots.py), so the probes judge the workspace whose wiring
+# is checked here.
 PRODUCT="${LANE_PRODUCT:-$(dirname "$(dirname "$(dirname "$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")")")")}"
-AD="${LANE_WORKSPACE:-$PRODUCT}"
+source "$PRODUCT/scripts/roots.sh"; lane_resolve_roots
+# The product is only read: no __pycache__ beside guard.py or the modules it imports, whoever runs this.
+export PYTHONDONTWRITEBYTECODE=1
 G="$PRODUCT/scripts/hooks/guard.py"
-if ! python3 -m py_compile "$G" 2>"${TMPDIR:-/tmp}/guard-syntax.$$.txt"; then
+if ! python3 -B -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$G" 2>"${TMPDIR:-/tmp}/guard-syntax.$$.txt"; then
   echo "!! scripts/hooks/guard.py does not compile — EVERY rule is currently off:"
   sed 's/^/     /' "${TMPDIR:-/tmp}/guard-syntax.$$.txt"
   exit 1
@@ -37,7 +40,7 @@ fi
 
 # The probes. Every one runs from the control plane root, so they answer the same on a fresh
 # clone as on a machine full of lanes — the claim has to be checkable before there is any work.
-ask(){ printf '%s' "$1" | python3 "$G" 2>&1 | grep -o '"permissionDecision": "[a-z]*"' | cut -d'"' -f4; }
+ask(){ printf '%s' "$1" | python3 -B "$G" 2>&1 | grep -o '"permissionDecision": "[a-z]*"' | cut -d'"' -f4; }
 bash_probe(){ printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"%s","tool_input":{"command":%s}}' \
   "$AD" "$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")"; }
 file_probe(){ printf '{"hook_event_name":"PreToolUse","tool_name":"%s","cwd":"%s","tool_input":{"file_path":"%s"}}' "$1" "$AD" "$2"; }
@@ -52,13 +55,13 @@ probe(){ # probe <want> <label> <json>
 }
 probe deny "a worktree with no lane named"        '{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","cwd":"'"$AD"'","tool_input":{}}'
 probe deny "a worktree opened by path"            '{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","cwd":"'"$AD"'","tool_input":{"path":"'"$AD"'/lanes/x"}}'
-probe deny "reading a .env"                       "$(file_probe Read "$AD/repos/any/.env")"
+probe deny "reading a .env"                       "$(file_probe Read "$REPOS/any/.env")"
 probe deny "a shell that prints a .env"           "$(bash_probe 'cat .env')"
-probe deny "writing a memory directly"            "$(file_probe Write "$AD/memory/brand-new-thing.md")"
+probe deny "writing a memory directly"            "$(file_probe Write "$MEMORY_DIR/brand-new-thing.md")"
 probe deny "a push to a default branch"           "$(bash_probe 'git push origin main')"
 probe deny "rewriting the git remote"             "$(bash_probe 'git remote set-url origin git@github.com:x/y.git')"
 probe deny "a push to main, written differently"  "$(bash_probe "git push origin 'main';")"
-probe deny "grepping a .env (Grep reaches it)"    '{"hook_event_name":"PreToolUse","tool_name":"Grep","cwd":"'"$AD"'","tool_input":{"pattern":"x","path":"'"$AD"'/repos/any/.env"}}'
+probe deny "grepping a .env (Grep reaches it)"    '{"hook_event_name":"PreToolUse","tool_name":"Grep","cwd":"'"$AD"'","tool_input":{"pattern":"x","path":"'"$REPOS"'/any/.env"}}'
 probe deny "deleting a GitHub repo"               "$(bash_probe 'gh repo delete your-org/api --yes')"
 # The control: ordinary work must come back undecided. A guard that refuses everything passes
 # every deny probe above and is still useless.
@@ -136,9 +139,9 @@ fi
 # other check below it, never auto-pulls — but printed here, first and with a stronger prefix,
 # because a team's shared guard rules silently drifting is a different severity of problem than
 # one person's stale branch-protection cache. Prints nothing if shared_rules isn't configured.
-if [ "$QUIET" = 0 ] && [ -f "$AD/registry/config.yml" ] && grep -q '^shared_rules:' "$AD/registry/config.yml" 2>/dev/null; then
-  SR_URL=$(sed -n '/^shared_rules:/,/^[a-z]/p' "$AD/registry/config.yml" | sed -n 's/^[[:space:]]*url:[[:space:]]*//p' | head -1 | tr -d '"'"'"' ')
-  SR_SHA=$(sed -n '/^shared_rules:/,/^[a-z]/p' "$AD/registry/config.yml" | sed -n 's/^[[:space:]]*pinned_sha:[[:space:]]*//p' | head -1 | tr -d '"'"'"' ')
+if [ "$QUIET" = 0 ] && [ -f "$CONFIG_FILE" ] && grep -q '^shared_rules:' "$CONFIG_FILE" 2>/dev/null; then
+  SR_URL=$(sed -n '/^shared_rules:/,/^[a-z]/p' "$CONFIG_FILE" | sed -n 's/^[[:space:]]*url:[[:space:]]*//p' | head -1 | tr -d '"'"'"' ')
+  SR_SHA=$(sed -n '/^shared_rules:/,/^[a-z]/p' "$CONFIG_FILE" | sed -n 's/^[[:space:]]*pinned_sha:[[:space:]]*//p' | head -1 | tr -d '"'"'"' ')
   if [ -n "$SR_URL" ]; then
     SR_REMOTE=$(git ls-remote "$SR_URL" HEAD 2>/dev/null | awk '{print $1}')
     if [ -n "$SR_REMOTE" ] && [ -n "$SR_SHA" ] && [ "$SR_REMOTE" != "$SR_SHA" ]; then
@@ -159,11 +162,15 @@ ad, verbose = sys.argv[1], sys.argv[2] == "1"
 # generated per-lane ones use an absolute path, so match on the suffix.
 guard = "scripts/hooks/guard.py"
 problems, seen = [], []
+def is_guard(cmd):
+    """A hook command that runs the guard: by its path (a clone), or `lane hook <event>` for any event the guard handles."""
+    w = cmd.split()
+    return guard in cmd or (w[:2] == ["lane", "hook"] and len(w) > 2 and w[2] != "session-start")
 
 def covers_search(hooks):
     """Does the PreToolUse matcher that points at the guard include Glob and Grep? (No matcher at all means every tool.)"""
     for m in hooks.get("PreToolUse") or []:
-        if not any(guard in (h.get("command") or "") for h in m.get("hooks", [])):
+        if not any(is_guard(h.get("command") or "") for h in m.get("hooks", [])):
             continue
         pat = m.get("matcher")
         if not pat or {"Glob", "Grep"} <= set(pat.split("|")):
@@ -181,7 +188,7 @@ def check(path, label):
         problems.append(f"{label}: settings.local.json is not valid JSON ({e.__class__.__name__})")
         return
     hooks = d.get("hooks") or {}
-    wired = any(guard in (h.get("command") or "")
+    wired = any(is_guard(h.get("command") or "")
                 for arr in hooks.values() for m in arr for h in m.get("hooks", []))
     if not wired:
         problems.append(f"{label}: hooks do not point at guard.py — this session is UNGUARDED")
@@ -209,7 +216,7 @@ if os.path.exists(root):
     try:
         d = json.load(open(root))
         hooks = d.get("hooks") or {}
-        if not any(guard in (h.get("command") or "")
+        if not any(is_guard(h.get("command") or "")
                    for arr in hooks.values() for m in arr for h in m.get("hooks", [])):
             problems.append("the control plane root: hooks do not point at guard.py")
         elif not covers_search(hooks):
@@ -252,10 +259,10 @@ fi
 # changes the exit code. It is the other half of the same question `lane audit` asks of the
 # mirrors' branches, asked of the lanes themselves: what is still sitting here, and what clears it.
 # Detection is automatic; acting on it is always a command someone types.
-STALE_DAYS=$(sed -n 's/^[[:space:]]*stale_days:[[:space:]]*//p' "$AD/registry/config.yml" 2>/dev/null | head -1 | tr -d '"'"'"' ')
+STALE_DAYS=$(sed -n 's/^[[:space:]]*stale_days:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d '"'"'"' ')
 case "${STALE_DAYS:-}" in ''|*[!0-9]*) STALE_DAYS=21 ;; esac
 if [ "$QUIET" = 0 ] && [ "$STALE_DAYS" != 0 ]; then
-python3 - "$AD" "$STALE_DAYS" "$VERBOSE" <<'PY'
+python3 - "$AD" "$STALE_DAYS" "$VERBOSE" "$LANES_DIR" <<'PY'
 import datetime, os, re, subprocess, sys
 ad, days, verbose = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "1"
 today = datetime.date.today()
@@ -271,7 +278,7 @@ def head(text, key):
     return m.group(1).strip() if m else ""
 
 rows = []
-lanes_dir = f"{ad}/registry/lanes"
+lanes_dir = sys.argv[4]
 for f in sorted(os.listdir(lanes_dir) if os.path.isdir(lanes_dir) else []):
     if not f.endswith(".md"):
         continue
@@ -352,14 +359,14 @@ fi
 # ago. Purely informational, like the stale-lane report above: never blocks the exit code,
 # never runs `lane sync` itself, never touches anything. registry/repos.yaml is per-machine
 # and not guaranteed to exist yet, so a missing file is silently nothing to report, not a failure.
-SYNC_DAYS=$(sed -n 's/^[[:space:]]*sync_days:[[:space:]]*//p' "$AD/registry/config.yml" 2>/dev/null | head -1 | tr -d '"'"'"' ')
+SYNC_DAYS=$(sed -n 's/^[[:space:]]*sync_days:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d '"'"'"' ')
 case "${SYNC_DAYS:-}" in ''|*[!0-9]*) SYNC_DAYS=7 ;; esac
-if [ "$QUIET" = 0 ] && [ "$SYNC_DAYS" != 0 ] && [ -f "$AD/registry/repos.yaml" ]; then
-python3 - "$AD" "$SYNC_DAYS" <<'PY'
+if [ "$QUIET" = 0 ] && [ "$SYNC_DAYS" != 0 ] && [ -f "$REGISTRY/repos.yaml" ]; then
+python3 - "$AD" "$SYNC_DAYS" "$REGISTRY" <<'PY'
 import datetime, os, re, sys
 ad, days = sys.argv[1], int(sys.argv[2])
 today = datetime.date.today()
-text = open(f"{ad}/registry/repos.yaml").read()
+text = open(f"{sys.argv[3]}/repos.yaml").read()
 rows = []
 for m in re.finditer(r"(?:^|\n)  ([\w.-]+):\n((?:    .*\n)*)", text):
     repo, block = m.group(1), m.group(2)
@@ -392,16 +399,16 @@ fi
 # `lane secrets <repo> ignore`. Pure local filesystem scan -- unlike the GitHub protection check
 # above, this needs no staleness/cache, it is cheap enough to just re-run every time. Advisory
 # only, like everything else here: never blocks, never denies or ignores anything itself.
-if [ "$QUIET" = 0 ] && [ -f "$AD/registry/repos.yaml" ]; then
-python3 - "$AD" "$PRODUCT" <<'PY'
+if [ "$QUIET" = 0 ] && [ -f "$REGISTRY/repos.yaml" ]; then
+python3 - "$AD" "$PRODUCT" "$REGISTRY" "$REPOS" <<'PY'
 import os, re, subprocess, sys
-ad, product = sys.argv[1:3]
-text = open(f"{ad}/registry/repos.yaml").read()
+ad, product, registry, repos_dir = sys.argv[1:5]
+text = open(f"{registry}/repos.yaml").read()
 rs = f"{product}/scripts/repo-secrets"
 rows = []
 for m in re.finditer(r"(?:^|\n)  ([\w.-]+):\n", text):
     repo = m.group(1)
-    if not os.path.exists(f"{ad}/repos/{repo}/.git"):
+    if not os.path.exists(f"{repos_dir}/{repo}/.git"):
         continue                      # no local mirror yet -- nothing to scan
     scanned = [p for p in subprocess.run([rs, repo, "scan"], capture_output=True, text=True).stdout.splitlines() if p]
     if not scanned:
@@ -498,10 +505,10 @@ fi
 # same frontmatter parsing as the stale-lane report above. Advisory only — names the lane and the
 # specific mismatch, never touches anything.
 if [ "$QUIET" = 0 ]; then
-python3 - "$AD" <<'PY'
+python3 - "$AD" "$LANES_DIR" <<'PY'
 import os, re, subprocess, sys
 ad = sys.argv[1]
-lanes_dir = f"{ad}/registry/lanes"
+lanes_dir = sys.argv[2]
 def git(d, *a):
     try:
         return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True).stdout.strip()
@@ -543,8 +550,8 @@ fi
 
 # scripts/local/<name> (docs/extending.md) shadowed by a built-in of the same name — it would
 # never run, `lane <name>` always resolves to the built-in first. Advisory only, cheap, local.
-if [ "$QUIET" = 0 ] && [ -d "$AD/scripts/local" ]; then
-  for f in "$AD/scripts/local"/*; do
+if [ "$QUIET" = 0 ] && [ -d "$DATA/scripts/local" ]; then
+  for f in "$DATA/scripts/local"/*; do
     [ -x "$f" ] && [ ! -d "$f" ] || continue
     b=$(basename "$f")
     case "$b" in
