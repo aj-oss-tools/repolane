@@ -6,6 +6,7 @@
       over a workspace in use it changes nothing and says so.
         --owner <name>  who the hooks address (asked for otherwise; with --yes, git's user.name)
         --yes           ask nothing: take the defaults, and add the import line to an existing CLAUDE.md
+        --claude-home <dir>  Claude Code's folder (default ~/.claude, or CLAUDE_HOME), where the memory links go
         --git           make the folder a git repo, with a .gitignore for what is machine-local (lanes/, mirrors, cache)
 
 The pieces (roots.py holds the layout itself: make_workspace, the hooks, the rule files):
@@ -23,6 +24,7 @@ own "workspaces" key, so the clone dispatcher never routes to one), so `lane upg
 import datetime
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -130,6 +132,110 @@ def offer_import(ad, assume_yes, from_doctor=False):
     print("  Not added. Repolane's rules will not load in sessions here until CLAUDE.md has that line;")
     print("  lane doctor --fix can add it later.\n")
     return False
+
+
+# ------------------------------------------------------------------------- Claude Code's memory folders, linked here
+# Claude Code keeps a project's memory in ~/.claude/projects/<slug>/memory, the slug being the folder's path with every
+# character outside A-Za-z0-9- turned into "-". Pointing that folder at the workspace keeps memory in .repolane/memory
+# (versioned with the workspace) instead of in Claude Code's cache: the workspace root's, and each mirror's (lane add
+# links those). Lanes need no link: their settings.local.json names autoMemoryDirectory. Anything under ~/.claude is
+# outside the workspace, so it is only ever changed after the owner says yes (or --yes), never silently.
+
+
+def claude_home():
+    return os.path.realpath(os.path.expanduser(os.environ.get("CLAUDE_HOME") or "~/.claude"))
+
+
+def project_slug(path):
+    return re.sub(r"[^A-Za-z0-9-]", "-", path)
+
+
+def wanted_links(ad):
+    """(project folder, memory folder it should link to, label) for the root and every mirror."""
+    proj = f"{claude_home()}/projects"
+    out = [(f"{proj}/{project_slug(ad)}", f"{ad}/.repolane/memory", "the workspace root")]
+    repos = f"{ad}/.repolane/repos"
+    for r in sorted(os.listdir(repos)) if os.path.isdir(repos) else []:
+        if os.path.exists(f"{repos}/{r}/.git"):
+            out.append((f"{proj}/{project_slug(f'{repos}/{r}')}", f"{ad}/.repolane/memory/{r}", f"the {r} mirror"))
+    return out
+
+
+def link_state(proj, target):
+    """('ok'|'missing'|'elsewhere'|'folder', detail)"""
+    m = f"{proj}/memory"
+    if os.path.islink(m):
+        cur = os.readlink(m)
+        full = os.path.realpath(os.path.join(proj, cur))
+        return ("ok", cur) if full == os.path.realpath(target) else ("elsewhere", cur)
+    if os.path.isdir(m):
+        return "folder", ""
+    if os.path.exists(m):
+        return "elsewhere", "a file"
+    return "missing", ""
+
+
+def make_link(proj, target):
+    """Link <proj>/memory to target. A real folder there has its notes copied in first (never over one that exists),
+    exactly as a clone's `lane init` does; a link pointing elsewhere is replaced."""
+    m = f"{proj}/memory"
+    os.makedirs(proj, exist_ok=True)
+    os.makedirs(target, exist_ok=True)
+    if os.path.isdir(m) and not os.path.islink(m):
+        for d, _, files in os.walk(m):
+            rel = os.path.relpath(d, m)
+            for f in files:
+                dst = os.path.normpath(os.path.join(target, rel, f))
+                if not os.path.exists(dst):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy2(os.path.join(d, f), dst)
+        shutil.rmtree(m)
+    elif os.path.lexists(m):
+        os.remove(m)
+    os.symlink(target, m)
+
+
+def pending_links(ad):
+    return [(p, t, label, st, det) for p, t, label in wanted_links(ad) for st, det in [link_state(p, t)] if st != "ok"]
+
+
+def offer_links(ad, assume_yes, from_doctor=False, pending=None):
+    """Show every memory link that is missing or wrong, ask once (or take --yes), and make them. Returns the number left
+    undone (0 when everything is linked)."""
+    pending = pending_links(ad) if pending is None else pending
+    if not pending:
+        return 0
+    what = {"missing": "new link", "elsewhere": "replaces a link to {det}", "folder": "a folder of notes today: they are copied in first, nothing is lost"}
+    print(f"\n  Claude Code keeps memory under {tilde(claude_home())}/projects. Repolane links it into the workspace, so it lives here:\n")
+    for p, t, label, st, det in pending:
+        print(f"      {tilde(p)}/memory -> {os.path.relpath(t, ad)}   ({label}; {what[st].format(det=det)})")
+    print()
+    if assume_yes:
+        yes = True
+    elif not can_ask():
+        print(f"  Not linked: there is no terminal to ask, and --yes was not given. Nothing under {tilde(claude_home())} was changed.")
+        print("  Run lane doctor --fix (it asks first), or link them yourself:")
+        for p, t, *_ in pending:
+            print(f"      mkdir -p {shq(p)} && ln -sfn {shq(t)} {shq(p + '/memory')}")
+        print()
+        return len(pending)
+    else:
+        yes = ask(f"  Make these links under {tilde(claude_home())}? [Y/n] ").lower() in ("", "y", "yes")
+    if not yes:
+        print(f"  Not linked. Claude Code's memory for these folders stays in its own cache; lane doctor --fix can link it later.\n")
+        return len(pending)
+    left = 0
+    for p, t, label, st, det in pending:
+        try:
+            make_link(p, t)
+            say("fixed" if from_doctor else "made", G, f"memory of {label} linked: {tilde(p)}/memory -> {os.path.relpath(t, ad)}")
+        except OSError as e:
+            left += 1; say("warn", Y, f"could not link {tilde(p)}/memory ({e})")
+    return left
+
+
+def shq(s):
+    import shlex
+    return shlex.quote(s)
 
 
 # ------------------------------------------------------------------------------------- the hooks reach lane?
@@ -311,6 +417,38 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
     for lane in sorted(missing_f):
         report(False, f"lanes/{lane}: a settings.local.json is missing, so a session there is unguarded", f"run: lane resume {lane}")
 
+    # 7. Claude Code's memory for the root and each mirror is linked into .repolane/memory (asks before touching ~/.claude)
+    pend = pending_links(ad)
+    if not pend:
+        n = len(wanted_links(ad))
+        report(True, f"Claude Code's memory is linked into .repolane/memory ({n} folder(s) under {tilde(claude_home())}/projects)")
+    else:
+        left = len(pend)
+        if fix and not quiet:
+            flush()
+            left = offer_links(ad, assume_yes, from_doctor=True, pending=pend)
+        if not left:
+            report(True, "Claude Code's memory is linked into .repolane/memory")
+        else:
+            for p, t, label, st, det in pending_links(ad):
+                why = {"missing": "not linked", "elsewhere": f"links to {det}", "folder": "is a folder of its own"}[st]
+                report(False, f"{tilde(p)}/memory ({label}) {why}: Claude Code's memory for it is not kept in the workspace",
+                       "run: lane doctor --fix (it asks before changing anything under ~/.claude)")
+
+    # 8. the status line (optional: missing is a note, a clone's stale path is a problem, the user's own is left alone)
+    st = roots.statusline_state(ad)
+    if st in ("stale", "none") and fix and roots.set_statusline(ad):
+        report(True, f"status line: {roots.STATUSLINE_CMD} " + ("(a clone's statusline.sh path replaced)" if st == "stale" else "(added)"))
+    elif st == "ours":
+        report(True, f"status line: {roots.STATUSLINE_CMD}")
+    elif st == "mine":
+        report(True, "status line: your own command (left alone)")
+    elif st == "stale":
+        report(False, "the status line runs a clone's scripts/statusline.sh by path, which a workspace does not have",
+               "run: lane doctor --fix")
+    elif st == "none":
+        lines.append(("note", Y, f"no status line set (optional): lane doctor --fix adds {roots.STATUSLINE_CMD}", ""))
+
     flush()
     if quiet and problems:
         print(f"!! workspace: {problems} problem(s) — run: lane doctor")
@@ -365,6 +503,9 @@ def init(argv):
         if a == "--owner":
             if i + 1 >= len(argv): print("lane init: --owner needs a name", file=sys.stderr); return 2
             owner = argv[i + 1]; i += 1
+        elif a == "--claude-home":
+            if i + 1 >= len(argv): print("lane init: --claude-home needs a folder", file=sys.stderr); return 2
+            os.environ["CLAUDE_HOME"] = os.path.abspath(os.path.expanduser(argv[i + 1])); i += 1
         elif a in ("--yes", "-y"): assume_yes = True
         elif a == "--git": want_git = True
         elif a in ("-h", "--help"):
@@ -411,6 +552,9 @@ def init(argv):
         return 1
     for m in made: say("made", G, m)
     imported = offer_import(ad, assume_yes)
+    pend = pending_links(ad)
+    unlinked = offer_links(ad, assume_yes, pending=pend)
+    if len(pend) > unlinked: made.append("memory links")
     if want_git:
         try:
             for m in make_git(ad): say("made", G, m); made.append(m)
@@ -435,6 +579,8 @@ def init(argv):
         print("note: Claude can make mistakes. The hooks are a guardrail, not a sandbox: review what Claude changes.")
     if not imported:
         print("Repolane's rules will not load here until CLAUDE.md imports them: lane doctor --fix")
+    if unlinked:
+        print(f"Claude Code's memory is not linked into .repolane/memory yet: lane doctor --fix")
     return 0
 
 

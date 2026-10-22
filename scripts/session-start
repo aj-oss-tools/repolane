@@ -25,9 +25,10 @@ print(d.get("source","startup"), d.get("session_id","-"), d.get("cwd","-"))' 2>/
 repo=""
 if [ "$sid" != "-" ]; then
   # the project folder is named after THIS folder's path, so compute it rather than assume it
-  slug=$(claude_project_dir "$AD")
-  f=$(ls "$HOME"/.claude/projects/"$slug"-repos-*/"$sid".jsonl 2>/dev/null | head -1 || true)
-  [ -n "$f" ] && { repo=${f#*"$slug"-repos-}; repo=${repo%%/*}; }
+  # (a mirror's folder is named after repos/<repo>, which sits under .repolane/ in a workspace)
+  slug=$(claude_project_dir "$REPOS")
+  f=$(ls "$HOME"/.claude/projects/"$slug"-*/"$sid".jsonl 2>/dev/null | head -1 || true)
+  [ -n "$f" ] && { repo=${f#*"$slug"-}; repo=${repo%%/*}; }
 fi
 cur=$(python3 -c "import os;p=os.path.realpath('$scwd');w='$LANES/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')")
 

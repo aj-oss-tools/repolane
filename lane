@@ -24,7 +24,7 @@ _ws_named="${LANE_WORKSPACE:-}"
 source "$S/roots.sh"
 # A hook runs in the session's current folder, which a cd can move; the folder the session was started in is the one
 # that says which workspace it belongs to.
-if [ "${1:-}" = hook ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then lane_resolve_roots "$CLAUDE_PROJECT_DIR"
+if { [ "${1:-}" = hook ] || [ "${1:-}" = statusline ]; } && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then lane_resolve_roots "$CLAUDE_PROJECT_DIR"
 else lane_resolve_roots; fi
 # a workspace takes the installed version's rule files (and data migrations) on the first run after an upgrade; not
 # for `lane doctor`, which reports a stale workspace (and repairs it with --fix) rather than hide it, nor for the
@@ -142,6 +142,9 @@ case "$cmd" in
       *) echo "lane hook: unknown event '$ev' (session-start, pre-tool-use, post-tool-use, user-prompt-submit, pre-compact, session-end, worktree-create, worktree-remove)" >&2
          exit 1 ;;
     esac ;;
+  statusline)
+    # what a workspace's statusLine runs (the status line's JSON on stdin), so it names no file in the product either
+    exec "$S/statusline.sh" ;;
   --version|version)
     # VERSION is the one place the number is written down, so a tarball with no .git still knows
     # what it is. The release tag is always v<VERSION>; git is asked only for the detail a file

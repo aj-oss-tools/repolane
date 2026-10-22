@@ -2753,7 +2753,8 @@ if event == "SessionEnd":
     root_f = f"{proj}/{root_slug}/{sid}.jsonl"
     if sid and os.path.exists(root_f):
         import glob as _g
-        others = _g.glob(f"{proj}/{root_slug}-repos-*/{sid}.jsonl")
+        # a mirror's project folder: the slug of repos/<repo> (under .repolane/ in a workspace)
+        others = _g.glob(f"{proj}/{re.sub(r'[^A-Za-z0-9-]', '-', REPOS)}-*/{sid}.jsonl")
         if len(others) == 1:
             repo_f = others[0]
             newer, older = (root_f, repo_f) if os.path.getmtime(root_f) >= os.path.getmtime(repo_f) else (repo_f, root_f)

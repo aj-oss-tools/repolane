@@ -65,9 +65,18 @@ assert "registered in planes.json" ws_registered "$A"
 assert "no git repo without --git" test ! -e "$A/.git"
 assert_contains "init names the next step" "$OUT" "lane add"
 assert_not_contains "and finds lane on PATH for the hooks" "$OUT" "UNGUARDED"
+CH="$HOME/.claude"; slug(){ printf '%s' "$1" | LC_ALL=C sed 's#[^A-Za-z0-9-]#-#g'; }
+assert_contains "no terminal: the memory link is shown, not made" "$OUT" "$(slug "$A")/memory -> .repolane/memory"
+assert_contains "and it says nothing under ~/.claude changed" "$OUT" "Nothing under ~/.claude was changed"
+assert "and nothing was made there" test ! -e "$CH/projects/$(slug "$A")"
+assert_contains "the status line is wired" "$(cat "$A/.claude/settings.json")" '"command": "lane statusline"'
+L "$A" doctor; assert_eq "doctor fails while the memory link is missing" 1 "$RC"
+assert_contains "and names it" "$OUT" "$(slug "$A")/memory (the workspace root) not linked"
+L "$A" doctor --fix --yes; assert_eq "doctor --fix --yes links it" 0 "$RC"
+assert_eq "the root's memory is linked to .repolane/memory" "$A/.repolane/memory" "$(readlink "$CH/projects/$(slug "$A")/memory")"
 L "$A" doctor; assert_eq "doctor passes right after init" 0 "$RC"
 for c in "runs this workspace's hooks" "CLAUDE.md imports .repolane/REPOLANE.md" "runs Repolane's lane hook commands" \
-         "LANE.md are version $VER's" "registered in"; do assert_contains "doctor: $c" "$OUT" "$c"; done
+         "LANE.md are version $VER's" "registered in" "memory is linked into .repolane/memory" "status line: lane statusline"; do assert_contains "doctor: $c" "$OUT" "$c"; done
 assert_not_contains "doctor reports nothing wrong" "$OUT" "!!"
 
 echo "-- init with a folder named, from somewhere else"
@@ -275,6 +284,77 @@ L "$A" doctor --fix; assert_eq "--fix: 0" 0 "$RC"
 assert "registered again" ws_registered "$A"
 assert "the other workspaces are kept" ws_registered "$H"
 
+echo "-- Claude Code's memory linked into .repolane/memory: shown, asked, made only on yes"
+M="$T/m1"; mkdir -p "$M"
+P y "$M" init --owner X; assert_eq "init with a terminal, answered y" 0 "$RC"
+assert_contains "the link is shown" "$OUT" "$(slug "$M")/memory -> .repolane/memory"
+assert_contains "and asked about" "$OUT" "Make these links under ~/.claude? [Y/n]"
+assert_eq "y makes the link" "$M/.repolane/memory" "$(readlink "$CH/projects/$(slug "$M")/memory")"
+M="$T/m2"; mkdir -p "$M"
+P n "$M" init --owner X; assert_eq "answered n, init still succeeds" 0 "$RC"
+assert "n makes no link" test ! -e "$CH/projects/$(slug "$M")/memory"
+assert_contains "and says doctor --fix can link it later" "$OUT" "lane doctor --fix can link it later"
+L "$M" doctor; assert_eq "doctor: 1 while unlinked" 1 "$RC"
+L "$M" doctor --fix; assert_eq "--fix with no terminal: still 1" 1 "$RC"
+assert "and still no link" test ! -e "$CH/projects/$(slug "$M")/memory"
+assert_contains "and it prints the commands to do it by hand" "$OUT" "ln -sfn $M/.repolane/memory"
+P n "$M" doctor --fix; assert_eq "--fix answered n: 1" 1 "$RC"
+assert "and still no link" test ! -e "$CH/projects/$(slug "$M")/memory"
+P y "$M" doctor --fix; assert_eq "--fix answered y: 0" 0 "$RC"
+assert_eq "the link is made" "$M/.repolane/memory" "$(readlink "$CH/projects/$(slug "$M")/memory")"
+M="$T/m3"; mkdir -p "$M" "$CH/projects/$(slug "$M")/memory"
+printf 'an old note\n' > "$CH/projects/$(slug "$M")/memory/old-note.md"
+printf '# theirs\n' > "$CH/projects/$(slug "$M")/memory/MEMORY.md"
+L "$M" init --yes; assert_eq "--yes over a memory folder of Claude Code's own" 0 "$RC"
+assert_contains "it says the notes are copied in first" "$OUT" "copied in first, nothing is lost"
+assert_eq "the note is moved into .repolane/memory" "an old note" "$(cat "$M/.repolane/memory/old-note.md")"
+assert_contains "the workspace's own index is not overwritten" "$(cat "$M/.repolane/memory/MEMORY.md")" "Memory Index"
+assert "the folder is a link now" test -L "$CH/projects/$(slug "$M")/memory"
+ln -sfn "$T/elsewhere" "$CH/projects/$(slug "$M")/memory"
+L "$M" doctor; assert_eq "a link pointing elsewhere: 1" 1 "$RC"
+assert_contains "named, with where it points" "$OUT" "links to $T/elsewhere"
+L "$M" doctor --fix --yes; assert_eq "--fix --yes: 0" 0 "$RC"
+assert_eq "repointed" "$M/.repolane/memory" "$(readlink "$CH/projects/$(slug "$M")/memory")"
+M="$T/m4"; mkdir -p "$M"
+L "$M" init --yes --claude-home "$T/ch2"; assert_eq "--claude-home" 0 "$RC"
+assert "the link goes under the folder named" test -L "$T/ch2/projects/$(slug "$M")/memory"
+assert "and not under ~/.claude" test ! -e "$CH/projects/$(slug "$M")"
+OUT=$(cd "$M" && env -u LANE_WORKSPACE -u LANE_PRODUCT CLAUDE_HOME="$T/ch2" lane doctor </dev/null 2>&1); assert_eq "doctor with CLAUDE_HOME naming it: 0" 0 "$?"
+
+echo "-- the status line"
+SL="$M/.claude/settings.json"
+sl_cmd(){ python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("statusLine") or {}).get("command",""))' "$1"; }
+assert_eq "init wires lane statusline" "lane statusline" "$(sl_cmd "$SL")"
+OUT=$(printf '{"cwd":"%s","model":{"display_name":"Opus"},"context_window":{"used_percentage":12}}' "$M" \
+      | (cd "$M" && env -u LANE_WORKSPACE -u LANE_PRODUCT CLAUDE_PROJECT_DIR="$M" sh -c "$(sl_cmd "$SL")" 2>&1))
+assert_contains "it runs, through sh, from PATH" "$OUT" "active lanes"
+assert_contains "and reads the status JSON" "$OUT" "ctx 12%"
+python3 - "$SL" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["statusLine"]["command"] = '"$CLAUDE_PROJECT_DIR"/scripts/statusline.sh'; json.dump(d, open(sys.argv[1], "w"))
+PY
+export CLAUDE_HOME="$T/ch2"
+L "$M" doctor; assert_eq "a clone's statusline.sh path: 1" 1 "$RC"
+assert_contains "named" "$OUT" "runs a clone's scripts/statusline.sh"
+L "$M" doctor --fix; assert_eq "--fix: 0" 0 "$RC"
+assert_eq "it runs lane statusline again" "lane statusline" "$(sl_cmd "$SL")"
+python3 - "$SL" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); del d["statusLine"]; json.dump(d, open(sys.argv[1], "w"))
+PY
+L "$M" doctor; assert_eq "no status line: a note, not a problem" 0 "$RC"
+assert_contains "the note says --fix adds it" "$OUT" "no status line set (optional)"
+L "$M" doctor --fix; assert_eq "--fix: 0" 0 "$RC"
+assert_eq "--fix adds it" "lane statusline" "$(sl_cmd "$SL")"
+python3 - "$SL" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["statusLine"] = {"type": "command", "command": "my-status"}; json.dump(d, open(sys.argv[1], "w"))
+PY
+L "$M" doctor --fix; assert_eq "the user's own status line: 0" 0 "$RC"
+assert_contains "named as theirs" "$OUT" "your own command (left alone)"
+assert_eq "and never replaced" "my-status" "$(sl_cmd "$SL")"
+unset CLAUDE_HOME
+
 echo "-- a realistic flow: init, add, start, the hooks with real JSON, a Goal from inside the lane"
 R="$T/real"; mkdir -p "$R"; printf '# Team notes\n' > "$R/CLAUDE.md"
 P y "$R" init --owner "Rae" --git; assert_eq "init (answered y)" 0 "$RC"
@@ -285,6 +365,13 @@ L "$R" start L1 web; assert_eq "lane start L1 web" 0 "$RC"
 assert "the worktree is under lanes/" test -e "$R/lanes/L1/web/.git"
 L "$R" doctor; assert_eq "doctor passes with a lane" 0 "$RC"
 assert_contains "and checked the lane's settings" "$OUT" "every lane's settings.local.json runs the current hooks (2 file(s))"
+ML="$CH/projects/$(slug "$R/.repolane/repos/web")/memory"
+assert_eq "lane add linked the mirror's memory" "$R/.repolane/memory/web" "$(readlink "$ML")"
+assert_contains "doctor checks the root and the mirror" "$OUT" "memory is linked into .repolane/memory (2 folder(s)"
+rm "$ML"
+L "$R" doctor; assert_eq "the mirror's link missing: 1" 1 "$RC"; assert_contains "named" "$OUT" "(the web mirror) not linked"
+L "$R" doctor --fix --yes; assert_eq "--fix --yes: 0" 0 "$RC"
+assert_eq "linked again" "$R/.repolane/memory/web" "$(readlink "$ML")"
 LS="$R/lanes/L1/.claude/settings.local.json"
 hook_cmd(){ python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["hooks"][sys.argv[2]][0]["hooks"][0]["command"])' "$1" "$2"; }
 run_hook(){ # run_hook <settings> <event> <project-dir> <json> : the command as written, through sh, the way Claude Code runs it

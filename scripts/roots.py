@@ -195,6 +195,63 @@ def merge_settings(path, hooks, allow=()):
     return True
 
 
+# ------------------------------------------------------------------------------------------------ the status line
+# A workspace's status line is a command too, never a path into the product: `lane statusline` runs scripts/statusline.sh.
+STATUSLINE_CMD = "lane statusline"
+
+
+def is_repolane_statusline(cmd):
+    """A status line Repolane wired: the workspace's command, or a clone's statusline.sh by path (left by an older setup)."""
+    cmd = str(cmd or "")
+    return cmd.strip() == STATUSLINE_CMD or "scripts/statusline.sh" in cmd
+
+
+def statusline_state(ad):
+    """'ours' (lane statusline), 'stale' (a clone's statusline.sh by path), 'mine' (the user's own command, left alone),
+    'none' (neither settings file has one), or 'broken' (settings.json is not valid JSON)."""
+    found = None
+    for f in ("settings.json", "settings.local.json"):
+        try:
+            with open(f"{ad}/.claude/{f}") as fh: raw = fh.read()
+        except OSError:
+            continue
+        try:
+            cur = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            if f == "settings.json": return "broken"
+            continue
+        sl = cur.get("statusLine") if isinstance(cur, dict) else None
+        if sl is not None and found is None: found = sl
+    if found is None: return "none"
+    cmd = found.get("command") if isinstance(found, dict) else ""
+    if str(cmd or "").strip() == STATUSLINE_CMD: return "ours"
+    return "stale" if is_repolane_statusline(cmd) else "mine"
+
+
+def set_statusline(ad, replace_stale=True):
+    """Wire `lane statusline` into .claude/settings.json when no status line is set (or, with replace_stale, when the one
+    set is a clone's statusline.sh by path). The user's own status line is never replaced. True when the file was written."""
+    st = statusline_state(ad)
+    if st == "ours" or st == "mine" or st == "broken" or (st == "stale" and not replace_stale): return False
+    path = f"{ad}/.claude/settings.json"
+    try:
+        with open(path) as fh: raw = fh.read()
+    except OSError:
+        raw = ""
+    cur = json.loads(raw) if raw.strip() else {}
+    if st == "stale" and not is_repolane_statusline((cur.get("statusLine") or {}).get("command") if isinstance(cur.get("statusLine"), dict) else ""):
+        # the stale one is in settings.local.json: that file is machine-local and Repolane's to mend as well
+        lpath = f"{ad}/.claude/settings.local.json"
+        with open(lpath) as fh: loc = json.load(fh)
+        loc["statusLine"] = {"type": "command", "command": STATUSLINE_CMD}
+        _write(lpath, json.dumps(loc, indent=2) + "\n")
+        return True
+    cur["statusLine"] = {"type": "command", "command": STATUSLINE_CMD}
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _write(path, json.dumps(cur, indent=2) + "\n")
+    return True
+
+
 # ------------------------------------------------------------------------------------ the rule files and migrations
 RULE_FILES = ("REPOLANE.md", "LANE.md")
 
@@ -309,6 +366,8 @@ def make_workspace(product, ad, owner=""):
          " (it imports .repolane/REPOLANE.md)")
     if merge_settings(f"{ad}/.claude/settings.json", workspace_hooks(), WORKSPACE_ALLOW):
         made.append(".claude/settings.json (Repolane's hooks)")
+    if set_statusline(ad, replace_stale=False):
+        made.append(f".claude/settings.json (status line: {STATUSLINE_CMD})")
     if refresh(product, ad):
         made.append(f".repolane/REPOLANE.md, .repolane/LANE.md (version {product_version(product)})")
     return made

@@ -37,6 +37,16 @@ written down. Inside a git checkout it also says how far past the release tag yo
   are the installed version's, that the workspace is registered, and that every lane's settings run the current
   hooks. Each problem comes with its fix, and `lane doctor --fix` repairs what it safely can (`--yes` answers its
   question). It exits non-zero while anything is wrong. It reports an outdated workspace instead of refreshing it.
+- `lane init` in a workspace links Claude Code's memory for the workspace root
+  (`~/.claude/projects/<folder>/memory`) to `.repolane/memory`, the way a clone's `lane init` links it to
+  `memory/`; `lane add` links each mirror's to `.repolane/memory/<repo>`. Nothing under `~/.claude` is changed
+  without asking: init shows each link and asks "Make these links under ~/.claude? [Y/n]" (`--yes` accepts; with no
+  terminal and no `--yes` nothing is changed and it prints the commands). Notes already in Claude Code's own memory
+  folder are copied in first. `--claude-home <dir>` (or `CLAUDE_HOME`) names a different Claude Code folder.
+  `lane doctor` checks the links of the root and every mirror, and `lane doctor --fix` repairs them after asking.
+- A workspace's status line is `lane statusline`, added to `.claude/settings.json` by `lane init` when no status line
+  is set (your own is never replaced). `lane doctor` reports one that still runs a clone's
+  `scripts/statusline.sh` by path, and `--fix` replaces it; a workspace with no status line gets a note, not a failure.
 
 ### Changed
 
@@ -49,6 +59,11 @@ written down. Inside a git checkout it also says how far past the release tag yo
   Repolane's rules do not load, and `lane doctor --fix` can add it later.
 - `lane doctor` no longer writes a `__pycache__` folder into Repolane's own files, and the guard refuses a tool call
   (instead of letting it through) if its path resolver is missing.
+
+### Fixed
+
+- In a workspace, a resumed conversation started in a mirror is found again: the hooks look for its project folder
+  under the mirror's real path (`.repolane/repos/<repo>`), not under `repos/<repo>`.
 
 ## [0.9.2] — 2026-10-19
 
