@@ -25,12 +25,28 @@ written down. Inside a git checkout it also says how far past the release tag yo
   plainly that Edit and Write outside the lane folder are refused, and to save the Goal with
   `lane-memory goal "<text>"` and memories with `lane-memory draft <slug> "<text>"`.
 - The Python package installs the long command names (`lane-memory`, `lane-brief`, `lane-run`, …) next to `lane`.
+- `lane init` from the installed package makes a workspace in the current folder, or in the folder you name
+  (`lane init ~/work`). It asks for your name (`--owner`, or `--yes` to ask nothing), and `--git` makes the workspace
+  a git repo with a `.gitignore` for what is machine-local (`lanes/`, `.repolane/repos/`, `.repolane/cache/`). It
+  adds Repolane's hooks to an existing `.claude/settings.json` without touching your own keys or hooks, and records
+  the workspace in `~/.local/share/lane/planes.json` so `lane upgrade` can refresh every workspace. Running it again
+  over a workspace in use changes nothing and says so. `lane init` in a git clone of Repolane works as before.
+- `lane doctor` in a workspace checks that `lane` is on PATH the way the hooks call it (if it is not, every hook
+  fails and Claude Code runs tools unguarded, and the doctor says so loudly), that `CLAUDE.md` imports
+  `.repolane/REPOLANE.md`, that `.claude/settings.json` runs the expected `lane hook` commands, that the rule files
+  are the installed version's, that the workspace is registered, and that every lane's settings run the current
+  hooks. Each problem comes with its fix, and `lane doctor --fix` repairs what it safely can (`--yes` answers its
+  question). It exits non-zero while anything is wrong. It reports an outdated workspace instead of refreshing it.
 
 ### Changed
 
 - Repolane's own files (`lane`, `scripts/`, templates, `VERSION`) and your data (`registry/`, `lanes/`, `repos/`,
   `memory/`, `knowledge/`) are located through two separate roots, which are the same folder in a clone, so nothing
   behaves differently. The repo also builds a Python package (`repolane`) whose `lane` runs the bundled product.
+- Your `CLAUDE.md` is only edited when you say so. A workspace without one gets a small `CLAUDE.md` that imports
+  `.repolane/REPOLANE.md`; for an existing one, `lane init` shows the line and asks "Add it? [Y/n]" (`--yes` adds it;
+  with no terminal and no `--yes` it is left alone, and the output says how to add it). Until the line is there,
+  Repolane's rules do not load, and `lane doctor --fix` can add it later.
 - `lane doctor` no longer writes a `__pycache__` folder into Repolane's own files, and the guard refuses a tool call
   (instead of letting it through) if its path resolver is missing.
 

@@ -19,13 +19,17 @@ done
 # from the current folder (scripts/roots.sh decides all of it, for every script).
 PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "$_self")" && pwd)}"
 S="$PRODUCT/scripts"
+# what the caller named, before the resolver below exports the workspace it found (`lane init` needs to tell them apart)
+_ws_named="${LANE_WORKSPACE:-}"
 source "$S/roots.sh"
 # A hook runs in the session's current folder, which a cd can move; the folder the session was started in is the one
 # that says which workspace it belongs to.
 if [ "${1:-}" = hook ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then lane_resolve_roots "$CLAUDE_PROJECT_DIR"
 else lane_resolve_roots; fi
-# a workspace takes the installed version's rule files (and data migrations) on the first run after an upgrade
-lane_refresh_workspace
+# a workspace takes the installed version's rule files (and data migrations) on the first run after an upgrade; not
+# for `lane doctor`, which reports a stale workspace (and repairs it with --fix) rather than hide it, nor for the
+# doctor's own probe of the hook path
+case "${1:-} ${2:-}" in "doctor "*|"hook ping") : ;; *) lane_refresh_workspace ;; esac
 
 # command → implementation, and the one line shown in `lane help`
 map(){ case "$1" in
@@ -102,6 +106,14 @@ usage(){
 
 cmd="${1:-}"
 
+# An installed product (LANE_PRODUCT, set by the package's launcher) makes a workspace: in the folder given, or the
+# current one (scripts/workspace.py). LANE_WORKSPACE naming a folder without .repolane/ keeps the clone layout there,
+# and a clone running its own files keeps its own init: both are scripts/init, unchanged.
+if [ "$cmd" = init ] && [ -n "${LANE_PRODUCT:-}" ] && { [ -z "$_ws_named" ] || [ -d "$_ws_named/.repolane" ]; }; then
+  shift
+  exec python3 -B "$S/workspace.py" init "$@"
+fi
+
 # `lane <command> --help` used to reach the script, which read it as a lane id and answered
 # with something misleading ("no lane '--help'"). Answer it here instead, from the same one
 # line `lane help` shows, plus the script's own usage comment.
@@ -122,6 +134,8 @@ case "$cmd" in
     ev="${2:-}"
     case "$ev" in
       session-start) exec "$S/session-start" ;;
+      # `lane doctor` runs this exactly the way a hook runs, to see which product and workspace a hook would reach
+      ping) v=$( (tr -d '[:space:]' < "$PRODUCT/VERSION") 2>/dev/null ); printf 'lane-hook %s %s %s\n' "${v:-unknown}" "$LANE_MODE" "$AD"; exit 0 ;;
       pre-tool-use|post-tool-use|user-prompt-submit|pre-compact|session-end|worktree-create|worktree-remove)
         # -B: the product is never written to, not even a __pycache__ for the modules the guard imports
         exec python3 -B "$S/hooks/guard.py" ;;

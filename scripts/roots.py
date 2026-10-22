@@ -4,7 +4,7 @@ Imported by the guard and the board (with sys.dont_write_bytecode set, so the pr
 as a small command by the shell side:
 
   python3 -B roots.py refresh <product> <workspace>          rewrite the workspace's REPOLANE.md / LANE.md, migrate, record the version
-  python3 -B roots.py make-workspace <product> <dir> [owner] an empty workspace layout (the guts of a future `lane init`)
+  python3 -B roots.py make-workspace <product> <dir> [owner] an empty workspace layout (the guts of `lane init`, scripts/workspace.py)
   python3 -B roots.py paths [<start-dir>]                    the resolved roots and data paths, one `NAME=value` per line
   python3 -B roots.py lane-context <lane>                    what a session inside that lane is handed (LANE.md and its header)
 """
@@ -138,20 +138,46 @@ WORKSPACE_ALLOW = ["Bash(lane-merge-plan:*)", "Bash(lane-status:*)", "Bash(lane-
                    "Bash(lane-memory show:*)", "Bash(lane-memory audit:*)", "Bash(lane status:*)", "Bash(lane brief:*)"]
 
 
+def is_repolane_hook(cmd):
+    """A hook command Repolane owns: `lane hook <event>`, or a clone's guard / session-start by path (left in a workspace's
+    settings by an earlier setup, it would run a second, possibly stale, guard)."""
+    cmd = str(cmd or "")
+    return (cmd.startswith(HOOK_PREFIX) or cmd.rstrip().endswith("scripts/hooks/guard.py")
+            or "scripts/session-start" in cmd)
+
+
+def repolane_hooks(settings):
+    """Repolane's part of a settings dict's hooks, in the same shape as workspace_hooks(): what a check compares."""
+    have = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    out = {}
+    for event, entries in have.items():
+        for e in entries if isinstance(entries, list) else []:
+            hs = [h for h in (e.get("hooks") or []) if isinstance(h, dict) and is_repolane_hook(h.get("command"))] if isinstance(e, dict) else []
+            if hs: out.setdefault(event, []).append({**e, "hooks": hs})
+    return out
+
+
 def merge_settings(path, hooks, allow=()):
     """Put Repolane's hooks into a settings file without disturbing anything else in it: hook entries that run some other
-    command, permissions, env, the status line. Ours are recognised by their `lane hook ` command and replaced whole."""
+    command, permissions, env, the status line. Ours are recognised by is_repolane_hook and replaced whole. The file is
+    written only when that changes something, and a file that is not valid JSON is refused (ValueError), never replaced.
+    Returns True when the file was written."""
     try:
-        with open(path) as fh: cur = json.load(fh)
-        if not isinstance(cur, dict): cur = {}
-    except (OSError, ValueError):
+        with open(path) as fh: raw = fh.read()
+    except OSError:
+        raw = None
+    if raw is None or not raw.strip():
         cur = {}
+    else:
+        cur = json.loads(raw)   # ValueError: the user's file is broken, and is theirs to mend
+        if not isinstance(cur, dict): raise ValueError(f"{path} is not a JSON object")
+    before = json.loads(json.dumps(cur))
     have = cur.get("hooks") if isinstance(cur.get("hooks"), dict) else {}
     out = {}
     for event, entries in have.items():
         kept = []
         for e in entries if isinstance(entries, list) else []:
-            hs = [h for h in (e.get("hooks") or []) if not str(h.get("command", "")).startswith(HOOK_PREFIX)] if isinstance(e, dict) else []
+            hs = [h for h in (e.get("hooks") or []) if not (isinstance(h, dict) and is_repolane_hook(h.get("command")))] if isinstance(e, dict) else []
             if hs: kept.append({**e, "hooks": hs})
         if kept: out[event] = kept
     for event, entries in hooks.items():
@@ -160,10 +186,13 @@ def merge_settings(path, hooks, allow=()):
     if allow:
         perm = cur.setdefault("permissions", {})
         perm["allow"] = sorted(set(perm.get("allow") or []) | set(allow))
+    if raw is not None and cur == before:
+        return False
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.tmp.{os.getpid()}"
     with open(tmp, "w") as fh: json.dump(cur, fh, indent=2); fh.write("\n")
     os.replace(tmp, path)
+    return True
 
 
 # ------------------------------------------------------------------------------------ the rule files and migrations
@@ -188,10 +217,28 @@ def _write(path, text):
 MIGRATIONS = []
 
 
-def refresh(product, ad):
+def rules_current(product, ad):
+    """Are the workspace's rule files the installed version's, word for word? (what `lane doctor` checks)"""
+    data = f"{ad}/.repolane"
+    try:
+        with open(f"{data}/version") as fh: have = fh.read().strip()
+    except OSError:
+        return False
+    if have != product_version(product): return False
+    for f in RULE_FILES:
+        try:
+            with open(f"{data}/{f}") as a, open(f"{product}/templates/{f}") as b:
+                if a.read() != b.read(): return False
+        except OSError:
+            return False
+    return True
+
+
+def refresh(product, ad, force=False):
     """Bring a workspace's product-owned files up to the installed version: run the data migrations its recorded version
     needs, rewrite REPOLANE.md and LANE.md from the product's templates, then record the version. Everything else in the
-    workspace is the user's and is left alone. Returns True when something was rewritten."""
+    workspace is the user's and is left alone. Returns True when something was rewritten. `force` rewrites the rule files
+    even at the same version (`lane doctor --fix`, after one was edited by hand)."""
     data = f"{ad}/.repolane"
     if not os.path.isdir(data): return False
     want = product_version(product)
@@ -199,7 +246,8 @@ def refresh(product, ad):
         with open(f"{data}/version") as fh: have = fh.read().strip()
     except OSError:
         have = ""
-    if have == want and all(os.path.isfile(f"{data}/{f}") for f in RULE_FILES): return False
+    if force and rules_current(product, ad): return False
+    if not force and have == want and all(os.path.isfile(f"{data}/{f}") for f in RULE_FILES): return False
     for applies, step in MIGRATIONS:
         if applies(have, want): step(ad)
     for f in RULE_FILES:
@@ -212,17 +260,38 @@ def refresh(product, ad):
 CLAUDE_IMPORT = "@.repolane/REPOLANE.md"
 
 
+def has_import(ad):
+    """Does the workspace's CLAUDE.md load REPOLANE.md? None when there is no CLAUDE.md at all."""
+    try:
+        with open(f"{ad}/CLAUDE.md") as fh: text = fh.read()
+    except OSError:
+        return None
+    return CLAUDE_IMPORT in [l.strip() for l in text.splitlines()]
+
+
+def add_import(ad):
+    """Append the import line to the workspace's CLAUDE.md: only ever when the owner said yes (scripts/workspace.py)."""
+    cm = f"{ad}/CLAUDE.md"
+    with open(cm) as fh: text = fh.read()
+    if CLAUDE_IMPORT in [l.strip() for l in text.splitlines()]: return False
+    with open(cm, "a") as fh: fh.write(("" if text.endswith("\n") or not text else "\n") + "\n" + CLAUDE_IMPORT + "\n")
+    return True
+
+
 def make_workspace(product, ad, owner=""):
     """Create the workspace layout in `ad` (made if missing), filling only what is absent: it is safe to run again over a
-    workspace in use, and never overwrites the user's data. CLAUDE.md is the user's file: one is written only when there
-    is none, and an existing one only gets the import line appended when it lacks it."""
+    workspace in use, and never overwrites the user's data. CLAUDE.md is the user's file: a small one is written when there
+    is none, and an existing one is never edited here (`lane init` and `lane doctor --fix` ask before adding the import
+    line). Returns the list of what was made, by its path in the workspace: empty when everything was already there."""
     ad = os.path.realpath(ad)
     data = f"{ad}/.repolane"
+    made = []
     for d in (f"{data}/registry/lanes", f"{data}/memory", f"{data}/knowledge", f"{data}/repos", f"{data}/cache", f"{ad}/lanes"):
-        os.makedirs(d, exist_ok=True)
+        if not os.path.isdir(d):
+            os.makedirs(d, exist_ok=True); made.append(os.path.relpath(d, ad) + "/")
 
-    def seed(path, text):
-        if not os.path.exists(path): _write(path, text)
+    def seed(path, text, label=""):
+        if not os.path.exists(path): _write(path, text); made.append(os.path.relpath(path, ad) + label)
 
     def template(name):
         with open(f"{product}/templates/{name}") as fh: return fh.read()
@@ -236,16 +305,13 @@ def make_workspace(product, ad, owner=""):
     except OSError:
         pass
     seed(f"{data}/env.sh", template("env.sh"))
-    cm = f"{ad}/CLAUDE.md"
-    if not os.path.exists(cm):
-        _write(cm, "# My workspace\n\nRepolane's rules for every session in this folder:\n\n" + CLAUDE_IMPORT + "\n")
-    else:
-        with open(cm) as fh: text = fh.read()
-        if CLAUDE_IMPORT not in [l.strip() for l in text.splitlines()]:
-            with open(cm, "a") as fh: fh.write(("" if text.endswith("\n") or not text else "\n") + "\n" + CLAUDE_IMPORT + "\n")
-    merge_settings(f"{ad}/.claude/settings.json", workspace_hooks(), WORKSPACE_ALLOW)
-    refresh(product, ad)
-    return ad
+    seed(f"{ad}/CLAUDE.md", "# My workspace\n\nRepolane's rules for every session in this folder:\n\n" + CLAUDE_IMPORT + "\n",
+         " (it imports .repolane/REPOLANE.md)")
+    if merge_settings(f"{ad}/.claude/settings.json", workspace_hooks(), WORKSPACE_ALLOW):
+        made.append(".claude/settings.json (Repolane's hooks)")
+    if refresh(product, ad):
+        made.append(f".repolane/REPOLANE.md, .repolane/LANE.md (version {product_version(product)})")
+    return made
 
 
 def main(argv):
@@ -253,7 +319,7 @@ def main(argv):
     if cmd == "refresh" and len(argv) == 4:
         refresh(os.path.realpath(argv[2]), os.path.realpath(argv[3])); return 0
     if cmd == "make-workspace" and len(argv) in (4, 5):
-        print(make_workspace(os.path.realpath(argv[2]), argv[3], argv[4] if len(argv) == 5 else "")); return 0
+        make_workspace(os.path.realpath(argv[2]), argv[3], argv[4] if len(argv) == 5 else ""); print(os.path.realpath(argv[3])); return 0
     if cmd == "lane-context" and len(argv) == 3:
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         sys.stdout.write(Roots(here).lane_context(argv[2])); return 0

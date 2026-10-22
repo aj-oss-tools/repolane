@@ -40,7 +40,9 @@ def run(args):
         sys.stderr.write(f"repolane: the bundled product is missing ({lane}); reinstall the package\n")
         return 1
     ensure_executable(prod)
-    env = dict(os.environ, LANE_PRODUCT=prod)
+    # LANE_BIN: the folder this launcher was installed into, so `lane doctor` can say what to put on PATH when the hooks
+    # (which run `lane hook …` from PATH) cannot find it
+    env = dict(os.environ, LANE_PRODUCT=prod, LANE_BIN=os.path.dirname(os.path.abspath(sys.argv[0])))
     # through bash, not the file's own +x: the dispatcher runs even where ensure_executable could not help
     bash = shutil.which("bash") or "/bin/bash"
     os.execve(bash, [bash, lane, *args], env)

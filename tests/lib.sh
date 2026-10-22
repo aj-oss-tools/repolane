@@ -77,6 +77,32 @@ new_sandbox(){
   mkdir -p "$PLANE/repos" "$PLANE/lanes" "$PLANE/.cache"
 }
 
+# install_product : the product installed the way a user gets it, into the sandbox: a wheel built from a copy of this
+# checkout and pip-installed into a venv when a builder (uv, or python3 -m build) is here; otherwise the checkout copy run
+# through LANE_PRODUCT, exactly as the package's launcher runs it. Sets PROD (the installed product files) and BIN (the
+# folder holding `lane` and the long names); the caller puts BIN on PATH. Under CI a builder is required.
+install_product(){
+  SRC="$T/src-tree"; mkdir -p "$SRC"; copy_product_tree "$SRC"
+  if command -v uv >/dev/null 2>&1; then build(){ uv build --wheel -q -o "$1" "$SRC"; }
+  elif python3 -c 'import build' >/dev/null 2>&1; then build(){ python3 -m build --wheel -o "$1" "$SRC" >/dev/null; }
+  else build(){ return 1; }; fi
+  if build "$T/dist" >"$T/build.log" 2>&1 && python3 -m venv "$T/venv" >/dev/null 2>&1 \
+     && "$T/venv/bin/python" -m pip install -q --no-compile --no-index --disable-pip-version-check "$T"/dist/repolane-*.whl >"$T/pip.log" 2>&1; then
+    BIN="$T/venv/bin"; PROD=$("$BIN/python" -c 'import repolane.cli as c;print(c.product_dir())')
+    echo "  (the product is an installed wheel: $PROD)"
+  else
+    [ -n "${CI:-}" ] && { bad "a wheel builder is required under CI"; finish; exit 1; }
+    # what the package's launcher does: run the product's own `lane` with LANE_PRODUCT naming it
+    PROD="$SRC"; BIN="$T/bin"; mkdir -p "$BIN"
+    printf '#!/usr/bin/env bash\nexec env LANE_PRODUCT=%q bash %q "$@"\n' "$PROD" "$PROD/lane" > "$BIN/lane"
+    for n in lane-memory:note lane-brief:brief lane-status:status lane-park:park lane-with:with lane-run:run; do
+      printf '#!/usr/bin/env bash\nexec %q %s "$@"\n' "$BIN/lane" "${n#*:}" > "$BIN/${n%%:*}"
+    done
+    chmod +x "$BIN"/*
+    echo "  (no wheel builder here: the product is the checkout copy at $PROD, run through LANE_PRODUCT)"
+  fi
+}
+
 # init_plane [flags] : run lane init non-interactively against the sandbox
 init_plane(){ (cd "$PLANE" && ./lane init --owner "Test" --yes --claude-home "$T/claude" "$@" </dev/null); }
 

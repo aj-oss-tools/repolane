@@ -4,6 +4,8 @@
 #   guard-check         the evidence, in a few lines
 #   guard-check -v      the same, plus every wiring location and the full test suite
 #   guard-check -q      one line, for the top of the board; the detail appears only if it fails
+#   guard-check --fix   in a workspace: repair what can be repaired safely first (asks before editing CLAUDE.md;
+#                       --yes answers yes)
 #
 # Exits non-zero, and explains, if any of it is wrong. Used by status-all and by `lane doctor`.
 #
@@ -20,9 +22,12 @@
 # GitHub repo whose real branch protection hasn't been checked in `protection: sync_days` (7);
 # and a repo with candidate secret/credential filenames nobody has reviewed with `lane secrets`.
 set -u
-VERBOSE=0; QUIET=0
-case "${1:-}" in -v|--verbose) VERBOSE=1 ;; -q|--quiet) QUIET=1 ;; -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  "") : ;; *) echo "guard-check: unknown option '$1' (try -v)" >&2; exit 2 ;; esac
+VERBOSE=0; QUIET=0; FIX=0; YES=0
+for a in "$@"; do
+  case "$a" in -v|--verbose) VERBOSE=1 ;; -q|--quiet) QUIET=1 ;; --fix) FIX=1 ;; -y|--yes) YES=1 ;;
+    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "guard-check: unknown option '$a' (try -v)" >&2; exit 2 ;; esac
+done
 
 # PRODUCT holds guard.py, AD is the workspace it guards: one folder in a clone. scripts/roots.sh decides both and every
 # data path, and guard.py resolves them the same way (scripts/roots.py), so the probes judge the workspace whose wiring
@@ -32,6 +37,23 @@ source "$PRODUCT/scripts/roots.sh"; lane_resolve_roots
 # The product is only read: no __pycache__ beside guard.py or the modules it imports, whoever runs this.
 export PYTHONDONTWRITEBYTECODE=1
 G="$PRODUCT/scripts/hooks/guard.py"
+
+# A workspace (an installed product) has its own wiring to check before the guard's: that the hooks can reach `lane` at
+# all, CLAUDE.md's import line, the hooks themselves, the rule files' version, the registration, every lane's settings
+# (scripts/workspace.py). Its problems make the exit status non-zero even when every probe below passes.
+WS_RC=0
+if [ "$LANE_MODE" = workspace ]; then
+  ws_flags=""; [ "$FIX" = 1 ] && ws_flags="$ws_flags --fix"; [ "$YES" = 1 ] && ws_flags="$ws_flags --yes"
+  if [ "$QUIET" = 1 ]; then
+    # one line, and only when something is wrong; the board's line is about the guard, so it keeps the guard's status
+    python3 -B "$PRODUCT/scripts/workspace.py" doctor "$AD" --quiet || :
+  else
+    python3 -B "$PRODUCT/scripts/workspace.py" doctor "$AD" $ws_flags || WS_RC=1
+  fi
+elif [ "$FIX" = 1 ] && [ "$QUIET" = 0 ]; then
+  echo "lane doctor --fix: a clone has nothing to repair automatically; the checks below say what to run"
+fi
+
 if ! python3 -B -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$G" 2>"${TMPDIR:-/tmp}/guard-syntax.$$.txt"; then
   echo "!! scripts/hooks/guard.py does not compile — EVERY rule is currently off:"
   sed 's/^/     /' "${TMPDIR:-/tmp}/guard-syntax.$$.txt"
@@ -439,7 +461,7 @@ fi
 #   (b) is THIS checkout registered in planes.json at all
 #   (c) if it is registered, does resolving from inside it actually pick it — this should be
 #       impossible if the resolver is correct, so a mismatch here is a canary, not an expected case
-if [ "$QUIET" = 0 ]; then
+if [ "$QUIET" = 0 ] && [ "$LANE_MODE" != workspace ]; then
   found=$(command -v lane 2>/dev/null || true)
   PLANES_PY="$HOME/.local/share/lane/planes.py"
   if [ -z "$found" ]; then
@@ -575,4 +597,8 @@ if [ "$VERBOSE" = 1 ]; then
 elif [ "$QUIET" = 0 ]; then
   echo "hundreds more cases behind this (the whole suite):  lane doctor -v"
 fi
-exit 0
+if [ "$WS_RC" != 0 ] && [ "$QUIET" = 0 ]; then
+  echo
+  echo "!! this workspace has problems that are not fixed (listed at the top) — run: lane doctor --fix"
+fi
+exit "$WS_RC"
