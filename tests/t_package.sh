@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # The Python package: the wheel carries every product file and none of the user's data, installs into a fresh venv, and the
 # installed `lane` runs the bundled product (also after an installer dropped the scripts' +x bits). Needs uv or
-# `python3 -m build`: skipped without one locally, required under CI.
+# `python3 -m build`: skipped without one locally, required under CI. REPOLANE_WHEEL=<path> checks a wheel built
+# elsewhere instead (publish.yml runs this against the exact wheel it uploads to PyPI).
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 new_sandbox
-if command -v uv >/dev/null 2>&1; then build(){ uv build --wheel -q -o "$1" "$PRODUCT"; }
+if [ -n "${REPOLANE_WHEEL:-}" ]; then
+  case "$REPOLANE_WHEEL" in /*) ;; *) REPOLANE_WHEEL="$PWD/$REPOLANE_WHEEL" ;; esac
+  [ -f "$REPOLANE_WHEEL" ] || { bad "REPOLANE_WHEEL names no file: $REPOLANE_WHEEL"; finish; exit 1; }
+elif command -v uv >/dev/null 2>&1; then build(){ uv build --wheel -q -o "$1" "$PRODUCT"; }
 elif python3 -c 'import build' >/dev/null 2>&1; then build(){ python3 -m build --wheel -o "$1" "$PRODUCT" >/dev/null; }
 elif [ -n "${CI:-}" ]; then bad "a wheel builder (uv, or python3 -m build) is required under CI"; finish; exit 1
 else echo "  skip  no uv and no python3 -m build here: the package test runs under CI"; ok "skipped (no wheel builder)"; finish; exit 0
@@ -13,7 +17,11 @@ fi
 echo "-- build"
 # from a copy, so the build never writes into the checkout (build/, *.egg-info) and sees only what is tracked or new
 SRC="$T/src-tree"; mkdir -p "$SRC"; copy_product_tree "$SRC"
-PRODUCT="$SRC" build "$T/dist" >"$T/build.log" 2>&1; assert_eq "the wheel builds" 0 "$?"
+if [ -n "${REPOLANE_WHEEL:-}" ]; then
+  mkdir -p "$T/dist"; cp "$REPOLANE_WHEEL" "$T/dist/"; ok "using the wheel in REPOLANE_WHEEL"
+else
+  PRODUCT="$SRC" build "$T/dist" >"$T/build.log" 2>&1; assert_eq "the wheel builds" 0 "$?"
+fi
 whl=$(ls "$T"/dist/repolane-*.whl 2>/dev/null | head -1)
 assert "one wheel, named for VERSION" test "$(basename "$whl")" = "repolane-$(tr -d '[:space:]' < "$SRC/VERSION")-py3-none-any.whl"
 names=$(python3 -c 'import sys,zipfile;print("\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))' "$whl" 2>/dev/null)

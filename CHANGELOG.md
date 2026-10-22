@@ -87,6 +87,10 @@ written down. Inside a git checkout it also says how far past the release tag yo
   which workspaces are behind, and changes nothing (it says so when PyPI cannot be reached); `--refresh-only` skips
   the package step.
 
+- Each release is published to PyPI as `repolane` (`pipx install repolane`, `uv tool install repolane`) by
+  `.github/workflows/publish.yml`, with trusted publishing and no stored token, from the wheel the package test has
+  just checked.
+
 ### Changed
 
 - Repolane's own files (`lane`, `scripts/`, templates, `VERSION`) and your data (`registry/`, `lanes/`, `repos/`,
