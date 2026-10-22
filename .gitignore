@@ -18,6 +18,3 @@ __pycache__/
 # must never be — this repo is public, and a fork inherits whatever is committed here.
 /registry/*.yaml
 /registry/rules.yaml
-
-# written at build time by hatch_build.py (scripts/shipped.py): the paths this release ships, for `lane migrate`
-/scripts/migrate-head.json
