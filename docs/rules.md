@@ -2,7 +2,8 @@
 
 Every refusal here exists because the alternative went wrong. If you hit one, this page says why.
 
-Every rule below is enforced by `scripts/hooks/guard.py` inspecting the tool call Claude Code is
+Every rule below is enforced by Repolane's guard (`scripts/hooks/guard.py` in the installed package, which the
+`lane hook` commands in your settings run) inspecting the tool call Claude Code is
 about to make — the text of a Bash command, the path a file tool names — and answering allow or
 deny. It is not an operating-system sandbox: it cannot stop anything Claude Code itself did not
 route through a hook, and on hook input it does not recognize it fails open (lets the call through)
@@ -28,13 +29,13 @@ from where you are.
 
 ## The mirrors are read-only
 
-`repos/<name>` stays on its default branch and clean, because every worktree shares its object
+`.repolane/repos/<name>` stays on its default branch and clean, because every worktree shares its object
 store. Work in a worktree.
 
-## The control plane is edited from the root
+## The workspace is edited from the root
 
-Scripts, rules, the registry and memory are changed from a session started at the top, not from
-inside a lane. A lane editing the rules that constrain it is how you lose the rules.
+Your own commands, rules, the registry, memory and `.claude/settings.json` are changed from a session started at
+the workspace root, not from inside a lane. A lane editing the rules that constrain it is how you lose the rules.
 
 ## Secret files are denied by default
 
@@ -49,7 +50,7 @@ doesn't recognize on its own and how to add them.
 ## Pushing to a default branch needs your word
 
 `main`, `master` and `develop` are refused, plus a repo's own `default_branch`/`compare_branch`
-(`registry/repos.yaml`, set by `lane add`) — so a repo whose integration branch is named something
+(`.repolane/registry/repos.yaml`, set by `lane add`) — so a repo whose integration branch is named something
 else, `release` or `staging`, gets the same protection without you writing a rule for it. Once a
 repo has been checked with `lane sync`, its real GitHub branch protection is unioned in too. When
 you do mean it, the command carries a marker you can see: `ALLOW_DEFAULT_BRANCH_PUSH=1 git push …`.
@@ -73,8 +74,8 @@ commit at the end.
 
 The rules above ship with Repolane, because they are true of every project. The ones that are
 true only of *your* project — "never run a migration by hand, the entrypoint does it", "that
-branch deploys itself" — go in `registry/rules.yaml`. It is gitignored and stays on your machine:
-a private tool name or an internal service name has no business in a public repo.
+branch deploys itself" — go in `.repolane/registry/rules.yaml`, in your workspace. It never reaches the package or anyone else unless you
+commit it to a repo you share.
 
 A rule can only add a refusal. There is no syntax for granting anything, and the loader has no
 path to anything but the same `deny` the built-in rules use — so a rules file can tighten this
@@ -110,9 +111,9 @@ Values are single-line: the parser reads a deliberately small YAML subset — `r
 per rule, scalars and one-line `{ … }` or an indented block under `when:`. Anything else is
 reported as an error rather than half-understood.
 
-The guard doesn't only read `registry/rules.yaml` — it reads every `registry/rules.*.yaml` file
+The guard doesn't only read `rules.yaml` — it reads every `.repolane/registry/rules.*.yaml` file
 and unions them all through this identical parse/validate/deny-only path, no special-casing for
-any of them. `registry/rules.shared.yaml` is the one you'll usually see alongside it: it's what
+any of them. `rules.shared.yaml` is the one you'll usually see alongside it: it's what
 `lane rules pull` (a team-shared, SHA-pinned source of rules — see
 [`docs/extending.md`](extending.md)) writes, with every rule id namespaced so it can't silently
 collide with one you typed by hand. A broken rule in either file is caught by `lane doctor` the
@@ -158,12 +159,12 @@ candidates for a human to review — nothing is ever denied without someone conf
 principle behind every other guard behaviour in this repo.
 
 `lane secrets <repo> add <path>` is **destructive, not bookkeeping**: it writes six deny rules into
-`registry/rules.yaml` (one each for `Read`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, and
+`.repolane/registry/rules.yaml` (one each for `Read`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, and
 `Bash`), which makes that file unreadable (and unwritable) to every future Claude Code session in
 this repo — so `lane doctor` checks them the same way it checks any other rule of your own. If a
 candidate is a false positive — not actually a secret — use `lane secrets <repo> ignore <path>`
-instead: it marks the path reviewed-and-not-a-secret in a separate, gitignored
-`registry/secrets-ignored.yaml`, so `scan` (and `lane doctor`'s advisory) stops surfacing it, and
+instead: it marks the path reviewed-and-not-a-secret in a separate
+`.repolane/registry/secrets-ignored.yaml`, so `scan` (and `lane doctor`'s advisory) stops surfacing it, and
 **no deny rule is written**. `lane secrets <repo> scan` runs the scan (excluding anything already
 `ignore`d); `lane secrets <repo> list` shows what has been denied; `lane secrets <repo> ignored`
 shows what has been dismissed.
@@ -178,14 +179,14 @@ traceback and not a shrug.
 
 `lane doctor` checks four things, and reports a fifth. It checks that the guard compiles, that it
 still answers eleven named probes the way it should (ten refusals and one ordinary command it must leave alone), that every
-rule in your `registry/rules.yaml` still refuses its own `example` — and is refused *by that rule*,
+rule in your `rules.yaml` still refuses its own `example` — and is refused *by that rule*,
 not incidentally by a built-in — and that every lane and worktree is still wired to it. It prints each verdict, so the answer is something
 you can check rather than something you have to believe; `lane doctor -v` also runs the full
 guard suite. A session whose `settings.local.json` lost
 its hooks is unguarded even when the guard itself is perfectly healthy, so both are checked.
 
 It then reports one thing that is not a health check at all: **lanes nobody has touched in a
-while**. Any lane whose `updated:` date is more than `stale_days` ago (`registry/config.yml`,
+while**. Any lane whose `updated:` date is more than `stale_days` ago (`.repolane/config.yml`,
 21 days by default; `0` turns it off) and that still has a worktree on disk is listed with its
 age, its size on disk, why it is still here, and the one command that clears it:
 
@@ -202,15 +203,15 @@ branches and writes a file; this asks it of the lanes themselves, every time you
 
 It reports one more thing the same way: repos whose real GitHub branch protection hasn't been
 checked. `lane sync [repo]` calls `gh api` for a repo's protected branches and writes them into
-`registry/repos.yaml` as `protected_branches:` + `protection_synced: <date>` — the guard unions
+`.repolane/registry/repos.yaml` as `protected_branches:` + `protection_synced: <date>` — the guard unions
 that in on top of `main`/`master`/`develop` and the repo's own `default_branch`/`compare_branch`,
 never in place of them. Any managed repo on GitHub whose `protection_synced` is missing, or older
-than `protection: sync_days` (`registry/config.yml`, 7 days by default; `0` turns it off), is
+than `protection: sync_days` (`.repolane/config.yml`, 7 days by default; `0` turns it off), is
 listed with `lane sync <repo>` to clear it. `lane sync` is never run for you — not by `lane
 doctor`, not by `lane start`/`lane resume` — it is a manual, always-available command, so nothing
 that "starts work" ever blocks on a network call to GitHub.
 
-And a fourth: repos with a candidate secret/credential filename (`scripts/repo-secrets scan`'s
+And a fourth: repos with a candidate secret/credential filename (`lane secrets <repo> scan`'s
 patterns — `.npmrc`, `id_rsa`, `service-account.json` and the rest, see
 ["Rules of your own"](#rules-of-your-own) above) that nobody has reviewed yet — neither denied with
 `lane secrets <repo> add` nor dismissed with `lane secrets <repo> ignore`. Unlike the other three,

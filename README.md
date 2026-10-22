@@ -52,12 +52,15 @@ Code or Git, and its guardrails are not an operating-system sandbox.
 [Quick start](#quick-start) · [Complete workflow example](#complete-workflow-example) ·
 [How it works](#how-it-works) · [Why it refuses things](#why-it-refuses-things) ·
 [The commands](#the-commands) · [Using it without Claude](#using-it-without-claude) ·
-[Documentation](#documentation) · [What your clone becomes](#what-your-clone-becomes) ·
+[Documentation](#documentation) · [Your workspace](#your-workspace) ·
 [Status and contributing](#status-and-contributing)
 
 ## See it in action
 
 ```sh
+pipx install repolane            # or: uv tool install repolane
+lane init ~/work && cd ~/work    # a workspace: any folder where lane init ran
+lane add <git-url>               # each repo is cloned once, as a mirror
 lane start ABC-123 web api       # a branch and a worktree of each repo, grouped as one lane
 cd lanes/ABC-123 && claude       # Claude opens knowing what this work is and which repos are in scope
 lane park ABC-123 "waiting on review for the api side"   # resume note + wip-commit, nothing left loose
@@ -77,23 +80,25 @@ worktrees may be all you need.
 | | |
 |---|---|
 | **git** | required — worktrees are the whole mechanism |
-| **python3** | required — the hook dispatcher and the board are stdlib Python, no packages |
+| **python3** | required (3.9 or later) — the package, the hook dispatcher and the board are stdlib Python, no dependencies |
 | **bash** | required — every command is a bash script |
+| **pipx** or **uv** | to install the package (plain `pip` into a venv works too) |
 | **gh** | optional — pull request status and `lane gh` |
 | **Claude Code** | optional — the commands work on their own; the hooks only matter when Claude is driving |
 
-Nothing is compiled, nothing is published to a package registry, and nothing phones home. Repolane
-is a folder of scripts. Tested on macOS and Linux; on Windows use WSL.
+Nothing is compiled and nothing phones home. Tested on macOS and Linux; on Windows use WSL.
 
 ```sh
-git clone https://github.com/aj-oss-tools/repolane.git && cd repolane
-./lane install        # puts `lane` and the long-form commands on your PATH
-lane init             # asks up to five questions, sets the machine up
-lane add <git-url>    # or: lane add ~/path/to/a/checkout/you/already/have
+pipx install repolane             # or: uv tool install repolane — puts `lane` and the long-form commands on PATH
+mkdir ~/work && cd ~/work
+lane init                         # makes this folder a workspace; asks before touching CLAUDE.md or ~/.claude
+lane add <git-url>                # or: lane add ~/path/to/a/checkout/you/already/have
 ```
 
-Just want to see if this would work before committing to it? `lane init --check` verifies the
-prerequisites above and exits — it changes nothing on your machine.
+`lane init` asks for your name, whether to add Repolane's import line to a `CLAUDE.md` you already have, and whether
+to link Claude Code's memory for this folder into the workspace. `--yes` takes the defaults, and `--git` makes the
+workspace a git repo of your own. [`docs/install.md`](docs/install.md) has the details, the full layout, and how to
+move over from an older git-clone install with `lane migrate`.
 
 `lane add` takes a checkout you already have, not just a URL — it adopts the existing `.git`, keeps
 the origin, and remembers where it came from so `lane import` can find the Claude conversations you
@@ -115,12 +120,12 @@ That gives you a branch named `ABC-123` in both repos and a folder holding a wor
 
 ```
 lanes/ABC-123/
-  web/     a worktree of repos/web on branch ABC-123
-  api/     a worktree of repos/api on branch ABC-123
+  web/     a worktree of .repolane/repos/web on branch ABC-123
+  api/     a worktree of .repolane/repos/api on branch ABC-123
   refs/    anything you attached for reference
 ```
 
-Each repo is cloned **once**, into `repos/<name>`, and that copy is a mirror: always on its default
+Each repo is cloned **once**, into `.repolane/repos/<name>`, and that copy is a mirror: always on its default
 branch, never edited, never switched. Every lane's worktrees share its object store, so the second
 piece of work costs a checkout of files rather than a full clone, and switching between them is
 instant. Ten lanes across six repos is still six clones on disk.
@@ -144,22 +149,26 @@ lose the first repo's worktree on the way to failing.
 
 Three pieces, each doing one job.
 
-### 1. The layout
+### 1. The workspace
 
-`repos/` holds clean mirrors. `lanes/` holds the work. `registry/` is the source of truth that
-describes both — `repos.yaml` lists the repos, and `registry/lanes/<id>.md` is one file per lane
-carrying its goal, resume note, findings, log, and the list of repos in scope.
+A workspace is any folder where `lane init` ran. Your `CLAUDE.md`, `.claude/` and `lanes/` sit at its top; everything
+else Repolane keeps is under `.repolane/`. `lanes/` holds the work. `.repolane/repos/` holds the clean mirrors.
+`.repolane/registry/` is the source of truth that describes both — `repos.yaml` lists the repos, and
+`registry/lanes/<id>.md` is one file per lane carrying its goal, resume note, findings, log, and the list of repos in
+scope.
 
-That registry file is also **the allow-list for a session**: the repos it names are the repos the
-work may touch. `repos/` and `lanes/` are gitignored, because they are machine state that the
-registry can rebuild. Deleted a worktree by hand? `lane resume <id>` prunes the stale registration
-and recreates it.
+That lane file is also **the allow-list for a session**: the repos it names are the repos the
+work may touch. The mirrors and the worktrees are machine state that the registry can rebuild. Deleted a worktree by
+hand? `lane resume <id>` prunes the stale registration and recreates it.
+
+Inside a lane, Claude Code refuses Edit and Write outside the lane folder, so a lane session saves its Goal and memory
+drafts with `lane-memory goal "<text>"` and `lane-memory draft <slug> "<text>"`, which the rules tell it to use.
 
 ### 2. The guard
 
-`scripts/hooks/guard.py` is a hook dispatcher wired into Claude Code's `PreToolUse`, `PostToolUse`,
-`UserPromptSubmit`, `PreCompact`, `SessionEnd`, `SessionStart` and worktree events. It reads the
-hook JSON on stdin and answers allow, deny, or "here is some context you are missing."
+The guard (`scripts/hooks/guard.py` in the package) is a hook dispatcher wired into Claude Code's `PreToolUse`, `PostToolUse`,
+`UserPromptSubmit`, `PreCompact`, `SessionEnd`, `SessionStart` and worktree events, through `lane hook <event>`
+commands in `.claude/settings.json` and every lane's settings. It reads the hook JSON on stdin and answers allow, deny, or "here is some context you are missing."
 
 It is not a prompt asking nicely. It inspects the actual tool call — including the text of every
 Bash command, each segment of a chain, and every path any of them names — and it judges paths by
@@ -167,7 +176,8 @@ what was *written*, so a symlink or a `..` that climbs out of the lane is refuse
 absolute twin.
 
 Repolane uses Claude Code hooks to inspect tool calls and deny disallowed operations. Its guardrails
-are tested, and `lane doctor` checks that they remain wired and functioning. This is not an
+are tested, and `lane doctor` checks that they remain wired and functioning — including that `lane` is on PATH,
+because a hook that cannot start fails open. This is not an
 operating-system sandbox, and unexpected hook input can fail open: the dispatcher fails open on
 malformed input, because a crashed guard that blocks everything is worse than one that lets an odd
 call through.
@@ -178,7 +188,7 @@ memory index for every repo in scope.
 
 `lane doctor` compiles it and fires eleven named probes at it — ten that must be refused and one
 ordinary command that must not — so you find out when the rules stop being enforced. Behind that
-there is a suite of well over 1,800 cases in `scripts/hooks/test-guard.sh`, which `lane doctor -v` runs.
+there is a suite of well over 1,800 cases, which `lane doctor -v` runs.
 
 ### 3. The board
 
@@ -194,7 +204,7 @@ Every rule below exists because the alternative went wrong at least once. `docs/
 each story.
 
 - **A session stays in its lane.** The guard denies reads of another lane, the mirrors, or anything
-  outside the control plane. Need something from outside? `lane ref <id> add <path>` attaches it once, and it is
+  outside the workspace. Need something from outside? `lane ref <id> add <path>` attaches it once, and it is
   readable at `lanes/<id>/refs/<name>`. A reference is read-only to a Claude session — the hook
   refuses writes through it unless you pass `--rw`. On disk it is a symlink, so your own editor can
   still write to it.
@@ -219,14 +229,15 @@ each story.
   in, chosen by *how long it stays true*: `pref` (always), `cross` (every repo), `repo` (that repo,
   after this ships) or `lane` (only while this work is live). Left alone, everything becomes a
   permanent global preference, and within a month the system is full of things that were true once.
-- **The control plane is edited from the root.** A lane cannot change the scripts or the rules that
-  constrain it.
+- **The workspace is edited from the root.** A lane cannot change the settings, the registry or the rules
+  that constrain it.
 - **Commits are proposed, not made.** And new branches start from the default branch, not from
   whatever happened to be checked out.
 
 ## The commands
 
 ```
+lane init       make a folder a workspace       lane add      bring a repo under management
 lane status     where everything stands        lane board    the same thing in a browser
 lane brief      catch up on one piece of work  lane audit    branches that look finished or stale
 lane find       which lane touched this file, branch or commit
@@ -234,21 +245,17 @@ lane run/gh     run something in one repo without leaving the lane
 lane ref        attach outside code or docs    lane note     write something worth remembering
 lane merge      two pieces of work turned out to be one
 lane import     adopt past Claude conversations
-lane doctor     check the safety rules are working, and what needs attention
+lane doctor     check the workspace is wired and the safety rules are working (--fix repairs)
 lane sync       check a repo's real GitHub branch protection
 lane rules      pull a team's shared, SHA-pinned rules.yaml
-lane upgrade    pull the latest release, ff-only, never an automatic merge
+lane upgrade    upgrade the package and refresh every workspace (--check only looks)
+lane migrate    turn an older git-clone install into a workspace
 lane help       the full list
 ```
 
-Upgrading an install made before 0.9.0? Its `lane upgrade` refuses once, because `lane init` modified
-`.claude/settings.json`. Run `git checkout -- .claude/settings.json`, then `lane upgrade`, then
-`lane init --yes`; see
-[`docs/troubleshooting.md`](docs/troubleshooting.md#your-first-upgrade-from-an-install-made-before-090).
-
-Every command also exists as its own executable — `lane-start`, `lane-run`, `lane-memory` — so they
-run from any directory with no `cd`. Full reference in [`docs/commands.md`](docs/commands.md).
-Your own commands work the same way: anything executable in `scripts/local/` becomes `lane <name>`
+Every command also exists as its own executable — `lane-start`, `lane-run`, `lane-memory` — installed next to
+`lane`, so they run from any directory with no `cd`. Full reference in [`docs/commands.md`](docs/commands.md).
+Your own commands work the same way: anything executable in `.repolane/scripts/local/` becomes `lane <name>`
 with no dispatcher edit needed — see [`docs/extending.md`](docs/extending.md).
 
 ## Using it without Claude
@@ -265,43 +272,36 @@ and in this repo:
 
 | | |
 |---|---|
-| [`docs/concepts.md`](docs/concepts.md) | the five words the whole system is built from — **start here** |
+| [`docs/install.md`](docs/install.md) | installing, the workspace and its files, `lane init`, `lane doctor`, `lane upgrade`, `lane migrate` |
+| [`docs/concepts.md`](docs/concepts.md) | the six words the whole system is built from — **start here** |
 | [`docs/rules.md`](docs/rules.md) | every refusal, and the failure behind it |
 | [`docs/commands.md`](docs/commands.md) | the full command reference |
 | [`docs/board.md`](docs/board.md) | the web board |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | the ways it actually breaks, and how to recover |
 | [`docs/releasing.md`](docs/releasing.md) | how a merged PR actually becomes a release |
-| [`docs/extending.md`](docs/extending.md) | `scripts/local/` custom commands, and `lane rules pull` for shared rules |
+| [`docs/extending.md`](docs/extending.md) | `.repolane/scripts/local/` custom commands, and `lane rules pull` for shared rules |
 
-Each folder has its own README explaining what lives there:
-[`scripts/`](scripts/README.md) · [`scripts/hooks/`](scripts/hooks/README.md) ·
-[`scripts/board/`](scripts/board/README.md) · [`registry/`](registry/README.md) ·
-[`memory/`](memory/README.md) · [`knowledge/`](knowledge/README.md) ·
-[`.claude/`](.claude/README.md)
+In the source, [`scripts/`](scripts/README.md), [`scripts/hooks/`](scripts/hooks/README.md) and
+[`scripts/board/`](scripts/board/README.md) each have a README explaining what lives there.
 
-## What your clone becomes
+## Your workspace
 
-The folder you clone *is* your control plane — see
-[`docs/concepts.md`](docs/concepts.md#the-clone-is-the-control-plane) for what that means and why.
-After `lane init` it is no longer just a copy of this repository: `registry/` fills up with your
-repos and lanes, `memory/` and `knowledge/` with what Claude has learned about your work, and
-`CLAUDE.md` is generated with your name in it. Those are yours to commit — and if you want them
-backed up, point the clone at a private remote of your own.
+The package is Repolane; the workspace is yours. `lane upgrade` replaces the package and refreshes the few files
+Repolane keeps in a workspace (`.repolane/REPOLANE.md`, `LANE.md`, `version`, and its own hooks in your settings), and
+never touches anything you wrote. Your `CLAUDE.md` imports Repolane's rules with one line, `@.repolane/REPOLANE.md`,
+and is otherwise entirely yours.
 
-That means `git status` is dirty right after setup, by design. It also means taking an update from
-upstream is a `git pull` that may want a merge, most often in `.claude/settings.json` — see
-[`docs/troubleshooting.md`](docs/troubleshooting.md#upgrade-friction-the-clone-is-the-control-plane)
-for how to resolve it.
-Nothing in `repos/` or `lanes/` is ever committed: they are machine state, gitignored, and
-rebuildable from the registry.
+What is worth keeping is small text: `CLAUDE.md`, `.claude/settings.json`, `.repolane/config.yml`, `env.sh`,
+`knowledge/`, `memory/` and the registry. `lane init --git` makes the workspace a git repo that ignores the rest
+(`lanes/`, the mirrors, the cache); push it to a private remote of your own, clone it on another machine and run
+`lane init` there. See [`docs/install.md`](docs/install.md#keep-your-workspace-in-your-own-git-repo).
 
 ## Status and contributing
 
 Repolane is used daily by its author and is stable for that use. It is early software: the layout on
 disk is settled, the command names are settled, and the guard has a real test suite — but expect
-rough edges outside the paths that get walked every day. The current version is whatever
-[`VERSION`](VERSION) says — run `lane --version`, which also reports how far a given checkout has
-drifted past that release's tag; see [`CHANGELOG.md`](CHANGELOG.md) for what changed.
+rough edges outside the paths that get walked every day. `lane --version` prints the installed version, and
+`lane upgrade --check` compares it with the newest on PyPI; see [`CHANGELOG.md`](CHANGELOG.md) for what changed.
 
 Issues, discussions and pull requests are welcome, and used: if something is broken, unclear, or
 missing, filing it is the useful thing to do. [Issues](https://github.com/aj-oss-tools/repolane/issues)
@@ -312,8 +312,8 @@ should go.
 
 Pull requests are welcome too — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to run the
 guard's test suite, what the project expects of a change, and how to propose one. The short version:
-if you change `scripts/hooks/guard.py`, run `bash scripts/hooks/test-guard.sh` (it builds its own
-throwaway control plane, so it runs anywhere and never touches your lanes) and add a case for
+if you change `scripts/hooks/guard.py`, run `bash scripts/hooks/test-guard.sh` in a checkout of this repo (it
+builds its own throwaway control plane, so it runs anywhere and never touches your lanes) and add a case for
 whatever you changed. A rule with no test is a rule that will quietly stop working.
 
 Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).

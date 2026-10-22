@@ -103,6 +103,7 @@ written down. Inside a git checkout it also says how far past the release tag yo
 - `lane upgrade` in a git clone still fast-forwards the clone when the new version is 0.10 or later, so it keeps
   working, and `lane doctor` in such a clone then spells out the two steps that move it over: `pipx install repolane`
   (or `uv tool install repolane`), then `lane migrate <folder>`.
+- `lane status` in a workspace heads its first section "workspace" instead of describing a clone.
 - `lane doctor` no longer writes a `__pycache__` folder into Repolane's own files, and the guard refuses a tool call
   (instead of letting it through) if its path resolver is missing.
 

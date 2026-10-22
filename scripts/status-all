@@ -5,7 +5,8 @@
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 source "$PRODUCT/scripts/gitstate.sh"
 "$PRODUCT/scripts/hooks/guard-check" -q || echo "   (fix guard.py before trusting any of the state below)"
-echo "== control plane (this checkout itself — docs/concepts.md: \"the clone is the control plane\")"
+if [ "${LANE_MODE:-}" = workspace ]; then echo "== workspace (its own git repo, if you made one: docs/install.md)"
+else echo "== control plane (this checkout itself — docs/concepts.md: \"the clone is the control plane\")"; fi
 if [ -d "$AD/.git" ] || [ -f "$AD/.git" ]; then
   cp_dirty=$(git -C "$AD" status --porcelain | wc -l | tr -d ' ')
   # No upstream configured (a fresh clone that's never been pushed) makes `git log @{u}..HEAD`
