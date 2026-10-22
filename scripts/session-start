@@ -38,6 +38,7 @@ if [ -n "${LANE_SCREEN:-}" ]; then
     "$PRODUCT/scripts/lane-brief" "$cur" 2>/dev/null
     echo; echo "commands: ! lane-menu   (prefix any lane-* command with \"! \" to run it here without a model call)"
   else
+    lane_migrate_reminder
     echo "LANES"
     for f in "$LANES_DIR"/*.md; do [ -f "$f" ] || continue; id=$(basename "$f" .md); st=$(lane_get "$id" status)
       line="  $id  [$st]"

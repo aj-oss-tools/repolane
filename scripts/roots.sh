@@ -62,3 +62,12 @@ lane_refresh_workspace(){ # quiet; a refresh that cannot be done is retried on t
 }
 # lane_make_workspace <dir> [owner] : an empty workspace layout in <dir>, filling only what is missing (roots.py)
 lane_make_workspace(){ python3 -B "$PRODUCT/scripts/roots.py" make-workspace "$PRODUCT" "$@" </dev/null; }
+
+# lane_migrate_reminder : one line for a git-clone install that has been set up (SessionStart's screen, `lane status`):
+# 0.10 installs as a package and keeps the data in a workspace, and `lane migrate` converts the clone. Silent in a
+# workspace, in a clone nobody set up, and when registry/config.yml says `migrate_reminder: false`.
+lane_migrate_reminder(){
+  [ "${LANE_MODE:-}" = clone ] && [ -f "$REGISTRY/repos.yaml" ] || return 0
+  grep -qE '^migrate_reminder:[[:space:]]*false' "$CONFIG_FILE" 2>/dev/null && return 0
+  echo "note: this is a git-clone install. Repolane now installs as a package (pipx install repolane), and \`lane migrate\` from it turns this folder into a workspace (it previews, backs up and asks first)."
+}

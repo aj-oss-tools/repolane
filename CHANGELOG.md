@@ -47,6 +47,29 @@ written down. Inside a git checkout it also says how far past the release tag yo
 - A workspace's status line is `lane statusline`, added to `.claude/settings.json` by `lane init` when no status line
   is set (your own is never replaced). `lane doctor` reports one that still runs a clone's
   `scripts/statusline.sh` by path, and `--fix` replaces it; a workspace with no status line gets a note, not a failure.
+- **`lane migrate` turns a git-clone install (a 0.9.x control plane) into a workspace, in place.** Run it from the
+  installed package: `lane migrate [folder]` (default: the current one). It first shows everything it would do and
+  changes nothing until you confirm ("Migrate now? [y/N]", or `--yes`; with no terminal and no `--yes`, or with
+  `--dry-run`, it only shows the plan). It refuses while Claude Code is running inside the folder. Before the first
+  change it writes a backup of everything it changes or removes to `~/.local/share/lane/backups/<folder>-<time>.tar.gz`,
+  and `lane migrate --undo <backup>` puts the clone install back (keeping what was written in the workspace since).
+  - Your data moves under `.repolane/` (`registry/`, `memory/`, `knowledge/`, `repos/`, `.cache/` as `cache/`,
+    `registry/config.yml`, `scripts/env.sh`, `scripts/local/`); the worktrees stay in `lanes/` and are repaired with
+    `git worktree repair`, and their `.env` links follow the mirrors.
+  - Repolane's own files are removed: only the paths a release shipped (listed in `scripts/migrate-manifest.json`,
+    made from the release trees by `scripts/release-migrate-manifest`), never anything else in the folder. The
+    clone's `.git` is Repolane's repo, so it is removed too (it is in the backup); `--git` starts a fresh, empty one.
+  - The generated `CLAUDE.md` becomes a short one that imports `.repolane/REPOLANE.md`, keeping every line you added.
+    If lines of Repolane's own text were edited, the old file is also kept as `CLAUDE.md.pre-0.10`.
+  - `.claude/settings.json` runs `lane hook …` commands and `lane statusline`, keeping your own keys and hooks, and
+    every lane's `settings.local.json` is written again.
+  - Outside the folder, each asked first: the memory links under `~/.claude/projects` (and a mirror's project folder,
+    whose path changed) point into `.repolane/memory`; the router `lane install` wrote in `~/.local/bin` is removed
+    when no other clone install uses it. `planes.json` records the workspace instead of the clone.
+  - A migration that stops half way continues when you run it again; running it on a workspace says there is nothing
+    to do and changes nothing.
+- A git-clone install that has been set up shows one line on SessionStart and in `lane status`: Repolane installs as a
+  package now, and `lane migrate` converts the folder. `migrate_reminder: false` in `registry/config.yml` turns it off.
 
 ### Changed
 

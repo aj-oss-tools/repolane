@@ -27,6 +27,7 @@ if [ -d "$AD/.git" ] || [ -f "$AD/.git" ]; then
 else
   echo "  not a git repo — memory/, knowledge/, CLAUDE.md are not tracked anywhere"
 fi
+lane_migrate_reminder | sed 's/^/  /'
 echo "== repos (primary mirrors)"
 for r in "$REPOS"/*/; do [ -e "$r/.git" ] || continue   # no repos yet: the glob stays literal
   n=$(basename "$r"); def=$(repo_default "$n")

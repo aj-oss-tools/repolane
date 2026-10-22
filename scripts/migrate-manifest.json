@@ -1,0 +1,527 @@
+{
+ "claude_templates": [
+  "# Control plane\n\nThis directory is {{owner}}'s control plane for all engineering work across their repos.\nIt is loaded into every session started anywhere below it.\n\n## Layout\n- `registry/repos.yaml` \u2014 the repos, where they live, default branch, stack.\n- `registry/lanes/<id>.md` \u2014 one file per piece of work. **This is the allow-list for a session**:\n  only the repos and paths it names are in scope.\n- `knowledge/` \u2014 preferences, conventions, domain notes. Not auto-loaded; read `knowledge/preferences.md`\n  at the start of any session that will write code, and `knowledge/domains/<x>.md` when the lane names it.\n- `memory/` \u2014 cross-repo memory (preferences, facts about this system); `memory/<repo>/` \u2014 per-repo memory.\n  Both symlinked from `~/.claude/projects`, versioned here.\n- `repos/<repo>/` \u2014 the mirror: always on the default branch. **Read-only.** Never edit, never\n  branch-switch here. Used for fetch, baseline diffs, and by scripts.\n- `lanes/<lane>/<repo>/` \u2014 worktrees. All real work happens here. One session per lane.\n- `scripts/` \u2014 `lane-start`, `lane-resume`, `lane-park`, `lane-done`, `status-all`, `branch-audit`.\n\n## Rules for every session\n1. Discuss before deciding. Run directly only what is mechanical, reversible and explicitly asked: read-only scripts,\n   entering the worktree they named, writing a resume note when they say park, edits they described. Everything with\n   judgment is proposed in one or two sentences with a recommendation, then you wait: a new lane's id, branch\n   or repo set; anything under `~/.claude`, shell rc files or other global config; deleting, renaming or pushing\n   anything; scope, design or approach choices. One question at a time. Silence is not consent.\n2. Stay in the lane you are in. Never `cd` out of it \u2014 a cd moves the session and the way back is\n   EnterWorktree, so one cd for convenience strands you. The `lane-*` scripts run from anywhere without a cd; reach\n   another repo of the lane with `git -C ../<repo>` or an absolute path; write temporary files by absolute\n   path under /tmp. Moving around inside your own lane is fine.\n3. From the dispatcher root, a lane's files are out of reach \u2014 no reading, no editing, no Bash touching\n   `lanes/<id>/\u2026`. Enter it (`EnterWorktree name=\"<id>\"`) or ask the scripts (`lane-brief <id>`, `lane-status`), which read\n   it for you. Its registry file stays editable from the root. The rule is the same in both directions: the\n   dispatcher does not reach into a lane, and a lane does not reach out.\n4. Work only inside the current lane folder. Do not read or search `repos/` or other `lanes/` folders\n   unless the lane file lists that repo or {{owner}} says so in this session.\n5. Before starting code work in a lane, read its file in `registry/lanes/`. Memory indexes (cross-repo\n   and every repo in the lane) arrive with your first prompt; a repo's own CLAUDE.md and rules list arrive the\n   first time you touch that repo. Open the memory files and rules that match what you are doing.\n6. Nothing outside the control plane is yours to read. Not other repos, not `~/.claude`, not the old checkouts. If the work\n   genuinely needs something out there, attach it once with `lane-ref <id> add <path> \"why\"` and read it at\n   `lanes/<id>/refs/<name>/\u2026` \u2014 the reference path, never the real one. The scratchpad under /tmp is fine for temporary\n   files. The hook refuses the rest, for file tools and for Bash alike.\n7. The remote and the default branches are not yours. Never `git remote add/set-url/rename/remove`. Never move or\n   delete `main`/`master`/`develop`. A push that targets a default branch needs {{owner}}'s word first; they can then\n   have you run it with the visible marker `ALLOW_DEFAULT_BRANCH_PUSH=1 git push \u2026`.\n8. Never read `.env` or credential files. Structure only: `.env.example`, key names in code, or `lane-env-keys <path>` (names, no values). The hook denies reads. Worktrees get them as\n   symlinks to `repos/<repo>/\u2026` via lane-start/lane-resume; if one is missing, run `lane-resume <id>`, do not create one.\n9. New branches start from the repo's default branch, never from whatever is checked out.\n10. When parking or finishing, update the lane file (status, resume note). The file is the handoff.\n11. If a repo needs shared build caches or environment settings, put them in `scripts/env.sh` and\n   `source scripts/env.sh` before running its build.\n12. Never write memory or preference files directly \u2014 the hook refuses it. Four scopes, decided by how long the thing\n   stays true: `pref` (how to work with {{owner}}, always) \u00b7 `cross` (true in every repo) \u00b7 `repo` (one repo, still true\n   after this ticket ships) \u00b7 `lane` (only while this lane is live, archived with it \u2014 its `## Findings`).\n   `lane-memory draft <slug>`, write the draft, ask {{owner}} which scope with a recommendation, then\n   `lane-memory file <slug> lane|repo <repo>|cross|pref`. Editing a memory that already exists is allowed from a\n   dispatcher session at the root (its scope is settled); creating one never is. Same for the control plane (scripts, CLAUDE.md, registry,\n   .claude): propose it, and change it from a dispatcher session, never from inside a lane.\n13. One checkout exists for you: the worktree you are in. Report git state only in the STATE form that arrives\n   with each prompt (where you are, branch, ahead/behind origin, uncommitted). Never mention `repos/` or the old\n   checkouts; they are frozen and the hook blocks them. In a resumed conversation, translate old paths silently.\n14. Inside a lane, the work stays in it. Never propose or create another worktree or lane from a\n   worktree; if a repo is missing, `lane-add <id> <repo>`. Only when {{owner}} himself asks for separate, unrelated\n   work: park this one, ExitWorktree keep, then start the new one from the root. The hook refuses the shortcuts.\n15. Talk plainly: simple words, no jargon. Prefer an ASCII diagram to a long explanation. Never create an artifact\n   without asking first.\n\n## Sessions\n- New work: `lane start <id> <repo>[:<branch>] [<repo>...]` then `cd lanes/<id> && claude`.\n- Resume: `lane resume <id>`. Leaving: `lane park <id> \"<note>\"`. Finished: `lane done <id>`.\n- Morning: `lane status`.\n\n## Entering any conversation\nWhatever the entry point (fresh `claude`, `claude --resume <id>`, the picker, `lane <id>`), the SessionStart hook tells you\nwhere you are and, for a resumed conversation, which repo it belongs to and which lanes exist for it. Your first\nmessage then does the managing, before answering anything else: name the repo, offer to continue in an existing\nlane, start a new one, or stay read-only, recommend one, and wait for their answer. Do not enter or create a\nworktree until they have chosen. Be a visible operator: every\nscript you run, every worktree you enter or leave, every lane file you change gets one line in your reply.\nNothing about the system may be silent.\n\n## Dispatcher mode (sessions started at this root)\n{{owner}} starts `claude` here (or types `lane`) and says what they want. You do the navigation. Hooks in\n`.claude/settings.json` enforce scope for the whole session, also after you move into a worktree.\n\n**Getting into a lane** \u2014 EnterWorktree `name: \"<lane-id>\"`. Only that: no repo, no path, and never a\n`cd` from outside. It puts you **in the lane itself**, not in one of its repos.\n**A lane is one piece of work across its repos, and the session stays at its root.** You never enter a repo:\nedit files at `<repo>/\u2026`, run git with `git -C <repo> \u2026`, run anything that must execute inside a repo with\n`lane-run <repo> <cmd\u2026>` (mvn, yarn, tests), and use `lane-gh <repo> <args\u2026>` for GitHub (`lane-gh api pr create --fill`,\n`lane-gh api workflow run main.yml -f branch=\u2026`). **`cd` into a repo is refused** \u2014 it is what made one repo look like\nthe main one, and nothing needs it. **Never exit and re-enter to change repo.** `lane-status` lists ids.\n**Start new work** \u2014 propose first: the id (ticket key or slug), the repo(s), the base branch (default branch unless\nthey say otherwise or the ticket clearly builds on another branch), in one line, and wait. On their yes:\n`lane start <id> <repo>[:<branch>][@<base>] ...`, then EnterWorktree `name: \"<id>\"`. Then draft the Goal\nsection of `registry/lanes/<id>.md` from what they said and show it to them.\n**Add a repo to the current lane** \u2014 `lane with <id> <repo>[:<branch>]`. The new worktree sits beside the\ncurrent one; reach it by absolute path (the hook allows edits anywhere under lanes/<id>/).\n**Attach outside code or docs as a reference** \u2014 `lane ref <id> add <path> [note] [--rw]`. It appears under\n`lanes/<id>/refs/<name>`, is readable (read-only unless `--rw`), and is listed in the memory block. Propose it when they\nmentions code that is not in the lane's repos; never read outside paths without a ref.\n**Bring a new repo under management** \u2014 `lane add <git-url|path-to-existing-checkout> [name]`. Then\nfill stack/product in `registry/repos.yaml`.\n**Old conversations** \u2014 `lane sessions <repo|id>` lists them with ids. A conversation cannot be switched into from\ninside a running session, so give them one command and stop: `claude --resume <session-id>` (works from any folder now)\nor `lane <id> -r` for the picker (Ctrl+A in the picker widens to all projects).\n**Two lanes turn out to be one** \u2014 preview with `lane plan <a> <b> [--as <new-id>]` (read-only,\nworks from inside a lane). Show {{owner}} the plan, including any conflict, and let them choose the mode. The\nreal merge runs only from the root: `lane merge <a> <b> \u2026 --run`.\n**Leaving / switching** \u2014 draft the resume note, show it, run `lane park <id> \"<note>\"` on their ok (or at once if\nthey said \"park it\"), then ExitWorktree `keep`.\n**Finishing** \u2014 `lane done <id>` (refuses if dirty or unpushed; report the reason, do not force).\n\nAfter entering a worktree: read `registry/lanes/<id>.md`, `memory/<repo>/MEMORY.md`, the repo's own CLAUDE.md.\nBrief them in five lines or fewer (goal, where things stand, next step, blockers), then work.\nIf they names a repo but no lane, list that repo's lanes and ask, or offer to start one.\nEvery prompt carries a `[lane] lane=\u2026` line from the hook; trust it over memory of earlier turns.\n",
+  "# Control plane\n\nThis directory is {{owner}}'s control plane for all engineering work across their repos.\nIt is loaded into every session started anywhere below it.\n\n## Layout\n- `registry/repos.yaml` \u2014 the repos, where they live, default branch, stack.\n- `registry/lanes/<id>.md` \u2014 one file per piece of work. **This is the allow-list for a session**:\n  only the repos and paths it names are in scope.\n- `knowledge/` \u2014 preferences, conventions, domain notes. Not auto-loaded; read `knowledge/preferences.md`\n  at the start of any session that will write code, and `knowledge/domains/<x>.md` when the lane names it.\n- `memory/` \u2014 cross-repo memory (preferences, facts about this system); `memory/<repo>/` \u2014 per-repo memory.\n  Both symlinked from `~/.claude/projects`, versioned here.\n- `repos/<repo>/` \u2014 the mirror: always on the default branch. **Read-only.** Never edit, never\n  branch-switch here. Used for fetch, baseline diffs, and by scripts.\n- `lanes/<lane>/<repo>/` \u2014 worktrees. All real work happens here. One session per lane.\n- `scripts/` \u2014 `lane-start`, `lane-resume`, `lane-park`, `lane-done`, `status-all`, `branch-audit`.\n\n## Rules for every session\n1. Discuss before deciding. Run directly only what is mechanical, reversible and explicitly asked: read-only scripts,\n   entering the worktree they named, writing a resume note when they say park, edits they described. Everything with\n   judgment is proposed in one or two sentences with a recommendation, then you wait: a new lane's id, branch\n   or repo set; anything under `~/.claude`, shell rc files or other global config; deleting, renaming or pushing\n   anything; scope, design or approach choices. One question at a time. Silence is not consent.\n2. Stay in the lane you are in. Never `cd` out of it \u2014 a cd moves the session and the way back is\n   EnterWorktree, so one cd for convenience strands you. The `lane-*` scripts run from anywhere without a cd; reach\n   another repo of the lane with `git -C ../<repo>` or an absolute path; write temporary files by absolute\n   path under /tmp. Moving around inside your own lane is fine.\n3. From the dispatcher root, a lane's files are out of reach \u2014 no reading, no editing, no Bash touching\n   `lanes/<id>/\u2026`. Enter it (`EnterWorktree name=\"<id>\"`) or ask the scripts (`lane-brief <id>`, `lane-status`), which read\n   it for you. Its registry file stays editable from the root. The rule is the same in both directions: the\n   dispatcher does not reach into a lane, and a lane does not reach out.\n4. Work only inside the current lane folder. Do not read or search `repos/` or other `lanes/` folders\n   unless the lane file lists that repo or {{owner}} says so in this session.\n5. Before starting code work in a lane, read its file in `registry/lanes/`. Memory indexes (cross-repo\n   and every repo in the lane) arrive with your first prompt; a repo's own CLAUDE.md and rules list arrive the\n   first time you touch that repo. Open the memory files and rules that match what you are doing.\n6. Nothing outside the control plane is yours to read. Not other repos, not `~/.claude`, not the old checkouts. If the work\n   genuinely needs something out there, attach it once with `lane-ref <id> add <path> \"why\"` and read it at\n   `lanes/<id>/refs/<name>/\u2026` \u2014 the reference path, never the real one. The scratchpad under /tmp is fine for temporary\n   files. The hook refuses the rest, for file tools and for Bash alike.\n7. The remote and the default branches are not yours. Never `git remote add/set-url/rename/remove`. Never move or\n   delete `main`/`master`/`develop`. A push that targets a default branch needs {{owner}}'s word first; they can then\n   have you run it with the visible marker `ALLOW_DEFAULT_BRANCH_PUSH=1 git push \u2026`.\n8. Never read `.env` or credential files. Structure only: `.env.example`, key names in code, or `lane-env-keys <path>` (names, no values). The hook denies reads. Worktrees get them as\n   symlinks to `repos/<repo>/\u2026` via lane-start/lane-resume; if one is missing, run `lane-resume <id>`, do not create one.\n9. New branches start from the repo's default branch, never from whatever is checked out.\n10. When parking or finishing, update the lane file (status, resume note). The file is the handoff.\n11. If a repo needs shared build caches or environment settings, put them in `scripts/env.sh` and\n   `source scripts/env.sh` before running its build.\n12. Never write memory or preference files directly \u2014 the hook refuses it. Four scopes, decided by how long the thing\n   stays true: `pref` (how to work with {{owner}}, always) \u00b7 `cross` (true in every repo) \u00b7 `repo` (one repo, still true\n   after this ticket ships) \u00b7 `lane` (only while this lane is live, archived with it \u2014 its `## Findings`).\n   `lane-memory draft <slug>`, write the draft, ask {{owner}} which scope with a recommendation, then\n   `lane-memory file <slug> lane|repo <repo>|cross|pref`. Editing a memory that already exists is allowed from a\n   dispatcher session at the root (its scope is settled); creating one never is. Same for the control plane (scripts, CLAUDE.md, registry,\n   .claude): propose it, and change it from a dispatcher session, never from inside a lane.\n13. One checkout exists for you: the worktree you are in. Report git state only in the STATE form that arrives\n   with each prompt (where you are, branch, ahead/behind origin, uncommitted). Never mention `repos/` or the old\n   checkouts; they are frozen and the hook blocks them. In a resumed conversation, translate old paths silently.\n14. Inside a lane, the work stays in it. Never propose or create another worktree or lane from a\n   worktree; if a repo is missing, `lane-with <id> <repo>`. Only when {{owner}} himself asks for separate, unrelated\n   work: park this one, ExitWorktree keep, then start the new one from the root. The hook refuses the shortcuts.\n15. Talk plainly: simple words, no jargon. Prefer an ASCII diagram to a long explanation. Never create an artifact\n   without asking first.\n\n## Sessions\n- New work: `lane start <id> <repo>[:<branch>] [<repo>...]` then `cd lanes/<id> && claude`.\n- Resume: `lane resume <id>`. Leaving: `lane park <id> \"<note>\"`. Finished: `lane done <id>`.\n- Morning: `lane status`.\n\n## Entering any conversation\nWhatever the entry point (fresh `claude`, `claude --resume <id>`, the picker, `lane <id>`), the SessionStart hook tells you\nwhere you are and, for a resumed conversation, which repo it belongs to and which lanes exist for it. Your first\nmessage then does the managing, before answering anything else: name the repo, offer to continue in an existing\nlane, start a new one, or stay read-only, recommend one, and wait for their answer. Do not enter or create a\nworktree until they have chosen. Be a visible operator: every\nscript you run, every worktree you enter or leave, every lane file you change gets one line in your reply.\nNothing about the system may be silent.\n\n## Dispatcher mode (sessions started at this root)\n{{owner}} starts `claude` here (or types `lane`) and says what they want. You do the navigation. Hooks in\n`.claude/settings.json` enforce scope for the whole session, also after you move into a worktree.\n\n**Getting into a lane** \u2014 EnterWorktree `name: \"<lane-id>\"`. Only that: no repo, no path, and never a\n`cd` from outside. It puts you **in the lane itself**, not in one of its repos.\n**A lane is one piece of work across its repos, and the session stays at its root.** You never enter a repo:\nedit files at `<repo>/\u2026`, run git with `git -C <repo> \u2026`, run anything that must execute inside a repo with\n`lane-run <repo> <cmd\u2026>` (mvn, yarn, tests), and use `lane-gh <repo> <args\u2026>` for GitHub (`lane-gh api pr create --fill`,\n`lane-gh api workflow run main.yml -f branch=\u2026`). **`cd` into a repo is refused** \u2014 it is what made one repo look like\nthe main one, and nothing needs it. **Never exit and re-enter to change repo.** `lane-status` lists ids.\n**Start new work** \u2014 propose first: the id (ticket key or slug), the repo(s), the base branch (default branch unless\nthey say otherwise or the ticket clearly builds on another branch), in one line, and wait. On their yes:\n`lane start <id> <repo>[:<branch>][@<base>] ...`, then EnterWorktree `name: \"<id>\"`. Then draft the Goal\nsection of `registry/lanes/<id>.md` from what they said and show it to them.\n**Add a repo to the current lane** \u2014 `lane with <id> <repo>[:<branch>]`. The new worktree sits beside the\ncurrent one; reach it by absolute path (the hook allows edits anywhere under lanes/<id>/).\n**Attach outside code or docs as a reference** \u2014 `lane ref <id> add <path> [note] [--rw]`. It appears under\n`lanes/<id>/refs/<name>`, is readable (read-only unless `--rw`), and is listed in the memory block. Propose it when they\nmentions code that is not in the lane's repos; never read outside paths without a ref.\n**Bring a new repo under management** \u2014 `lane add <git-url|path-to-existing-checkout> [name]`. Then\nfill stack/product in `registry/repos.yaml`.\n**Old conversations** \u2014 `lane sessions <repo|id>` lists them with ids. A conversation cannot be switched into from\ninside a running session, so give them one command and stop: `claude --resume <session-id>` (works from any folder now)\nor `lane <id> -r` for the picker (Ctrl+A in the picker widens to all projects).\n**Two lanes turn out to be one** \u2014 preview with `lane plan <a> <b> [--as <new-id>]` (read-only,\nworks from inside a lane). Show {{owner}} the plan, including any conflict, and let them choose the mode. The\nreal merge runs only from the root: `lane merge <a> <b> \u2026 --run`.\n**Leaving / switching** \u2014 draft the resume note, show it, run `lane park <id> \"<note>\"` on their ok (or at once if\nthey said \"park it\"), then ExitWorktree `keep`.\n**Finishing** \u2014 `lane done <id>` (refuses if dirty or unpushed; report the reason, do not force).\n\nAfter entering a worktree: read `registry/lanes/<id>.md`, `memory/<repo>/MEMORY.md`, the repo's own CLAUDE.md.\nBrief them in five lines or fewer (goal, where things stand, next step, blockers), then work.\nIf they names a repo but no lane, list that repo's lanes and ask, or offer to start one.\nEvery prompt carries a `[lane] lane=\u2026` line from the hook; trust it over memory of earlier turns.\n",
+  "# Control plane\n\nThis directory is {{owner}}'s control plane for all engineering work across their repos.\nIt is loaded into every session started anywhere below it.\n\n## Layout\n- `registry/repos.yaml` \u2014 the repos, where they live, default branch, stack.\n- `registry/lanes/<id>.md` \u2014 one file per piece of work. **This is the allow-list for a session**:\n  only the repos and paths it names are in scope.\n- `knowledge/` \u2014 preferences, conventions, domain notes. Not auto-loaded; read `knowledge/preferences.md`\n  at the start of any session that will write code, and `knowledge/domains/<x>.md` when the lane names it.\n- `memory/` \u2014 cross-repo memory (preferences, facts about this system); `memory/<repo>/` \u2014 per-repo memory.\n  Both symlinked from `~/.claude/projects`, versioned here.\n- `repos/<repo>/` \u2014 the mirror: always on the default branch. **Read-only.** Never edit, never\n  branch-switch here. Used for fetch, baseline diffs, and by scripts.\n- `lanes/<lane>/<repo>/` \u2014 worktrees. All real work happens here. One session per lane.\n- `scripts/` \u2014 `lane-start`, `lane-resume`, `lane-park`, `lane-done`, `status-all`, `branch-audit`.\n\n## Rules for every session\n1. Discuss before deciding. Run directly only what is mechanical, reversible and explicitly asked: read-only scripts,\n   entering the worktree they named, writing a resume note when they say park, edits they described. Everything with\n   judgment is proposed in one or two sentences with a recommendation, then you wait: a new lane's id, branch\n   or repo set; anything under `~/.claude`, shell rc files or other global config; deleting, renaming or pushing\n   anything; scope, design or approach choices. One question at a time. Silence is not consent.\n2. Stay in the lane you are in. Never `cd` out of it \u2014 a cd moves the session and the way back is\n   EnterWorktree, so one cd for convenience strands you. The `lane-*` scripts run from anywhere without a cd, but call them by ABSOLUTE path (`<control-plane>/scripts/lane-brief`; SessionStart prints the real scripts dir) \u2014 a relative `scripts/\u2026` does not exist from the lane root and exits 127; reach\n   another repo of the lane with `git -C ../<repo>` or an absolute path; write temporary files by absolute\n   path under /tmp. Moving around inside your own lane is fine.\n3. From the dispatcher root, a lane's files are out of reach \u2014 no reading, no editing, no Bash touching\n   `lanes/<id>/\u2026`. Enter it (`EnterWorktree name=\"<id>\"`) or ask the scripts (`lane-brief <id>`, `lane-status`), which read\n   it for you. Its registry file stays editable from the root. The rule is the same in both directions: the\n   dispatcher does not reach into a lane, and a lane does not reach out.\n4. Work only inside the current lane folder. Do not read or search `repos/` or other `lanes/` folders\n   unless the lane file lists that repo or {{owner}} says so in this session.\n5. Before starting code work in a lane, read its file in `registry/lanes/`. Memory indexes (cross-repo\n   and every repo in the lane) arrive with your first prompt; a repo's own CLAUDE.md and rules list arrive the\n   first time you touch that repo. Open the memory files and rules that match what you are doing.\n6. Nothing outside the control plane is yours to read. Not other repos, not `~/.claude`, not the old checkouts. If the work\n   genuinely needs something out there, attach it once with `lane-ref <id> add <path> \"why\"` and read it at\n   `lanes/<id>/refs/<name>/\u2026` \u2014 the reference path, never the real one. The scratchpad under /tmp is fine for temporary\n   files. The hook refuses the rest, for file tools and for Bash alike.\n7. The remote and the default branches are not yours. Never `git remote add/set-url/rename/remove`. Never move or\n   delete `main`/`master`/`develop`. A push that targets a default branch needs {{owner}}'s word first; they can then\n   have you run it with the visible marker `ALLOW_DEFAULT_BRANCH_PUSH=1 git push \u2026`.\n8. Never read `.env` or credential files. Structure only: `.env.example`, key names in code, or `lane-env-keys <path>` (names, no values). The hook denies reads. Worktrees get them as\n   symlinks to `repos/<repo>/\u2026` via lane-start/lane-resume; if one is missing, run `lane-resume <id>`, do not create one.\n9. New branches start from the repo's default branch, never from whatever is checked out.\n10. When parking or finishing, update the lane file (status, resume note). The file is the handoff.\n11. If a repo needs shared build caches or environment settings, put them in `scripts/env.sh` and\n   `source scripts/env.sh` before running its build.\n12. Never write memory or preference files directly \u2014 the hook refuses it. Four scopes, decided by how long the thing\n   stays true: `pref` (how to work with {{owner}}, always) \u00b7 `cross` (true in every repo) \u00b7 `repo` (one repo, still true\n   after this ticket ships) \u00b7 `lane` (only while this lane is live, archived with it \u2014 its `## Findings`).\n   `lane-memory draft <slug>`, write the draft, ask {{owner}} which scope with a recommendation, then\n   `lane-memory file <slug> lane|repo <repo>|cross|pref`. Editing a memory that already exists is allowed from a\n   dispatcher session at the root (its scope is settled); creating one never is. Same for the control plane (scripts, CLAUDE.md, registry,\n   .claude): propose it, and change it from a dispatcher session, never from inside a lane.\n13. One checkout exists for you: the worktree you are in. Report git state only in the STATE form that arrives\n   with each prompt (where you are, branch, ahead/behind origin, uncommitted). Never mention `repos/` or the old\n   checkouts; they are frozen and the hook blocks them. In a resumed conversation, translate old paths silently.\n14. Inside a lane, the work stays in it. Never propose or create another worktree or lane from a\n   worktree; if a repo is missing, `lane-with <id> <repo>`. Only when {{owner}} himself asks for separate, unrelated\n   work: park this one, ExitWorktree keep, then start the new one from the root. The hook refuses the shortcuts.\n15. Talk plainly: simple words, no jargon. Prefer an ASCII diagram to a long explanation. Never create an artifact\n   without asking first.\n\n## Sessions\n- New work: `lane start <id> <repo>[:<branch>] [<repo>...]` then `cd lanes/<id> && claude`.\n- Resume: `lane resume <id>`. Leaving: `lane park <id> \"<note>\"`. Finished: `lane done <id>`.\n- Morning: `lane status`.\n\n## Entering any conversation\nWhatever the entry point (fresh `claude`, `claude --resume <id>`, the picker, `lane <id>`), the SessionStart hook tells you\nwhere you are and, for a resumed conversation, which repo it belongs to and which lanes exist for it. Your first\nmessage then does the managing, before answering anything else: name the repo, offer to continue in an existing\nlane, start a new one, or stay read-only, recommend one, and wait for their answer. Do not enter or create a\nworktree until they have chosen. Be a visible operator: every\nscript you run, every worktree you enter or leave, every lane file you change gets one line in your reply.\nNothing about the system may be silent.\n\n## Dispatcher mode (sessions started at this root)\n{{owner}} starts `claude` here (or types `lane`) and says what they want. You do the navigation. Hooks in\n`.claude/settings.json` enforce scope for the whole session, also after you move into a worktree.\n\n**Getting into a lane** \u2014 EnterWorktree `name: \"<lane-id>\"`. Only that: no repo, no path, and never a\n`cd` from outside. It puts you **in the lane itself**, not in one of its repos.\n**A lane is one piece of work across its repos, and the session stays at its root.** You never enter a repo:\nedit files at `<repo>/\u2026`, run git with `git -C <repo> \u2026`, run anything that must execute inside a repo with\n`lane-run <repo> <cmd\u2026>` (mvn, yarn, tests), and use `lane-gh <repo> <args\u2026>` for GitHub (`lane-gh api pr create --fill`,\n`lane-gh api workflow run main.yml -f branch=\u2026`). **`cd` into a repo is refused** \u2014 it is what made one repo look like\nthe main one, and nothing needs it. **Never exit and re-enter to change repo.** `lane-status` lists ids.\n**Start new work** \u2014 propose first: the id (ticket key or slug), the repo(s), the base branch (default branch unless\nthey say otherwise or the ticket clearly builds on another branch), in one line, and wait. On their yes:\n`lane start <id> <repo>[:<branch>][@<base>] ...`, then EnterWorktree `name: \"<id>\"`. Then draft the Goal\nsection of `registry/lanes/<id>.md` from what they said and show it to them.\n**Add a repo to the current lane** \u2014 `lane with <id> <repo>[:<branch>]`. The new worktree sits beside the\ncurrent one; reach it by absolute path (the hook allows edits anywhere under lanes/<id>/).\n**Attach outside code or docs as a reference** \u2014 `lane ref <id> add <path> [note] [--rw]`. It appears under\n`lanes/<id>/refs/<name>`, is readable (read-only unless `--rw`), and is listed in the memory block. Propose it when they\nmentions code that is not in the lane's repos; never read outside paths without a ref.\n**Bring a new repo under management** \u2014 `lane add <git-url|path-to-existing-checkout> [name]`. Then\nfill stack/product in `registry/repos.yaml`.\n**Old conversations** \u2014 `lane sessions <repo|id>` lists them with ids. A conversation cannot be switched into from\ninside a running session, so give them one command and stop: `claude --resume <session-id>` (works from any folder now)\nor `lane <id> -r` for the picker (Ctrl+A in the picker widens to all projects).\n**Two lanes turn out to be one** \u2014 preview with `lane plan <a> <b> [--as <new-id>]` (read-only,\nworks from inside a lane). Show {{owner}} the plan, including any conflict, and let them choose the mode. The\nreal merge runs only from the root: `lane merge <a> <b> \u2026 --run`.\n**Leaving / switching** \u2014 draft the resume note, show it, run `lane park <id> \"<note>\"` on their ok (or at once if\nthey said \"park it\"), then ExitWorktree `keep`.\n**Finishing** \u2014 `lane done <id>` (refuses if dirty or unpushed; report the reason, do not force).\n\nAfter entering a worktree: read `registry/lanes/<id>.md`, `memory/<repo>/MEMORY.md`, the repo's own CLAUDE.md.\nBrief them in five lines or fewer (goal, where things stand, next step, blockers), then work.\nIf they names a repo but no lane, list that repo's lanes and ask, or offer to start one.\nEvery prompt carries a `[lane] lane=\u2026` line from the hook; trust it over memory of earlier turns.\n",
+  "# Control plane\n\nThis directory is {{owner}}'s control plane for all engineering work across their repos.\nIt is loaded into every session started anywhere below it.\n\n## Layout\n- `registry/repos.yaml` \u2014 the repos, where they live, default branch, stack.\n- `registry/lanes/<id>.md` \u2014 one file per piece of work. **This is the allow-list for a session**:\n  only the repos and paths it names are in scope.\n- `knowledge/` \u2014 preferences, conventions, domain notes. Not auto-loaded; read `knowledge/preferences.md`\n  at the start of any session that will write code, and `knowledge/domains/<x>.md` when the lane names it.\n- `memory/` \u2014 cross-repo memory (preferences, facts about this system); `memory/<repo>/` \u2014 per-repo memory.\n  Both symlinked from `~/.claude/projects`, versioned here.\n- `repos/<repo>/` \u2014 the mirror: always on the default branch. **Read-only.** Never edit, never\n  branch-switch here. Used for fetch, baseline diffs, and by scripts.\n- `lanes/<lane>/<repo>/` \u2014 worktrees. All real work happens here. One session per lane.\n- `scripts/` \u2014 `lane-start`, `lane-resume`, `lane-park`, `lane-done`, `status-all`, `branch-audit`.\n\n## Rules for every session\n1. Discuss before deciding. Run directly only what is mechanical, reversible and explicitly asked: read-only scripts,\n   entering the worktree they named, writing a resume note when they say park, edits they described. Everything with\n   judgment is proposed in one or two sentences with a recommendation, then you wait: a new lane's id, branch\n   or repo set; anything under `~/.claude`, shell rc files or other global config; deleting, renaming or pushing\n   anything; scope, design or approach choices. One question at a time. Silence is not consent.\n2. Stay in the lane you are in. Never `cd` out of it \u2014 a cd moves the session and the way back is\n   EnterWorktree, so one cd for convenience strands you. The `lane-*` scripts run from anywhere without a cd, but call them by ABSOLUTE path (`<control-plane>/scripts/lane-brief`; SessionStart prints the real scripts dir) \u2014 a relative `scripts/\u2026` does not exist from the lane root and exits 127; reach\n   another repo of the lane with `git -C ../<repo>` or an absolute path; write temporary files by absolute\n   path under /tmp. Moving around inside your own lane is fine.\n3. From the dispatcher root, a lane's files are out of reach \u2014 no reading, no editing, no Bash touching\n   `lanes/<id>/\u2026`. Enter it (`EnterWorktree name=\"<id>\"`) or ask the scripts (`lane-brief <id>`, `lane-status`), which read\n   it for you. Its registry file stays editable from the root. The rule is the same in both directions: the\n   dispatcher does not reach into a lane, and a lane does not reach out.\n4. Work only inside the current lane folder. Do not read or search `repos/` or other `lanes/` folders\n   unless the lane file lists that repo or {{owner}} says so in this session.\n5. Before starting code work in a lane, read its file in `registry/lanes/`. Memory indexes (cross-repo\n   and every repo in the lane) arrive with your first prompt; a repo's own CLAUDE.md and rules list arrive the\n   first time you touch that repo. Open the memory files and rules that match what you are doing.\n6. Nothing outside the control plane is yours to read. Not other repos, not `~/.claude`, not the old checkouts. If the work\n   genuinely needs something out there, attach it once with `lane-ref <id> add <path> \"why\"` and read it at\n   `lanes/<id>/refs/<name>/\u2026` \u2014 the reference path, never the real one. The scratchpad under /tmp is fine for temporary\n   files. The hook refuses the rest, for file tools and for Bash alike.\n7. The remote and the default branches are not yours. Never `git remote add/set-url/rename/remove`. Never move or\n   delete `main`/`master`/`develop`. A push that targets a default branch needs {{owner}}'s word first; they can then\n   have you run it with the visible marker `ALLOW_DEFAULT_BRANCH_PUSH=1 git push \u2026`.\n8. Never read `.env` or credential files. Structure only: `.env.example`, key names in code, or `lane-env-keys <path>` (names, no values). The hook denies reads. Worktrees get them as\n   symlinks to `repos/<repo>/\u2026` via lane-start/lane-resume; if one is missing, run `lane-resume <id>`, do not create one.\n9. New branches start from the repo's default branch, never from whatever is checked out.\n10. When parking or finishing, update the lane file (status, resume note). The file is the handoff.\n11. If a repo needs shared build caches or environment settings, put them in `scripts/env.sh` and\n   `source scripts/env.sh` before running its build.\n12. Never write memory or preference files directly \u2014 the hook refuses it. Four scopes, decided by how long the thing\n   stays true: `pref` (how to work with {{owner}}, always) \u00b7 `cross` (true in every repo) \u00b7 `repo` (one repo, still true\n   after this ticket ships) \u00b7 `lane` (only while this lane is live, archived with it \u2014 its `## Findings`).\n   `lane-memory draft <slug>`, write the draft, ask {{owner}} which scope with a recommendation, then\n   `lane-memory file <slug> lane|repo <repo>|cross|pref`. Editing a memory that already exists is allowed from a\n   dispatcher session at the root (its scope is settled); creating one never is. Same for the control plane (scripts, CLAUDE.md, registry,\n   .claude): propose it, and change it from a dispatcher session, never from inside a lane. The one exception is your own\n   lane file, `registry/lanes/<id>.md` (Goal, Findings, log): edit that one directly. Nothing else under `registry/` is yours.\n13. One checkout exists for you: the worktree you are in. Report git state only in the STATE form that arrives\n   with each prompt (where you are, branch, ahead/behind origin, uncommitted). Never mention `repos/` or the old\n   checkouts; they are frozen and the hook blocks them. In a resumed conversation, translate old paths silently.\n14. Inside a lane, the work stays in it. Never propose or create another worktree or lane from a\n   worktree; if a repo is missing, `lane-with <id> <repo>`. Only when {{owner}} himself asks for separate, unrelated\n   work: park this one, ExitWorktree keep, then start the new one from the root. The hook refuses the shortcuts.\n15. Talk plainly: simple words, no jargon. Prefer an ASCII diagram to a long explanation. Never create an artifact\n   without asking first.\n\n## Sessions\n- New work: `lane start <id> <repo>[:<branch>] [<repo>...]` then `cd lanes/<id> && claude`.\n- Resume: `lane resume <id>`. Leaving: `lane park <id> \"<note>\"`. Finished: `lane done <id>`.\n- Morning: `lane status`.\n\n## Entering any conversation\nWhatever the entry point (fresh `claude`, `claude --resume <id>`, the picker, `lane <id>`), the SessionStart hook tells you\nwhere you are and, for a resumed conversation, which repo it belongs to and which lanes exist for it. Your first\nmessage then does the managing, before answering anything else: name the repo, offer to continue in an existing\nlane, start a new one, or stay read-only, recommend one, and wait for their answer. Do not enter or create a\nworktree until they have chosen. Be a visible operator: every\nscript you run, every worktree you enter or leave, every lane file you change gets one line in your reply.\nNothing about the system may be silent.\n\n## Dispatcher mode (sessions started at this root)\n{{owner}} starts `claude` here (or types `lane`) and says what they want. You do the navigation. Hooks in\n`.claude/settings.json` enforce scope for the whole session, also after you move into a worktree.\n\n**Getting into a lane** \u2014 EnterWorktree `name: \"<lane-id>\"`. Only that: no repo, no path, and never a\n`cd` from outside. It puts you **in the lane itself**, not in one of its repos.\n**A lane is one piece of work across its repos, and the session stays at its root.** You never enter a repo:\nedit files at `<repo>/\u2026`, run git with `git -C <repo> \u2026`, run anything that must execute inside a repo with\n`lane-run <repo> <cmd\u2026>` (mvn, yarn, tests), and use `lane-gh <repo> <args\u2026>` for GitHub (`lane-gh api pr create --fill`,\n`lane-gh api workflow run main.yml -f branch=\u2026`). **`cd` into a repo is refused** \u2014 it is what made one repo look like\nthe main one, and nothing needs it. **Never exit and re-enter to change repo.** `lane-status` lists ids.\n**Start new work** \u2014 propose first: the id (ticket key or slug), the repo(s), the base branch (default branch unless\nthey say otherwise or the ticket clearly builds on another branch), in one line, and wait. On their yes:\n`lane start <id> <repo>[:<branch>][@<base>] ...`, then EnterWorktree `name: \"<id>\"`. Then draft the Goal\nsection of `registry/lanes/<id>.md` from what they said and show it to them.\n**Add a repo to the current lane** \u2014 `lane with <id> <repo>[:<branch>]`. The new worktree sits beside the\ncurrent one; reach it by absolute path (the hook allows edits anywhere under lanes/<id>/).\n**Attach outside code or docs as a reference** \u2014 `lane ref <id> add <path> [note] [--rw]`. It appears under\n`lanes/<id>/refs/<name>`, is readable (read-only unless `--rw`), and is listed in the memory block. Propose it when they\nmentions code that is not in the lane's repos; never read outside paths without a ref.\n**Bring a new repo under management** \u2014 `lane add <git-url|path-to-existing-checkout> [name]`. Then\nfill stack/product in `registry/repos.yaml`.\n**Old conversations** \u2014 `lane sessions <repo|id>` lists them with ids. A conversation cannot be switched into from\ninside a running session, so give them one command and stop: `claude --resume <session-id>` (works from any folder now)\nor `lane <id> -r` for the picker (Ctrl+A in the picker widens to all projects).\n**Two lanes turn out to be one** \u2014 preview with `lane plan <a> <b> [--as <new-id>]` (read-only,\nworks from inside a lane). Show {{owner}} the plan, including any conflict, and let them choose the mode. The\nreal merge runs only from the root: `lane merge <a> <b> \u2026 --run`.\n**Leaving / switching** \u2014 draft the resume note, show it, run `lane park <id> \"<note>\"` on their ok (or at once if\nthey said \"park it\"), then ExitWorktree `keep`.\n**Finishing** \u2014 `lane done <id>` (refuses if dirty or unpushed; report the reason, do not force).\n\nAfter entering a worktree: read `registry/lanes/<id>.md`, `memory/<repo>/MEMORY.md`, the repo's own CLAUDE.md.\nBrief them in five lines or fewer (goal, where things stand, next step, blockers), then work.\nIf they names a repo but no lane, list that repo's lanes and ask, or offer to start one.\nEvery prompt carries a `[lane] lane=\u2026` line from the hook; trust it over memory of earlier turns.\n",
+  "# Control plane\n\nThis directory is {{owner}}'s control plane for all engineering work across their repos.\nIt is loaded into every session started anywhere below it.\n\n## Layout\n- `registry/repos.yaml` \u2014 the repos, where they live, default branch, stack.\n- `registry/lanes/<id>.md` \u2014 one file per piece of work. **This is the allow-list for a session**:\n  only the repos and paths it names are in scope.\n- `knowledge/` \u2014 preferences, conventions, domain notes. Not auto-loaded; read `knowledge/preferences.md`\n  at the start of any session that will write code, and `knowledge/domains/<x>.md` when the lane names it.\n- `memory/` \u2014 cross-repo memory (preferences, facts about this system); `memory/<repo>/` \u2014 per-repo memory.\n  Both symlinked from `~/.claude/projects`, versioned here.\n- `repos/<repo>/` \u2014 the mirror: always on the default branch. **Read-only.** Never edit, never\n  branch-switch here. Used for fetch, baseline diffs, and by scripts.\n- `lanes/<lane>/<repo>/` \u2014 worktrees. All real work happens here. One session per lane.\n- `scripts/` \u2014 `lane-start`, `lane-resume`, `lane-park`, `lane-done`, `status-all`, `branch-audit`.\n\n## Rules for every session\n1. Discuss before deciding. Run directly only what is mechanical, reversible and explicitly asked: read-only scripts,\n   entering the worktree they named, writing a resume note when they say park, edits they described. Everything with\n   judgment is proposed in one or two sentences with a recommendation, then you wait: a new lane's id, branch\n   or repo set; anything under `~/.claude`, shell rc files or other global config; deleting, renaming or pushing\n   anything; scope, design or approach choices. One question at a time. Silence is not consent.\n2. Stay in the lane you are in. Never `cd` out of it \u2014 a cd moves the session and the way back is\n   EnterWorktree, so one cd for convenience strands you. The `lane-*` scripts run from anywhere without a cd, but call them by ABSOLUTE path (`<control-plane>/scripts/lane-brief`; SessionStart prints the real scripts dir) \u2014 a relative `scripts/\u2026` does not exist from the lane root and exits 127; reach\n   another repo of the lane with `git -C ../<repo>` or an absolute path; write temporary files by absolute\n   path under /tmp. Moving around inside your own lane is fine.\n3. From the dispatcher root, a lane's files are out of reach \u2014 no reading, no editing, no Bash touching\n   `lanes/<id>/\u2026`. Enter it (`EnterWorktree name=\"<id>\"`) or ask the scripts (`lane-brief <id>`, `lane-status`), which read\n   it for you. Its registry file stays editable from the root. The rule is the same in both directions: the\n   dispatcher does not reach into a lane, and a lane does not reach out.\n4. Work only inside the current lane folder. Do not read or search `repos/` or other `lanes/` folders\n   unless the lane file lists that repo or {{owner}} says so in this session.\n5. Before starting code work in a lane, read its file in `registry/lanes/`. Memory indexes (cross-repo\n   and every repo in the lane) arrive with your first prompt; a repo's own CLAUDE.md and rules list arrive the\n   first time you touch that repo. Open the memory files and rules that match what you are doing.\n6. Nothing outside the control plane is yours to read. Not other repos, not `~/.claude`, not the old checkouts. If the work\n   genuinely needs something out there, attach it once with `lane-ref <id> add <path> \"why\"` and read it at\n   `lanes/<id>/refs/<name>/\u2026` \u2014 the reference path, never the real one. The scratchpad under /tmp is fine for temporary\n   files. The hook refuses the rest, for file tools and for Bash alike.\n7. The remote and the default branches are not yours. Never `git remote add/set-url/rename/remove`. Never move or\n   delete `main`/`master`/`develop`. A push that targets a default branch needs {{owner}}'s word first; they can then\n   have you run it with the visible marker `ALLOW_DEFAULT_BRANCH_PUSH=1 git push \u2026`.\n8. Never read `.env` or credential files. Structure only: `.env.example`, key names in code, or `lane-env-keys <path>` (names, no values). The hook denies reads. Worktrees get them as\n   symlinks to `repos/<repo>/\u2026` via lane-start/lane-resume; if one is missing, run `lane-resume <id>`, do not create one.\n9. New branches start from the repo's default branch, never from whatever is checked out.\n10. When parking or finishing, update the lane file (status, resume note). The file is the handoff.\n11. If a repo needs shared build caches or environment settings, put them in `scripts/env.sh` and\n   `source scripts/env.sh` before running its build.\n12. Never write memory or preference files directly \u2014 the hook refuses it. Four scopes, decided by how long the thing\n   stays true: `pref` (how to work with {{owner}}, always) \u00b7 `cross` (true in every repo) \u00b7 `repo` (one repo, still true\n   after this ticket ships) \u00b7 `lane` (only while this lane is live, archived with it \u2014 its `## Findings`).\n   `lane-memory draft <slug> \"<draft>\"` (or `-` and a heredoc), ask {{owner}} which scope with a recommendation, then\n   `lane-memory file <slug> lane|repo <repo>|cross|pref`. Editing a memory that already exists is allowed from a\n   dispatcher session at the root (its scope is settled); creating one never is. Same for the control plane (scripts, CLAUDE.md, registry,\n   .claude): propose it, and change it from a dispatcher session, never from inside a lane. The one exception is your own\n   lane file, `registry/lanes/<id>.md`: you may read it, and you set its Goal with `lane-memory goal \"<text>\"`\n   (Findings go in through `lane-memory file \u2026 lane`, the log and resume note through `lane park`). Do not try Edit or Write on it, or on\n   anything outside your lane folder: Claude Code refuses those once a session is in a worktree. Nothing else under `registry/` is yours.\n13. One checkout exists for you: the worktree you are in. Report git state only in the STATE form that arrives\n   with each prompt (where you are, branch, ahead/behind origin, uncommitted). Never mention `repos/` or the old\n   checkouts; they are frozen and the hook blocks them. In a resumed conversation, translate old paths silently.\n14. Inside a lane, the work stays in it. Never propose or create another worktree or lane from a\n   worktree; if a repo is missing, `lane-with <id> <repo>`. Only when {{owner}} himself asks for separate, unrelated\n   work: park this one, ExitWorktree keep, then start the new one from the root. The hook refuses the shortcuts.\n15. Talk plainly: simple words, no jargon. Prefer an ASCII diagram to a long explanation. Never create an artifact\n   without asking first.\n\n## Sessions\n- New work: `lane start <id> <repo>[:<branch>] [<repo>...]` then `cd lanes/<id> && claude`.\n- Resume: `lane resume <id>`. Leaving: `lane park <id> \"<note>\"`. Finished: `lane done <id>`.\n- Morning: `lane status`.\n\n## Entering any conversation\nWhatever the entry point (fresh `claude`, `claude --resume <id>`, the picker, `lane <id>`), the SessionStart hook tells you\nwhere you are and, for a resumed conversation, which repo it belongs to and which lanes exist for it. Your first\nmessage then does the managing, before answering anything else: name the repo, offer to continue in an existing\nlane, start a new one, or stay read-only, recommend one, and wait for their answer. Do not enter or create a\nworktree until they have chosen. Be a visible operator: every\nscript you run, every worktree you enter or leave, every lane file you change gets one line in your reply.\nNothing about the system may be silent.\n\n## Dispatcher mode (sessions started at this root)\n{{owner}} starts `claude` here (or types `lane`) and says what they want. You do the navigation. Hooks in\n`.claude/settings.json` enforce scope for the whole session, also after you move into a worktree.\n\n**Getting into a lane** \u2014 EnterWorktree `name: \"<lane-id>\"`. Only that: no repo, no path, and never a\n`cd` from outside. It puts you **in the lane itself**, not in one of its repos.\n**A lane is one piece of work across its repos, and the session stays at its root.** You never enter a repo:\nedit files at `<repo>/\u2026`, run git with `git -C <repo> \u2026`, run anything that must execute inside a repo with\n`lane-run <repo> <cmd\u2026>` (mvn, yarn, tests), and use `lane-gh <repo> <args\u2026>` for GitHub (`lane-gh api pr create --fill`,\n`lane-gh api workflow run main.yml -f branch=\u2026`). **`cd` into a repo is refused** \u2014 it is what made one repo look like\nthe main one, and nothing needs it. **Never exit and re-enter to change repo.** `lane-status` lists ids.\n**Start new work** \u2014 propose first: the id (ticket key or slug), the repo(s), the base branch (default branch unless\nthey say otherwise or the ticket clearly builds on another branch), in one line, and wait. On their yes:\n`lane start <id> <repo>[:<branch>][@<base>] ...`, then EnterWorktree `name: \"<id>\"`. Then draft the Goal\nfrom what they said, show it to them, and on their yes save it with `lane-memory goal \"<text>\"`.\n**Add a repo to the current lane** \u2014 `lane with <id> <repo>[:<branch>]`. The new worktree sits beside the\ncurrent one; reach it by absolute path (the hook allows edits anywhere under lanes/<id>/).\n**Attach outside code or docs as a reference** \u2014 `lane ref <id> add <path> [note] [--rw]`. It appears under\n`lanes/<id>/refs/<name>`, is readable (read-only unless `--rw`), and is listed in the memory block. Propose it when they\nmentions code that is not in the lane's repos; never read outside paths without a ref.\n**Bring a new repo under management** \u2014 `lane add <git-url|path-to-existing-checkout> [name]`. Then\nfill stack/product in `registry/repos.yaml`.\n**Old conversations** \u2014 `lane sessions <repo|id>` lists them with ids. A conversation cannot be switched into from\ninside a running session, so give them one command and stop: `claude --resume <session-id>` (works from any folder now)\nor `lane <id> -r` for the picker (Ctrl+A in the picker widens to all projects).\n**Two lanes turn out to be one** \u2014 preview with `lane plan <a> <b> [--as <new-id>]` (read-only,\nworks from inside a lane). Show {{owner}} the plan, including any conflict, and let them choose the mode. The\nreal merge runs only from the root: `lane merge <a> <b> \u2026 --run`.\n**Leaving / switching** \u2014 draft the resume note, show it, run `lane park <id> \"<note>\"` on their ok (or at once if\nthey said \"park it\"), then ExitWorktree `keep`.\n**Finishing** \u2014 `lane done <id>` (refuses if dirty or unpushed; report the reason, do not force).\n\nAfter entering a worktree: read `registry/lanes/<id>.md`, `memory/<repo>/MEMORY.md`, the repo's own CLAUDE.md.\nBrief them in five lines or fewer (goal, where things stand, next step, blockers), then work.\nIf they names a repo but no lane, list that repo's lanes and ask, or offer to start one.\nEvery prompt carries a `[lane] lane=\u2026` line from the hook; trust it over memory of earlier turns.\n"
+ ],
+ "files": {
+  ".claude/README.md": [
+   "9b62f93e524e66334427c5187f85365f9e415f53"
+  ],
+  ".claude/agents/branch-gardener.md": [
+   "a7604c7b20fcaf96985f9c264bb8674b141fc8c2"
+  ],
+  ".claude/agents/context-loader.md": [
+   "742c8c9fbb01d4aeb0cd0afa144fa9a9949e0e67"
+  ],
+  ".claude/agents/lane-manager.md": [
+   "a3e559b6df23abfb103cf239b0c703e3c4e34017"
+  ],
+  ".claude/commands/lane-brief.md": [
+   "54a63a4421f8a96a5485038b0f9efd9c1a0e589c"
+  ],
+  ".claude/commands/lane-done.md": [
+   "e2cfd7740687b88ecbb555eab14a9b0a2cd2a77e"
+  ],
+  ".claude/commands/lane-help.md": [
+   "6386a1d6d71d0e362e5df1978a9875752e7ce816"
+  ],
+  ".claude/commands/lane-park.md": [
+   "ff7d8f7f5f86dfa5be2105c957ce342d87d2a75b"
+  ],
+  ".claude/commands/lane-resume.md": [
+   "b3627a41f0f67d0efeb0c3aff4b901f51b431e8c"
+  ],
+  ".claude/commands/lane-sessions.md": [
+   "489d576ef08ed2459545d1dcb355dccb6738367c"
+  ],
+  ".claude/commands/lane-start.md": [
+   "9b1d9fadee7438f42a52040ab90e91c8e54ca43c"
+  ],
+  ".claude/commands/status.md": [
+   "98df8ba68c3ba00bfc1892f7ecb3a6139742bbd3"
+  ],
+  ".claude/settings.json": [
+   "279b5341bca1be7c028c78640e9fe9032b119e69"
+  ],
+  ".github/ISSUE_TEMPLATE/bug_report.yml": [
+   "d0c99afa65e3cf8284ff939ff54eb6b490620db2"
+  ],
+  ".github/ISSUE_TEMPLATE/config.yml": [
+   "3e7c26e888e1e1de0b15a7e4b34e6f035ffd2831"
+  ],
+  ".github/ISSUE_TEMPLATE/feature_request.yml": [
+   "a5c6abbc31f3da461ce653ebd3ef4f79d2ab8212"
+  ],
+  ".github/ISSUE_TEMPLATE/something_else.md": [
+   "7c85b226108a6805ea923b5ea20f35a28638a3dc"
+  ],
+  ".github/PULL_REQUEST_TEMPLATE.md": [
+   "11962c416098102368351d3ab24557ab5de00547"
+  ],
+  ".github/workflows/notify-site.yml": [
+   "b2888d6719d678eadcad6b8e1516772f81029446"
+  ],
+  ".github/workflows/release-plan.yml": [
+   "703833f280c73e4dd2cbbf9456b8905475d02493",
+   "e9919a5270011217a70be4e5ea918d029946af60"
+  ],
+  ".github/workflows/sync-release.yml": [
+   "cac032920b5690f8a792b62c62e2d96f3389e175"
+  ],
+  ".github/workflows/tag-release.yml": [
+   "19dc92b81390b257e6976b747e2f2a8748e4370b"
+  ],
+  ".github/workflows/test.yml": [
+   "e4c476599be000bac4eb5d3bbb606de9e4fe1df5"
+  ],
+  ".github/workflows/tests.yml": [
+   "5b7747151b8259325ce2411c050cfdf7e2200d9e",
+   "7f114a3ca9fa4019994ca99199e619696aeed185"
+  ],
+  ".gitignore": [
+   "0f16c8ec07e439214da76b4dbcabb66ab4245a9a"
+  ],
+  "CHANGELOG.md": [
+   "584e9492c9bc0879159a2dcc76b18b9009187883",
+   "773f528a37552a1830e22cf5ec0740c7f12f008b",
+   "d384164394e5004ec6c945f60e1b64d31ca6a8ad"
+  ],
+  "CLAUDE.md.template": [
+   "748b8df48b12a3cb9b5d6ed7c1d024d517a3794a",
+   "7a399242bd4dcec590890b5815db867b974904a6",
+   "e27e19a3855d8e0804509c8d86072c7c14860fa5"
+  ],
+  "CODE_OF_CONDUCT.md": [
+   "f38c888e1ea2bf194ad5c89bbaed16fee1cd119c"
+  ],
+  "CONTRIBUTING.md": [
+   "a5f6c15112a9130419553fda0e6129e6e37aa275",
+   "fa2b664c401d93d6b608880e5f656f3b04872c34"
+  ],
+  "LICENSE": [
+   "f433b1a53f5b830a205fd2df78e2b34974656c7b"
+  ],
+  "NOTICE": [
+   "8983785e318dd05ee2384e8957b18dff6e4d9d46"
+  ],
+  "README.md": [
+   "0d3603aa0db72ce26dda3f4ed65d76beca52a850",
+   "191d6402e746782195bbbf7aee37e5fbf1199c46"
+  ],
+  "SECURITY.md": [
+   "e65be1692bdbe8f89345fc61a9e9e5356dbe59b7"
+  ],
+  "VERSION": [
+   "2003b639c40025a4216b7b765e800b872a9052cd",
+   "ac39a106c48515b621e90c028ed94c6f71bc03fa",
+   "f374f6662e9a1983e9b8a534a3295df618772ffe"
+  ],
+  "bin/README.md": [
+   "9e6296f89433d10b2bb2909272820860cef25b9a"
+  ],
+  "bin/guard-check": [
+   "6efa1ad86501317d1de090d5671c9a2b888af05f"
+  ],
+  "bin/lane-add": [
+   "9ccaccfa2dae7ef117494b0442792471724215c1"
+  ],
+  "bin/lane-audit": [
+   "6a74d49b0221c664cb183f5c07953ca3f1d096d8"
+  ],
+  "bin/lane-board": [
+   "d09f3aed1a75aebbf6225c3af2efa081fcc648bc"
+  ],
+  "bin/lane-brief": [
+   "e6df0bec5ab6fddc334926a4eeb8fe8ab35c8e77"
+  ],
+  "bin/lane-done": [
+   "7fd6f56b22f770e1ba42a34bfe260b7ae6d8b1b6"
+  ],
+  "bin/lane-env-check": [
+   "35db62f162edd255d0f5c6f8cc3f6483ce8e631b"
+  ],
+  "bin/lane-env-keys": [
+   "bad52702b9ec99f81bf7d8fb82ac607ba484511c"
+  ],
+  "bin/lane-find": [
+   "d297ba70c257dfb8d43b832ad3e392222b01693d"
+  ],
+  "bin/lane-gh": [
+   "58e796ce6ec328d68c93fc2b845dd38f13235c6a"
+  ],
+  "bin/lane-help": [
+   "b8f439ddb039b5a3356ac686c0e7505b87da4fa3"
+  ],
+  "bin/lane-import": [
+   "876f8a4bf5c9822d1ef4f8243425bccfc446a908"
+  ],
+  "bin/lane-init": [
+   "73bc824e45044dd01fd62aea46c4ba518bf12828"
+  ],
+  "bin/lane-memory": [
+   "7d53852fa6d3a955c7f14eb52623ff48fbec72d3"
+  ],
+  "bin/lane-menu": [
+   "b8f439ddb039b5a3356ac686c0e7505b87da4fa3"
+  ],
+  "bin/lane-merge": [
+   "6e6a8323fec48229a2b209f32ae35cc1c5c81dc0"
+  ],
+  "bin/lane-merge-plan": [
+   "047f93efffa6b15f5f9155937ad52a7de007e7d7"
+  ],
+  "bin/lane-nested": [
+   "7bc1cb8933eb033a04cf97c56ebc9f22e40adf10"
+  ],
+  "bin/lane-park": [
+   "ff17ea8fbfa75975a2a7f529c92f5700d516c367"
+  ],
+  "bin/lane-ref": [
+   "f7107a4058349dbbc43fba053318f32e0b3c163b"
+  ],
+  "bin/lane-resume": [
+   "8adf5c59e75cec2683ad182eeaad76072b0f3173"
+  ],
+  "bin/lane-run": [
+   "10740695c9bcf75383e7117b10f9121c9ef8645f"
+  ],
+  "bin/lane-sessions": [
+   "5bed6a2a559f546fc239cc873e43b29582357ece"
+  ],
+  "bin/lane-start": [
+   "8afda74f404a901c1fed2e62d4c96ef2817a7c3f"
+  ],
+  "bin/lane-status": [
+   "5e9a1ce21cdb65d130a57d9896df5f11080e3671"
+  ],
+  "bin/lane-with": [
+   "8bb849ab622d14769ebc6ba7835658a443eee08c"
+  ],
+  "bin/lane-workspace": [
+   "8b49e8ea150f6ba2bdaf421c2e37bb7b275c4973"
+  ],
+  "docs/assets/icon.svg": [
+   "fc7afe28acd8bdcefa8fe9788bcfc44c16e9732a"
+  ],
+  "docs/board.md": [
+   "e509f9869a85b0e6bef0772d7a04c7b50b234b82"
+  ],
+  "docs/commands.md": [
+   "e18b2936588e833fa3f567d8da1acd708f7094de"
+  ],
+  "docs/concepts.md": [
+   "6a948fe9224d83f24d5ab105e67e97016d598117"
+  ],
+  "docs/extending.md": [
+   "c6dac3d449b451527b70d681b12ec790088b793a"
+  ],
+  "docs/releasing.md": [
+   "713df562c65c6dcf63ac88c6b5fba57538bc9991",
+   "a0567775d4d490e2d9267e47152eb91bcdf5c12a"
+  ],
+  "docs/rules.md": [
+   "07bd9b745840e6ad4d318883bb994d2726fa4a83"
+  ],
+  "docs/troubleshooting.md": [
+   "307d2ece943c3d8d359d1f30e5ca9985f659582d",
+   "f6b50a36b8d3ec3c87999f5c45a8426bd7576c2e"
+  ],
+  "hatch_build.py": [],
+  "knowledge/README.md": [
+   "6338cfeb5355d93359962ce8ee5a66969b61cfbe"
+  ],
+  "knowledge/conventions/.gitkeep": [
+   "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+  ],
+  "knowledge/domains/.gitkeep": [
+   "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+  ],
+  "knowledge/preferences.md.example": [
+   "08b4d2539fa9cf7b42f018aa91baa5d86e41571e"
+  ],
+  "lane": [
+   "55aa5989e963ac2de780a72add908538d6eb4ab2"
+  ],
+  "memory/README.md": [
+   "cc1b622e9f5016f1382e89f3225729ee3a60e0c5"
+  ],
+  "pyproject.toml": [],
+  "registry/README.md": [
+   "01dbc021aff9bb058b641e4a893fa96371f6a187"
+  ],
+  "registry/config.yml": [
+   "d8b3be18daea7c75f9161a035938619e90455950"
+  ],
+  "registry/lanes/.gitkeep": [
+   "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+  ],
+  "scripts/README.md": [
+   "e2ce27f94494434b49cba5b00652f3a1bb88f118"
+  ],
+  "scripts/board/README.md": [
+   "b566c451614f4ac42a4f346cbdab32a36b74bd59"
+  ],
+  "scripts/board/board.css": [
+   "284c44579a1a78b5f9610d768fe95df3dc5859c8"
+  ],
+  "scripts/board/board.js": [
+   "437c630cea8b5d617e7b2f602a289890c6a19ae0"
+  ],
+  "scripts/board/index.html": [
+   "93a38bf9032605595c80ea517723a916925bdf8e"
+  ],
+  "scripts/board/server.py": [
+   "9b7c4eb81a178506aba9230ac3bfc23ebc5099cf"
+  ],
+  "scripts/board/smoke.sh": [
+   "6d9e6086264939de27fa1daa9c2283f74d12c048"
+  ],
+  "scripts/board/test_board.py": [
+   "8036b37e265bfc699ed9e6fa9ea3e11a3147d453"
+  ],
+  "scripts/branch-audit": [
+   "d37b740f0be49a8ed491a8d9f85b16e94c172864"
+  ],
+  "scripts/copy-repo.sh": [
+   "01ec3bd6492e74f7c934ff6ec65889ad28fa550e"
+  ],
+  "scripts/env.sh": [
+   "4f8136f506bb625b40785c13c78cbc49409032c9"
+  ],
+  "scripts/gitstate.sh": [
+   "5d5e9cd9d68cdf521ccfb39c86ee2fc7f2258eef"
+  ],
+  "scripts/hooks/README.md": [
+   "1db11fae662d3107e1e8c7e86ee157f003546f04"
+  ],
+  "scripts/hooks/guard-check": [
+   "099c7c0874ab185147b18ee3434ac0391ce0430e"
+  ],
+  "scripts/hooks/guard.py": [
+   "7aeeaea7496dd30a61061d981ec39dc8b0677b7a",
+   "7b368e39818774000c9a912ece3b51f4b5e3481b"
+  ],
+  "scripts/hooks/test-guard.sh": [
+   "b652e0e2cade7a49e1ff0e1e79f249455fcd9552"
+  ],
+  "scripts/init": [
+   "de52a8d87046b68448ff3f6fe1f45813c022cc58"
+  ],
+  "scripts/lane-add": [
+   "83f71f5a909b816f74b203d5f3a10062c1ac938d"
+  ],
+  "scripts/lane-board": [
+   "7807059be88b45caf58d5c263f8da2e0da4202d3"
+  ],
+  "scripts/lane-brief": [
+   "0cac109cbdb02fa7863eac581117866f010963fc"
+  ],
+  "scripts/lane-done": [
+   "ac2e530623eb1dafffe8f01b153a1c67a839b195"
+  ],
+  "scripts/lane-env-check": [
+   "b64d05656e249f4f4e960e2b46f2f22e59274398"
+  ],
+  "scripts/lane-env-keys": [
+   "fc4f06f46f6b1a6e1b1a388521ea401a52e03c34"
+  ],
+  "scripts/lane-find": [
+   "64d1353e41b4e239ebaab25da746c715f912a3ca"
+  ],
+  "scripts/lane-gh": [
+   "5715ca2287b73dcd72b0cd359d1b6574a55af718"
+  ],
+  "scripts/lane-import": [
+   "b5a31f511aa81f6741bd4895f93bd8d40957eeb3"
+  ],
+  "scripts/lane-memory": [
+   "a0dec417f3a664fa178657e611220c3c591ac466",
+   "b359709c6b42a28651efd9abf8aec5ec4e4fbc9e"
+  ],
+  "scripts/lane-menu": [
+   "e4a6a569b01ca661245af2cb44e52e9813647f59"
+  ],
+  "scripts/lane-merge": [
+   "fbfb9d5eb31a22c40074b343ef17f9d9dc46b382"
+  ],
+  "scripts/lane-merge-plan": [
+   "f5abbd1159d81c5f86e85f8363225c494c4305a2"
+  ],
+  "scripts/lane-nested": [
+   "979e694e5eba990f18740970297b538be46cf133"
+  ],
+  "scripts/lane-park": [
+   "c11137a4614c07c25d61e1d64ff35c36334c1cb3"
+  ],
+  "scripts/lane-planes.py": [
+   "c9cfff2cf6625d1d7ceae8bca75fa8f0f360be26"
+  ],
+  "scripts/lane-ref": [
+   "393c050fff6b209bd2bbf510e0c0eb4199ab15e0"
+  ],
+  "scripts/lane-resume": [
+   "39ed9461eea1d09ef8f83ee32b8e8a5f7d38590a"
+  ],
+  "scripts/lane-rules": [
+   "3f6425c8aaf5e18ed848743506434837fdf32c10"
+  ],
+  "scripts/lane-run": [
+   "da0fe77d1eaf3563ecd6af07d0fede436cb5fba6"
+  ],
+  "scripts/lane-sessions": [
+   "4b221630155c6867d27c347e4effd7cd567576ac"
+  ],
+  "scripts/lane-stable-dispatcher": [
+   "38924202c4d252069cf342d229d1cb65aee2d019"
+  ],
+  "scripts/lane-start": [
+   "444daa9fdd82e7d24b1318e141440138bb1728e6"
+  ],
+  "scripts/lane-status": [
+   "19078c1354a342a71a1c657004c4dd786e25f0dc"
+  ],
+  "scripts/lane-sync": [
+   "3d889f1f8a6e583c0f41902fc55986628e408bb3"
+  ],
+  "scripts/lane-upgrade": [
+   "f6c529f59754965620a5cf857a105e23c5962592"
+  ],
+  "scripts/lane-with": [
+   "7c76d826113436cb7bf924b83144bd52af96658a"
+  ],
+  "scripts/lane-workspace": [
+   "804c095bad3285a316595f4cf93fafb9d8042d1f"
+  ],
+  "scripts/leak-scan.py": [
+   "037a8a676f01c1962f243db284650a42966253b8"
+  ],
+  "scripts/lib.sh": [
+   "30b6d163bebaa612959b78ef989a16618090f638",
+   "ba8135a60f758fb1857899b99861506e7bd562d0",
+   "c5d41a4d6a1988f6e93a9b777763a3a77f65f739"
+  ],
+  "scripts/menu": [
+   "0e2a4384d75f5b37fe1f58bc5f6cc7cc1bd03e22"
+  ],
+  "scripts/migrate-manifest.json": [],
+  "scripts/migrate.py": [],
+  "scripts/release": [
+   "6e59c8d65eae890460702a5b1a624702960dbff8"
+  ],
+  "scripts/release-migrate-manifest": [],
+  "scripts/release-plan": [
+   "7da218e7ec5c57c1c2bcc2ea2e4edc94eb46a454"
+  ],
+  "scripts/release-pr": [
+   "2a52c056263bf90c497aa4e3d21b3965f51b6561"
+  ],
+  "scripts/release-sync": [
+   "5aa2f1ac5cb526c2b046cdb01f7f932aa6def018"
+  ],
+  "scripts/repo-secrets": [
+   "424d6aadc52bdce760ae7f6afb0b317200b49efe"
+  ],
+  "scripts/roots.py": [],
+  "scripts/roots.sh": [],
+  "scripts/session-start": [
+   "d075df53ce5a1c2107795739c660d764501a9cde"
+  ],
+  "scripts/sessions": [
+   "82e5d17072786d0061daf482c4fb157551155e16"
+  ],
+  "scripts/status-all": [
+   "5419d1821afa5b776065f814034071735a054a0c"
+  ],
+  "scripts/statusline.sh": [
+   "06e970d5e60d16e6e8dea8507dc4cb10305219a2"
+  ],
+  "scripts/sync-write.py": [
+   "1fbb12d5e312d236c32aac2cdf1c56104cd99378"
+  ],
+  "scripts/wire-statusline.py": [
+   "7cbe703209b06b586a77c6d1255523cc75c01964"
+  ],
+  "scripts/workspace.py": [],
+  "src/repolane/__init__.py": [],
+  "src/repolane/__main__.py": [],
+  "src/repolane/cli.py": [],
+  "templates/LANE.md": [],
+  "templates/REPOLANE.md": [],
+  "templates/config.yml": [],
+  "templates/env.sh": [],
+  "tests/lib.sh": [
+   "438c8035d9b8856e59aaeabd5aa288c346b1feec",
+   "966cac537bc62a9c51445a107841432c1cca236b"
+  ],
+  "tests/run-all.sh": [
+   "777019df689c39faf7b7980eba7c8f6aafb21d72"
+  ],
+  "tests/t_audit2.sh": [
+   "4efb797932f30731ec3dfed66532c0c19163dca6"
+  ],
+  "tests/t_dispatcher.sh": [
+   "9edb577a88635f641f4cc3f7241b1aa0d25125e7"
+  ],
+  "tests/t_init_workspace.sh": [],
+  "tests/t_lanefile.sh": [
+   "2bf239db5624d55f95d78df4fa9d97bfc0bf7c50",
+   "8ed6801163f6805ff21e4abfa8e01478229d8ddd"
+  ],
+  "tests/t_lifecycle.sh": [
+   "fa124bb81e9f00970707706e8bdb49363b7aca1b"
+  ],
+  "tests/t_memory.sh": [
+   "0fef0539230c9402c10a2f7ec7310aeff9635ced"
+  ],
+  "tests/t_migrate.sh": [],
+  "tests/t_misc.sh": [
+   "cc3f95bdd9d85f86f5de346a0e4f0cd3ed8cd2a8"
+  ],
+  "tests/t_package.sh": [],
+  "tests/t_releasepr.sh": [
+   "a61f95e53fd8db350fc2e5e0ee7d601b03b9ae10"
+  ],
+  "tests/t_releasesync.sh": [
+   "6ba44788c7d231447af433523e4f620a6e313a87"
+  ],
+  "tests/t_roots.sh": [],
+  "tests/t_secretnames.sh": [
+   "490e5edf76ce0352f57be8eb02cb44ccbbc73ad3"
+  ],
+  "tests/t_upgrade.sh": [
+   "447c30543c03074ae28393c66122640c0f9cf5a3"
+  ],
+  "tests/t_upgrade_path.sh": [
+   "88a16a8aa4f3324491e7bc5e1aa4f245f2e7eb1e"
+  ],
+  "tests/t_v090fixes.sh": [
+   "e46e2cc480092c10f5abb6a2623d5c2141797290"
+  ],
+  "tests/t_workspace.sh": []
+ },
+ "releases": [
+  "v0.9.0",
+  "v0.9.1",
+  "v0.9.2"
+ ],
+ "settings_allow": [
+  "Bash(*/bin/lane-brief:*)",
+  "Bash(*/bin/lane-menu:*)",
+  "Bash(*/bin/lane-sessions:*)",
+  "Bash(*/bin/lane-status:*)",
+  "Bash(lane-brief:*)",
+  "Bash(lane-env-check:*)",
+  "Bash(lane-env-keys:*)",
+  "Bash(lane-memory audit:*)",
+  "Bash(lane-memory list:*)",
+  "Bash(lane-memory show:*)",
+  "Bash(lane-menu:*)",
+  "Bash(lane-merge-plan:*)",
+  "Bash(lane-sessions:*)",
+  "Bash(lane-status:*)",
+  "Bash(lane-workspace:*)"
+ ]
+}

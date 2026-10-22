@@ -75,6 +75,7 @@ usage(){
     line=$(map "$c"); printf "    \e[1m%-10s\e[0m %s\n" "$c" "${line#*|}"
   done
   printf '\n    %-10s %s\n' "install" "put lane on your PATH so it works from anywhere"
+  printf '    %-10s %s\n' "migrate" "turn a git-clone install into a workspace (from the installed package): lane migrate [folder]"
   printf '    %-10s %s\n\n' "use" "switch which registered plane is active; lane use --remove <name> forgets one (stable ~/.local/bin/lane dispatcher)"
   # scripts/local/<name> (docs/extending.md): any executable there is a `lane <name>` too. Listed
   # separately, after the built-ins, so a shadowed name is never confused for one of them.
@@ -112,6 +113,23 @@ cmd="${1:-}"
 if [ "$cmd" = init ] && [ -n "${LANE_PRODUCT:-}" ] && { [ -z "$_ws_named" ] || [ -d "$_ws_named/.repolane" ]; }; then
   shift
   exec python3 -B "$S/workspace.py" init "$@"
+fi
+
+# `lane migrate` turns a git-clone install into a workspace (scripts/migrate.py). It runs from the installed package, never
+# from the clone it is about to take apart.
+if [ "$cmd" = migrate ]; then
+  shift
+  [ -n "${LANE_PRODUCT:-}" ] && exec python3 -B "$S/migrate.py" "$@"
+  cat >&2 <<EOT
+lane migrate turns this clone into a workspace, and runs from the installed package, not from the clone itself:
+
+  pipx install repolane        (or: uv tool install repolane)
+  lane migrate $(printf %q "$AD")
+
+If \`lane\` on your PATH is still the old router \`lane install\` wrote (~/.local/bin/lane), run the installed one by its
+full path. lane migrate shows everything it would change and asks before changing anything.
+EOT
+  exit 2
 fi
 
 # `lane <command> --help` used to reach the script, which read it as a lane id and answered
