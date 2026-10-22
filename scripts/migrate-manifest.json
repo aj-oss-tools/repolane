@@ -229,7 +229,6 @@
    "307d2ece943c3d8d359d1f30e5ca9985f659582d",
    "f6b50a36b8d3ec3c87999f5c45a8426bd7576c2e"
   ],
-  "hatch_build.py": [],
   "knowledge/README.md": [
    "6338cfeb5355d93359962ce8ee5a66969b61cfbe"
   ],
@@ -248,7 +247,6 @@
   "memory/README.md": [
    "cc1b622e9f5016f1382e89f3225729ee3a60e0c5"
   ],
-  "pyproject.toml": [],
   "registry/README.md": [
    "01dbc021aff9bb058b641e4a893fa96371f6a187"
   ],
@@ -406,12 +404,9 @@
   "scripts/menu": [
    "0e2a4384d75f5b37fe1f58bc5f6cc7cc1bd03e22"
   ],
-  "scripts/migrate-manifest.json": [],
-  "scripts/migrate.py": [],
   "scripts/release": [
    "6e59c8d65eae890460702a5b1a624702960dbff8"
   ],
-  "scripts/release-migrate-manifest": [],
   "scripts/release-plan": [
    "7da218e7ec5c57c1c2bcc2ea2e4edc94eb46a454"
   ],
@@ -424,8 +419,6 @@
   "scripts/repo-secrets": [
    "424d6aadc52bdce760ae7f6afb0b317200b49efe"
   ],
-  "scripts/roots.py": [],
-  "scripts/roots.sh": [],
   "scripts/session-start": [
    "d075df53ce5a1c2107795739c660d764501a9cde"
   ],
@@ -441,18 +434,9 @@
   "scripts/sync-write.py": [
    "1fbb12d5e312d236c32aac2cdf1c56104cd99378"
   ],
-  "scripts/upgrade.py": [],
   "scripts/wire-statusline.py": [
    "7cbe703209b06b586a77c6d1255523cc75c01964"
   ],
-  "scripts/workspace.py": [],
-  "src/repolane/__init__.py": [],
-  "src/repolane/__main__.py": [],
-  "src/repolane/cli.py": [],
-  "templates/LANE.md": [],
-  "templates/REPOLANE.md": [],
-  "templates/config.yml": [],
-  "templates/env.sh": [],
   "tests/lib.sh": [
    "438c8035d9b8856e59aaeabd5aa288c346b1feec",
    "966cac537bc62a9c51445a107841432c1cca236b"
@@ -466,7 +450,6 @@
   "tests/t_dispatcher.sh": [
    "9edb577a88635f641f4cc3f7241b1aa0d25125e7"
   ],
-  "tests/t_init_workspace.sh": [],
   "tests/t_lanefile.sh": [
    "2bf239db5624d55f95d78df4fa9d97bfc0bf7c50",
    "8ed6801163f6805ff21e4abfa8e01478229d8ddd"
@@ -477,32 +460,27 @@
   "tests/t_memory.sh": [
    "0fef0539230c9402c10a2f7ec7310aeff9635ced"
   ],
-  "tests/t_migrate.sh": [],
   "tests/t_misc.sh": [
    "cc3f95bdd9d85f86f5de346a0e4f0cd3ed8cd2a8"
   ],
-  "tests/t_package.sh": [],
   "tests/t_releasepr.sh": [
    "a61f95e53fd8db350fc2e5e0ee7d601b03b9ae10"
   ],
   "tests/t_releasesync.sh": [
    "6ba44788c7d231447af433523e4f620a6e313a87"
   ],
-  "tests/t_roots.sh": [],
   "tests/t_secretnames.sh": [
    "490e5edf76ce0352f57be8eb02cb44ccbbc73ad3"
   ],
   "tests/t_upgrade.sh": [
    "447c30543c03074ae28393c66122640c0f9cf5a3"
   ],
-  "tests/t_upgrade_package.sh": [],
   "tests/t_upgrade_path.sh": [
    "88a16a8aa4f3324491e7bc5e1aa4f245f2e7eb1e"
   ],
   "tests/t_v090fixes.sh": [
    "e46e2cc480092c10f5abb6a2623d5c2141797290"
-  ],
-  "tests/t_workspace.sh": []
+  ]
  },
  "releases": [
   "v0.9.0",

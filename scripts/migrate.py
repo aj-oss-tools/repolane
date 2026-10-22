@@ -22,7 +22,8 @@ stopped when started again):
              scripts/local/ move under .repolane/; the lane worktrees under lanes/ stay where they are and are repaired
              (git worktree repair) so git in them keeps working, and their .env links follow the mirrors
   product    Repolane's own files are removed: exactly the paths a release shipped (scripts/migrate-manifest.json, made
-             from the release trees); anything else in the folder is yours and stays
+             from the 0.9.x release trees, and the installed release's own list, scripts/migrate-head.json, written when
+             the package is built); anything else in the folder is yours and stays
   git        the folder's .git is the Repolane repo's, so it goes (it is in the backup); --git starts a fresh one
   CLAUDE.md  the generated one becomes yours: a short file that imports .repolane/REPOLANE.md, plus every line you
              added to it; if lines of Repolane's text were edited, the old file is also kept as CLAUDE.md.pre-0.10
@@ -50,6 +51,7 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import roots  # noqa: E402
+import shipped  # noqa: E402
 import workspace as ws  # noqa: E402
 from workspace import say, tilde, can_ask, ask, G, Y, R, D, B, N  # noqa: E402
 
@@ -78,8 +80,18 @@ ROUTER_MARK = "stable, multi-plane-aware dispatcher"
 
 
 def manifest():
+    """The release history (scripts/migrate-manifest.json, committed) plus the paths and CLAUDE.md template of the
+    installed release itself (scripts/migrate-head.json, written when the package is built; see scripts/shipped.py)."""
     with open(os.path.join(HERE, "migrate-manifest.json")) as fh:
-        return json.load(fh)
+        man = json.load(fh)
+    for p in shipped.head_paths(PRODUCT):
+        man["files"].setdefault(p, [])
+    try:
+        with open(os.path.join(PRODUCT, "CLAUDE.md.template")) as fh: txt = fh.read()
+        if txt not in man["claude_templates"]: man["claude_templates"].append(txt)
+    except OSError:
+        pass
+    return man
 
 
 def blob_id(path):

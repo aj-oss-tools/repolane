@@ -19,8 +19,21 @@ export PATH="$BIN:$CLEAN_PATH"
 CH="$HOME/.claude"; PLANES="$HOME/.local/share/lane/planes.json"
 slug(){ printf '%s' "$1" | LC_ALL=C sed 's#[^A-Za-z0-9-]#-#g'; }
 
-echo "-- the manifest of shipped files is current"
-python3 "$PRODUCT/scripts/release-migrate-manifest" --check; assert_eq "scripts/migrate-manifest.json matches the tags and HEAD" 0 "$?"
+echo "-- the manifest of shipped files: the committed release history, and this release's list written at build time"
+python3 "$PRODUCT/scripts/release-migrate-manifest" --check
+assert_eq "scripts/migrate-manifest.json matches the v0.9.x tags (if not: python3 scripts/release-migrate-manifest, then commit)" 0 "$?"
+# the paths this checkout ships, the way copy_product_tree takes them (tests/lib.sh), plus the manifest itself
+want=$( { (cd "$PRODUCT" && git ls-files --cached --others --exclude-standard) \
+          | grep -vxF -f <( (cd "$PRODUCT" && git ls-files --others --exclude-standard -- CLAUDE.md knowledge memory; echo scripts/migrate-head.json) ) \
+          | while IFS= read -r f; do [ -e "$PRODUCT/$f" ] || [ -L "$PRODUCT/$f" ] && printf '%s\n' "$f"; done
+        echo scripts/migrate-manifest.json; } | LC_ALL=C sort -u)
+if [ -f "$PROD/scripts/migrate-head.json" ]; then
+  got=$(python3 -c 'import json,sys;print("\n".join(json.load(open(sys.argv[1]))["paths"]))' "$PROD/scripts/migrate-head.json" | LC_ALL=C sort -u)
+  assert_eq "the installed package's scripts/migrate-head.json lists exactly this tree's files" "$want" "$got"
+else
+  got=$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1] + "/scripts"); import shipped; print("\n".join(shipped.head_paths(sys.argv[1])))' "$PROD" | LC_ALL=C sort -u)
+  assert_eq "the product's shipped paths (taken from its tree) are exactly this tree's files" "$want" "$got"
+fi
 
 echo "-- a real $TAG install, made by that release's own commands"
 OLD="$T/old"

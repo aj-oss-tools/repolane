@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Write scripts/migrate-manifest.json: what `lane migrate` needs to know about the git-clone installs it converts.
+"""Write scripts/migrate-manifest.json: what `lane migrate` needs to know about the 0.9.x git-clone installs it converts.
 
-  python3 scripts/release-migrate-manifest          rewrite the manifest from this repo's tags and HEAD
-  python3 scripts/release-migrate-manifest --check  exit 1 when the manifest is out of date (tests/t_migrate.sh runs it)
+  python3 scripts/release-migrate-manifest          rewrite the manifest from this repo's release tags
+  python3 scripts/release-migrate-manifest --check  exit 1 when the manifest does not match the tags (tests/t_migrate.sh)
 
-An installed package carries no git history, so the facts are written down here, at release time, from git:
-  files              every path a clone ships, in each 0.9.x release and in HEAD (the release being made), with the git
-                     blob ids it had in those releases: the files `lane migrate` removes from a clone (and the only
-                     ones; anything else in the folder is the user's), and the ids that tell an unchanged one apart
-  claude_templates   every CLAUDE.md.template a release ever shipped: a clone's CLAUDE.md was made from one of them,
-                     and the user's own lines are what differs
-  settings_allow     every permissions.allow entry a release's .claude/settings.json shipped (Repolane's, not the user's)
+An installed package carries no git history, so the facts about past releases are written down here, from git:
+  files              every path a clone shipped in each release in RELEASES, with the git blob ids it had there: the files
+                     `lane migrate` removes from a clone (and the only ones; anything else in the folder is the user's),
+                     and the ids that tell an unchanged one apart
+  claude_templates   every CLAUDE.md.template those releases shipped: a clone's CLAUDE.md was made from one of them, and
+                     the user's own lines are what differs
+  settings_allow     every permissions.allow entry their .claude/settings.json shipped (Repolane's, not the user's)
+Only the tags up to the last one in RELEASES are read, so the file changes only when that list does: adding or removing
+a file in the repo never needs it regenerated. The paths of the release being built are written at build time instead
+(hatch_build.py, scripts/shipped.py: scripts/migrate-head.json in the package), and migrate.py adds the installed
+CLAUDE.md.template.
 This script is release tooling (scripts/release-*, left out of the wheel); the JSON it writes ships with the product.
-Re-run it whenever a file is added to or removed from the repo.
 """
 import json
 import os
@@ -45,22 +48,17 @@ def build():
         if t not in tags: sys.exit(f"release-migrate-manifest: tag {t} is missing (fetch the tags first)")
         for p, sha in tree(t).items():
             files.setdefault(p, set()).add(sha)
-    # HEAD's paths: the release being made. Its own ids are not recorded (they change with every commit); a file at one of
-    # these paths is compared with the installed product's copy instead.
-    head = set(git("ls-files", "-z").split("\0")) - {""}
-    head.add("scripts/migrate-manifest.json")
-    for p in head:
-        files.setdefault(p, set())
     templates, allow = [], set()
-    for t in sorted(tags, key=lambda v: [int(x) if x.isdigit() else x for x in v[1:].replace("-", ".").split(".")]):
+    key = lambda v: [int(x) if x.isdigit() else x for x in v[1:].replace("-", ".").split(".")]
+    last = max(RELEASES, key=key)
+    # every tag up to the last release listed (a later release ships its own list in the package)
+    for t in sorted((t for t in tags if key(t) <= key(last)), key=key):
         try: txt = git("show", f"{t}:CLAUDE.md.template")
         except subprocess.CalledProcessError: txt = None
         if txt and txt not in templates: templates.append(txt)
         try: st = json.loads(git("show", f"{t}:.claude/settings.json"))
         except (subprocess.CalledProcessError, ValueError): st = {}
         allow |= set((st.get("permissions") or {}).get("allow") or [])
-    with open(os.path.join(HERE, "CLAUDE.md.template")) as fh: txt = fh.read()
-    if txt not in templates: templates.append(txt)
     return {"releases": list(RELEASES), "files": {p: sorted(s) for p, s in sorted(files.items())},
             "claude_templates": templates, "settings_allow": sorted(allow)}
 
@@ -73,7 +71,8 @@ def main():
         except OSError:
             cur = ""
         if cur != data:
-            print("scripts/migrate-manifest.json is out of date: run python3 scripts/release-migrate-manifest", file=sys.stderr)
+            print("scripts/migrate-manifest.json does not match the release tags in RELEASES: run"
+                  " python3 scripts/release-migrate-manifest (and commit the result)", file=sys.stderr)
             return 1
         return 0
     with open(OUT, "w") as fh: fh.write(data)

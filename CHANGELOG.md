@@ -44,6 +44,11 @@ written down. Inside a git checkout it also says how far past the release tag yo
   terminal and no `--yes` nothing is changed and it prints the commands). Notes already in Claude Code's own memory
   folder are copied in first. `--claude-home <dir>` (or `CLAUDE_HOME`) names a different Claude Code folder.
   `lane doctor` checks the links of the root and every mirror, and `lane doctor --fix` repairs them after asking.
+  When you answer no, that is recorded in `.repolane/declined.json`: `lane init` and `lane add` do not ask again, and
+  `lane doctor` shows a note with how to make the link later instead of a failure (`lane doctor --fix` still offers
+  it, and a yes clears the record). A missing link nobody declined is still a failure. In a workspace `lane add`
+  follows the same rule for the new mirror's link: it asks, `--yes` accepts, and with no terminal it changes nothing
+  under `~/.claude` and prints the command.
 - A workspace's status line is `lane statusline`, added to `.claude/settings.json` by `lane init` when no status line
   is set (your own is never replaced). `lane doctor` reports one that still runs a clone's
   `scripts/statusline.sh` by path, and `--fix` replaces it; a workspace with no status line gets a note, not a failure.
@@ -56,8 +61,9 @@ written down. Inside a git checkout it also says how far past the release tag yo
   - Your data moves under `.repolane/` (`registry/`, `memory/`, `knowledge/`, `repos/`, `.cache/` as `cache/`,
     `registry/config.yml`, `scripts/env.sh`, `scripts/local/`); the worktrees stay in `lanes/` and are repaired with
     `git worktree repair`, and their `.env` links follow the mirrors.
-  - Repolane's own files are removed: only the paths a release shipped (listed in `scripts/migrate-manifest.json`,
-    made from the release trees by `scripts/release-migrate-manifest`), never anything else in the folder. The
+  - Repolane's own files are removed: only the paths a release shipped (the 0.9.x releases are listed in
+    `scripts/migrate-manifest.json`, made from their tags by `scripts/release-migrate-manifest`; the installed
+    release's own list is written into the package when it is built), never anything else in the folder. The
     clone's `.git` is Repolane's repo, so it is removed too (it is in the backup); `--git` starts a fresh, empty one.
   - The generated `CLAUDE.md` becomes a short one that imports `.repolane/REPOLANE.md`, keeping every line you added.
     If lines of Repolane's own text were edited, the old file is also kept as `CLAUDE.md.pre-0.10`.

@@ -64,7 +64,7 @@ make_remote_repo web
 WS1="$T/ws one"; WS2="$T/ws2"; mkdir -p "$WS1" "$WS2"
 L "$WS1" init --owner Test --yes; assert_eq "init ws one" 0 "$RC"
 L "$WS2" init --owner Test --yes; assert_eq "init ws2" 0 "$RC"
-L "$WS1" add "$T/remotes/web.git" web; assert_eq "lane add in ws one" 0 "$RC"
+L "$WS1" add "$T/remotes/web.git" web --yes; assert_eq "lane add in ws one" 0 "$RC"
 L "$WS1" start L1 web; assert_eq "lane start L1" 0 "$RC"
 OUT=$(cd "$WS1/lanes/L1" && env -u LANE_WORKSPACE -u LANE_PRODUCT lane-memory goal "the goal before the upgrade" 2>&1); assert_eq "a Goal from inside the lane" 0 "$?"
 for w in "$WS1" "$WS2"; do

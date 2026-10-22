@@ -66,8 +66,8 @@ LANE_MODE=workspace"
 
 echo "-- add / start / brief / status, from the workspace folder"
 make_remote_repo web; make_remote_repo api
-W "$WS" add "$T/remotes/web.git" web; assert_eq "add web" 0 "$RC"
-W "$WS" add "$T/remotes/api.git" api; assert_eq "add api" 0 "$RC"
+W "$WS" add "$T/remotes/web.git" web --yes; assert_eq "add web" 0 "$RC"
+W "$WS" add "$T/remotes/api.git" api --yes; assert_eq "add api" 0 "$RC"
 assert "the mirror is under .repolane/repos/" test -d "$D/repos/web/.git"
 assert_contains "the repo is registered in .repolane/registry/" "$(cat "$D/registry/repos.yaml")" "  web:"
 assert "its memory folder is under .repolane/memory/" test -f "$D/memory/web/MEMORY.md"

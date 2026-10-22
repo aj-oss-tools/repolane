@@ -13,6 +13,8 @@ The pieces (roots.py holds the layout itself: make_workspace, the hooks, the rul
   python3 -B workspace.py init [args]            what `lane init` runs in package mode (the dispatcher routes it here)
   python3 -B workspace.py doctor <ws> [--fix] [--yes] [--quiet]
                                                  the workspace checks `lane doctor` (scripts/hooks/guard-check) runs first
+  python3 -B workspace.py link-mirror <ws> <repo> [--yes]
+                                                 what `lane add` runs in a workspace: the mirror's memory link, asked first
 
 CLAUDE.md is the user's file. A missing one is created with the import line; an existing one is only ever edited after
 the owner says yes ("Add it? [Y/n]", or --yes). With no terminal to ask and no --yes it is left alone, and the output
@@ -198,6 +200,46 @@ def pending_links(ad):
     return [(p, t, label, st, det) for p, t, label in wanted_links(ad) for st, det in [link_state(p, t)] if st != "ok"]
 
 
+# A link the owner said no to is recorded in .repolane/declined.json ({"memory_links": ["memory", "memory/<repo>"]}, each
+# the link's target under .repolane/), so lane init and lane add do not ask again and lane doctor shows a note instead of
+# a failure. lane doctor --fix still offers it; a yes clears the entry.
+DECLINED = ".repolane/declined.json"
+
+
+def link_key(ad, target):
+    return os.path.relpath(target, f"{ad}/.repolane")
+
+
+def declined(ad):
+    try:
+        with open(f"{ad}/{DECLINED}") as fh: d = json.load(fh)
+        return set(d.get("memory_links") or []) if isinstance(d, dict) else set()
+    except (OSError, ValueError):
+        return set()
+
+
+def set_declined(ad, targets, on):
+    """Record (on) or clear the owner's no for the links to these targets. A failure to write it only means asking again."""
+    try:
+        with open(f"{ad}/{DECLINED}") as fh: d = json.load(fh)
+        if not isinstance(d, dict): d = {}
+    except (OSError, ValueError):
+        d = {}
+    cur = set(d.get("memory_links") or [])
+    keys = {link_key(ad, t) for t in targets}
+    new = (cur | keys) if on else (cur - keys)
+    if new == cur: return
+    d["memory_links"] = sorted(new)
+    try:
+        roots._write(f"{ad}/{DECLINED}", json.dumps(d, indent=2, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+
+def link_commands(pending):
+    return [f"mkdir -p {shq(p)} && ln -sfn {shq(t)} {shq(p + '/memory')}" for p, t, *_ in pending]
+
+
 def offer_links(ad, assume_yes, from_doctor=False, pending=None):
     """Show every memory link that is missing or wrong, ask once (or take --yes), and make them. Returns the number left
     undone (0 when everything is linked)."""
@@ -214,15 +256,18 @@ def offer_links(ad, assume_yes, from_doctor=False, pending=None):
     elif not can_ask():
         print(f"  Not linked: there is no terminal to ask, and --yes was not given. Nothing under {tilde(claude_home())} was changed.")
         print("  Run lane doctor --fix (it asks first), or link them yourself:")
-        for p, t, *_ in pending:
-            print(f"      mkdir -p {shq(p)} && ln -sfn {shq(t)} {shq(p + '/memory')}")
+        for c in link_commands(pending):
+            print(f"      {c}")
         print()
         return len(pending)
     else:
         yes = ask(f"  Make these links under {tilde(claude_home())}? [Y/n] ").lower() in ("", "y", "yes")
     if not yes:
-        print(f"  Not linked. Claude Code's memory for these folders stays in its own cache; lane doctor --fix can link it later.\n")
+        set_declined(ad, [t for _, t, *_ in pending], True)
+        print(f"  Not linked, and not asked again (lane doctor shows a note). Claude Code's memory for these folders stays in its")
+        print(f"  own cache; lane doctor --fix can link it later.\n")
         return len(pending)
+    set_declined(ad, [t for _, t, *_ in pending], False)
     left = 0
     for p, t, label, st, det in pending:
         try:
@@ -418,6 +463,7 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
         report(False, f"lanes/{lane}: a settings.local.json is missing, so a session there is unguarded", f"run: lane resume {lane}")
 
     # 7. Claude Code's memory for the root and each mirror is linked into .repolane/memory (asks before touching ~/.claude)
+    # A link the owner declined (.repolane/declined.json) is a note, not a failure; --fix still offers it.
     pend = pending_links(ad)
     if not pend:
         n = len(wanted_links(ad))
@@ -430,10 +476,16 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
         if not left:
             report(True, "Claude Code's memory is linked into .repolane/memory")
         else:
-            for p, t, label, st, det in pending_links(ad):
+            no = declined(ad)
+            for item in pending_links(ad):
+                p, t, label, st, det = item
                 why = {"missing": "not linked", "elsewhere": f"links to {det}", "folder": "is a folder of its own"}[st]
-                report(False, f"{tilde(p)}/memory ({label}) {why}: Claude Code's memory for it is not kept in the workspace",
-                       "run: lane doctor --fix (it asks before changing anything under ~/.claude)")
+                if link_key(ad, t) in no:
+                    lines.append(("note", Y, f"{tilde(p)}/memory ({label}) {why}: you said no to linking it. To link it later: "
+                                  f"lane doctor --fix, or: {link_commands([item])[0]}", ""))
+                else:
+                    report(False, f"{tilde(p)}/memory ({label}) {why}: Claude Code's memory for it is not kept in the workspace",
+                           "run: lane doctor --fix (it asks before changing anything under ~/.claude)")
 
     # 8. the status line (optional: missing is a note, a clone's stale path is a problem, the user's own is left alone)
     st = roots.statusline_state(ad)
@@ -552,7 +604,11 @@ def init(argv):
         return 1
     for m in made: say("made", G, m)
     imported = offer_import(ad, assume_yes)
-    pend = pending_links(ad)
+    no = declined(ad)
+    pend = [x for x in pending_links(ad) if link_key(ad, x[1]) not in no]
+    skipped = len(pending_links(ad)) - len(pend)
+    if skipped:
+        say("note", Y, f"{skipped} memory link(s) you said no to are not offered again: lane doctor --fix offers them")
     unlinked = offer_links(ad, assume_yes, pending=pend)
     if len(pend) > unlinked: made.append("memory links")
     if want_git:
@@ -584,10 +640,27 @@ def init(argv):
     return 0
 
 
+def link_mirror(ad, name, assume_yes):
+    """`lane add` in a workspace: link the new mirror's Claude Code memory into .repolane/memory/<name>, by the same rule as
+    lane init (shown and asked; --yes accepts; no terminal changes nothing and prints the command; a recorded no is kept)."""
+    ad = os.path.realpath(ad)
+    target = f"{ad}/.repolane/memory/{name}"
+    pend = [x for x in pending_links(ad) if os.path.realpath(x[1]) == os.path.realpath(target)]
+    if not pend:
+        return 0
+    if link_key(ad, target) in declined(ad) and not assume_yes:
+        print(f"  memory of the {name} mirror not linked under {tilde(claude_home())}: you said no before. lane doctor --fix offers it again.")
+        return 0
+    offer_links(ad, assume_yes, pending=pend)
+    return 0
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
     if cmd == "init":
         return init(argv[2:])
+    if cmd == "link-mirror" and len(argv) >= 4:
+        return link_mirror(argv[2], argv[3], bool({"--yes", "-y"} & set(argv[4:])))
     if cmd == "doctor" and len(argv) >= 3:
         flags = argv[3:]
         unknown = [f for f in flags if f not in ("--fix", "--yes", "-y", "--quiet")]

@@ -69,7 +69,10 @@ pattern = "(?P<version>\\S+)"
 only-include = ["src", "lane", "scripts", "templates", ".claude/agents", ".claude/commands", ".claude/settings.json", "CLAUDE.md.template",
                 "knowledge/preferences.md.example", "VERSION", "LICENSE", "NOTICE", "README.md", "CHANGELOG.md", "pyproject.toml",
                 "hatch_build.py"]
-exclude = ["scripts/local", "**/__pycache__"]
+exclude = ["scripts/local", "**/__pycache__", "scripts/migrate-head.json"]
+
+# hatch_build.py writes scripts/migrate-head.json into the source distribution too (a wheel built from it reuses it)
+[tool.hatch.build.targets.sdist.hooks.custom]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repolane"]
@@ -80,4 +83,4 @@ packages = ["src/repolane"]
 [tool.hatch.build.targets.wheel.hooks.custom]
 include = ["lane", "scripts", "templates", ".claude/agents", ".claude/commands", ".claude/settings.json", "CLAUDE.md.template",
            "knowledge/preferences.md.example", "VERSION", "LICENSE", "NOTICE"]
-exclude = ["scripts/local", "*/__pycache__/*", "*.pyc", "*.DS_Store", "scripts/release", "scripts/release-*"]
+exclude = ["scripts/local", "*/__pycache__/*", "*.pyc", "*.DS_Store", "scripts/release", "scripts/release-*", "scripts/migrate-head.json"]
