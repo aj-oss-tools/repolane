@@ -597,6 +597,8 @@ if [ "$VERBOSE" = 1 ]; then
 elif [ "$QUIET" = 0 ]; then
   echo "hundreds more cases behind this (the whole suite):  lane doctor -v"
 fi
+# a git-clone install at 0.10 or later: what moves it to the package and a workspace (never a failure)
+[ "$QUIET" = 0 ] && lane_migrate_steps
 if [ "$WS_RC" != 0 ] && [ "$QUIET" = 0 ]; then
   echo
   echo "!! this workspace has problems that are not fixed (listed at the top) — run: lane doctor --fix"

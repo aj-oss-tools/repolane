@@ -71,3 +71,22 @@ lane_migrate_reminder(){
   grep -qE '^migrate_reminder:[[:space:]]*false' "$CONFIG_FILE" 2>/dev/null && return 0
   echo "note: this is a git-clone install. Repolane now installs as a package (pipx install repolane), and \`lane migrate\` from it turns this folder into a workspace (it previews, backs up and asks first)."
 }
+# lane_migrate_steps : the next steps for a git-clone install at 0.10 or later, spelled out (`lane upgrade` after it moved
+# the clone onto such a version, and a clone's `lane doctor`, which is what the 0.9.x upgrader runs last). Same silence
+# rules as the reminder.
+lane_migrate_steps(){
+  [ "${LANE_MODE:-}" = clone ] && [ -f "$REGISTRY/repos.yaml" ] || return 0
+  grep -qE '^migrate_reminder:[[:space:]]*false' "$CONFIG_FILE" 2>/dev/null && return 0
+  local v; v=$( (tr -d '[:space:]' < "$PRODUCT/VERSION") 2>/dev/null )
+  [ -n "$v" ] && [ "$(printf '%s\n%s\n' 0.10.0 "$v" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = 0.10.0 ] || return 0
+  cat <<EOT
+
+Next steps: Repolane $v installs as a package and keeps your data in a workspace. This clone keeps working as it is
+until you move it over:
+  1. pipx install repolane        (or: uv tool install repolane)
+  2. lane migrate $(printf %q "$AD")
+     It shows everything it would change, writes a backup and asks first; lane migrate --undo <backup> puts it back.
+     If \`lane\` on your PATH is still the router \`lane install\` wrote (~/.local/bin/lane), run the installed one by
+     its full path (pipx prints where it put it). To stop this note: migrate_reminder: false in registry/config.yml.
+EOT
+}

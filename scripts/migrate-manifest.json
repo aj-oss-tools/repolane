@@ -441,6 +441,7 @@
   "scripts/sync-write.py": [
    "1fbb12d5e312d236c32aac2cdf1c56104cd99378"
   ],
+  "scripts/upgrade.py": [],
   "scripts/wire-statusline.py": [
    "7cbe703209b06b586a77c6d1255523cc75c01964"
   ],
@@ -494,6 +495,7 @@
   "tests/t_upgrade.sh": [
    "447c30543c03074ae28393c66122640c0f9cf5a3"
   ],
+  "tests/t_upgrade_package.sh": [],
   "tests/t_upgrade_path.sh": [
    "88a16a8aa4f3324491e7bc5e1aa4f245f2e7eb1e"
   ],

@@ -70,6 +70,16 @@ written down. Inside a git checkout it also says how far past the release tag yo
     to do and changes nothing.
 - A git-clone install that has been set up shows one line on SessionStart and in `lane status`: Repolane installs as a
   package now, and `lane migrate` converts the folder. `migrate_reminder: false` in `registry/config.yml` turns it off.
+- **`lane upgrade` from the installed package** upgrades it the way it was installed (`pipx upgrade repolane` for a
+  pipx install, `uv tool upgrade repolane` for a uv tool install; for any other install it prints the `pip` command to
+  run), then refreshes every workspace registered in `planes.json` with the new version: the rule files and data
+  migrations, Repolane's hooks in `.claude/settings.json` (your own keys and hooks kept), and every lane's
+  `settings.local.json` and `CLAUDE.md`. It reports each workspace; nothing you wrote is changed. A registered folder
+  that is gone is skipped and reported, and you are asked whether to drop it from the registry (`--drop-missing` or
+  `--yes` drops it). It exits non-zero when a workspace could not be refreshed. Run inside a workspace that is not
+  registered, it registers it. `lane upgrade --check` shows the installed version against the newest on PyPI and
+  which workspaces are behind, and changes nothing (it says so when PyPI cannot be reached); `--refresh-only` skips
+  the package step.
 
 ### Changed
 
@@ -80,6 +90,9 @@ written down. Inside a git checkout it also says how far past the release tag yo
   `.repolane/REPOLANE.md`; for an existing one, `lane init` shows the line and asks "Add it? [Y/n]" (`--yes` adds it;
   with no terminal and no `--yes` it is left alone, and the output says how to add it). Until the line is there,
   Repolane's rules do not load, and `lane doctor --fix` can add it later.
+- `lane upgrade` in a git clone still fast-forwards the clone when the new version is 0.10 or later, so it keeps
+  working, and `lane doctor` in such a clone then spells out the two steps that move it over: `pipx install repolane`
+  (or `uv tool install repolane`), then `lane migrate <folder>`.
 - `lane doctor` no longer writes a `__pycache__` folder into Repolane's own files, and the guard refuses a tool call
   (instead of letting it through) if its path resolver is missing.
 

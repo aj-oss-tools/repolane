@@ -42,7 +42,8 @@ def run(args):
     ensure_executable(prod)
     # LANE_BIN: the folder this launcher was installed into, so `lane doctor` can say what to put on PATH when the hooks
     # (which run `lane hook …` from PATH) cannot find it
-    env = dict(os.environ, LANE_PRODUCT=prod, LANE_BIN=os.path.dirname(os.path.abspath(sys.argv[0])))
+    # LANE_PY_PREFIX: the Python environment it runs in, which tells `lane upgrade` how it was installed (pipx, uv tool, pip)
+    env = dict(os.environ, LANE_PRODUCT=prod, LANE_BIN=os.path.dirname(os.path.abspath(sys.argv[0])), LANE_PY_PREFIX=sys.prefix)
     # through bash, not the file's own +x: the dispatcher runs even where ensure_executable could not help
     bash = shutil.which("bash") or "/bin/bash"
     os.execve(bash, [bash, lane, *args], env)

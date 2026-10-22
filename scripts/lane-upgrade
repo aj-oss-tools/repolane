@@ -207,6 +207,8 @@ for m in re.finditer(r"^## \[(\d+\.\d+\.\d+)\][^\n]*\n(.*?)(?=\n## \[|\Z)", text
 PY
 rm -f "$diff_file"
 
+# From 0.10 on Repolane is a package and the data lives in a workspace: the clone was still moved (so it keeps working),
+# and lane doctor below spells out the two steps that move it over (lane_migrate_steps, scripts/roots.sh).
 echo
 echo "running lane doctor..."
 exec "$PRODUCT/scripts/hooks/guard-check"

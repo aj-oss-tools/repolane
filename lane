@@ -29,7 +29,8 @@ else lane_resolve_roots; fi
 # a workspace takes the installed version's rule files (and data migrations) on the first run after an upgrade; not
 # for `lane doctor`, which reports a stale workspace (and repairs it with --fix) rather than hide it, nor for the
 # doctor's own probe of the hook path
-case "${1:-} ${2:-}" in "doctor "*|"hook ping") : ;; *) lane_refresh_workspace ;; esac
+# nor for `lane upgrade`, which refreshes every registered workspace itself and reports what it did
+case "${1:-} ${2:-}" in "doctor "*|"upgrade "*|"hook ping") : ;; *) lane_refresh_workspace ;; esac
 
 # command → implementation, and the one line shown in `lane help`
 map(){ case "$1" in
@@ -113,6 +114,13 @@ cmd="${1:-}"
 if [ "$cmd" = init ] && [ -n "${LANE_PRODUCT:-}" ] && { [ -z "$_ws_named" ] || [ -d "$_ws_named/.repolane" ]; }; then
   shift
   exec python3 -B "$S/workspace.py" init "$@"
+fi
+
+# `lane upgrade` from an installed package upgrades the package (pipx / uv tool) and refreshes every registered workspace
+# (scripts/upgrade.py); a clone's is scripts/lane-upgrade, a fast-forward of the clone.
+if [ "$cmd" = upgrade ] && [ -n "${LANE_PRODUCT:-}" ] && [ ! -e "$PRODUCT/.git" ]; then
+  shift
+  exec python3 -B "$S/upgrade.py" "$@"
 fi
 
 # `lane migrate` turns a git-clone install into a workspace (scripts/migrate.py). It runs from the installed package, never
