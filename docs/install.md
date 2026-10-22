@@ -106,8 +106,8 @@ git remote add origin <your-private-repo> && git push -u origin main
 ```
 
 `lane init --git` ignores what is rebuilt on each machine: `/lanes/`, `/.repolane/repos/`, `/.repolane/cache/`,
-`/.claude/settings.local.json` and the editor workspace file `/lane.code-workspace`. If you use `lane rules pull`, add
-`/.repolane/registry/.shared-cache/` too.
+`/.repolane/registry/.shared-cache/` (the copy `lane rules pull` keeps), `/.claude/settings.local.json` and the editor
+workspace file `/lane.code-workspace`.
 
 | commit these: they are yours | Repolane refreshes these: commit them, never edit them |
 |---|---|

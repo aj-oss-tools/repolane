@@ -510,7 +510,7 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
 
 
 # ------------------------------------------------------------------------------------------------ lane init
-GITIGNORE = ["/lanes/", "/.repolane/repos/", "/.repolane/cache/", "/.claude/settings.local.json", "/lane.code-workspace"]
+GITIGNORE = ["/lanes/", "/.repolane/repos/", "/.repolane/cache/", "/.repolane/registry/.shared-cache/", "/.claude/settings.local.json", "/lane.code-workspace"]
 
 
 def config_owner(ad):
