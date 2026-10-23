@@ -30,6 +30,10 @@ if [ "$sid" != "-" ]; then
   f=$(ls "$HOME"/.claude/projects/"$slug"-*/"$sid".jsonl 2>/dev/null | head -1 || true)
   [ -n "$f" ] && { repo=${f#*"$slug"-}; repo=${repo%%/*}; }
 fi
+# How a session runs the lane-* commands and names the data folders: a workspace's package puts the commands on PATH, so
+# they go by name, and the data sits under .repolane/; a clone's are its scripts/ folder, by absolute path.
+if [ "$LANE_MODE" = workspace ]; then X=""; else X="$PRODUCT/scripts/"; fi
+MEM_REL="${MEMORY_DIR#"$AD"/}"
 cur=$(python3 -c "import os;p=os.path.realpath('$scwd');w='$LANES/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')")
 
 # ---- human screen (systemMessage) -------------------------------------------------------------
@@ -57,21 +61,22 @@ if [ "$source" = "resume" ] && [ -n "$repo" ]; then
   echo "## RESUMED CONVERSATION — it belongs to repo '$repo' (transcript lives in that repo's project folder)."
   echo "Its earlier turns refer to OLD checkout paths. Those copies are frozen and blocked. Translate every mention:"
   echo "    old path in the transcript                                   -> what it means now"
-  python3 - "$repo" "$LANES" "$REGISTRY" <<'PY'
+  python3 - "$repo" "$LANES" "$REGISTRY" "${REPOS#"$AD"/}" <<'PY'
 import json,sys,os,glob
-repo,LANES,REGISTRY=sys.argv[1:]
+repo,LANES,REGISTRY,REPOS_REL=sys.argv[1:]
 AD=os.path.dirname(LANES)
-olds=[k for k in json.load(open(f"{REGISTRY}/old-checkouts.json")) if k.rstrip("/").endswith("/"+repo)]
+try: olds=[k for k in json.load(open(f"{REGISTRY}/old-checkouts.json")) if k.rstrip("/").endswith("/"+repo)]
+except (OSError, ValueError): olds=[]
 wts=sorted(glob.glob(f"{LANES}/*/{repo}"))
 target=(wts[0] if len(wts)==1 else ("lanes/<id>/"+repo+" (the lane you enter)")).replace(AD+"/","")
 for o in olds: print(f"    {o:60} -> {target}")
-print(f"    {'repos/'+repo+' (mirror)':60} -> not a place to work; never mention it")
+print(f"    {REPOS_REL+'/'+repo+' (mirror)':60} -> not a place to work; never mention it")
 PY
   echo "When you report state, use only the STATE block that arrives with each prompt. Never compare against old copies."
   wts=$(ls -d "$LANES"/*/"$repo" 2>/dev/null | sed "s|$LANES/||; s|/$repo||" || true)
   if [ -n "$cur" ]; then
     if [ -d "$LANES/$cur/$repo" ]; then echo "You are already inside lane '$cur', which has this repo. Re-anchor every path to $LANES/$cur/$repo and continue."
-    else echo "WARNING: you are inside lane '$cur' but it has no worktree for '$repo'. Offer: $PRODUCT/scripts/lane-with $cur $repo, or switch lane."; fi
+    else echo "WARNING: you are inside lane '$cur' but it has no worktree for '$repo'. Offer: ${X}lane-with $cur $repo, or switch lane."; fi
   else
     echo
     echo "YOUR FIRST MESSAGE, before answering anything else, must say which repo this is and offer these choices:"
@@ -88,9 +93,13 @@ if [ "${1:-}" = "--worktree" ] || [ -n "$cur" ]; then
   if [ -n "$id" ] && [ -f "$(lane_file "$id")" ]; then
     echo "## lane — session in lane '$id' ($(basename "$scwd"))"; echo
     cat "$(lane_file "$id")"; echo
-    echo "Read memory/<repo>/MEMORY.md for each repo above, then brief $OWNER in five lines and continue the work."
-    echo "Scope: only lanes/$id/. Park with $PRODUCT/scripts/lane-park $id \"<note>\" before they switch away."
-    echo "Lane scripts: call them by ABSOLUTE path, $PRODUCT/scripts/<name> (e.g. $PRODUCT/scripts/lane-brief $id). You are in the lane, so a relative scripts/<name> does not exist here and exits 127."
+    echo "Read $MEM_REL/<repo>/MEMORY.md for each repo above, then brief $OWNER in five lines and continue the work."
+    echo "Scope: only lanes/$id/. Park with ${X}lane-park $id \"<note>\" before they switch away."
+    if [ "$LANE_MODE" = workspace ]; then
+      echo "Lane commands (lane-brief, lane-park, lane-memory, …) are on PATH: call them by name, e.g. lane-brief $id."
+    else
+      echo "Lane scripts: call them by ABSOLUTE path, $PRODUCT/scripts/<name> (e.g. $PRODUCT/scripts/lane-brief $id). You are in the lane, so a relative scripts/<name> does not exist here and exits 127."
+    fi
     # a workspace hands the lane's rules (LANE.md) to a session started inside the lane too, not only after EnterWorktree
     if [ "$LANE_MODE" = workspace ]; then echo; python3 -B "$PRODUCT/scripts/roots.py" lane-context "$id" </dev/null; fi
   fi
@@ -115,10 +124,16 @@ done
 echo
 echo "Repos: $(ls "$REPOS" | tr '\n' ' ')"
 echo
-echo "Scripts dir (absolute): $PRODUCT/scripts"
-echo "After EnterWorktree the session sits in the lane, not here: call every lane script by absolute path, $PRODUCT/scripts/<name>"
-echo "(e.g. $PRODUCT/scripts/lane-brief <id>). A relative scripts/<name> exits 127 from the lane root. The scripts/<name> paths below are relative to the control plane: prefix them with the absolute dir above."
-cat <<'TXT'
+if [ "$LANE_MODE" = workspace ]; then
+  echo "Commands: lane and the lane-* commands are on PATH; call them by name, here and after EnterWorktree (e.g. lane-brief <id>)."
+  echo "Workspace data: $DATA (registry, memory, knowledge, mirrors). The rules: $DATA/REPOLANE.md, and LANE.md inside a lane."
+else
+  echo "Scripts dir (absolute): $PRODUCT/scripts"
+  echo "After EnterWorktree the session sits in the lane, not here: call every lane script by absolute path, $PRODUCT/scripts/<name>"
+  echo "(e.g. $PRODUCT/scripts/lane-brief <id>). A relative scripts/<name> exits 127 from the lane root. The scripts/<name> paths below are relative to the control plane: prefix them with the absolute dir above."
+fi
+# the instructions are written in a clone's words; a workspace gets them in its own (roots.py words)
+lane_words <<'TXT'
 Dispatcher instructions (details in CLAUDE.md "Dispatcher mode"):
 - Discuss before deciding: propose ids, repos, branches, deletions, global-config changes and design choices in one
   line with a recommendation, then wait. Run directly only mechanical, reversible, explicitly requested steps.

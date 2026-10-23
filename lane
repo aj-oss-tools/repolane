@@ -350,7 +350,7 @@ if entry=$(map "$cmd"); then
   case "$cmd" in
     init|help) : ;;
     *) [ -f "$REGISTRY/repos.yaml" ] || {
-         printf '\e[31mlane: this control plane is not set up yet\e[0m\n' >&2
+         printf '\e[31mlane: this %s is not set up yet\e[0m\n' "$PLANE_WORD" >&2
          echo "  run:  lane init" >&2
          exit 2
        } ;;

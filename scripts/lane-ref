@@ -12,7 +12,7 @@ case "$cmd" in
     src="${3:-}"; [ -n "$src" ] || die "usage: lane-ref <id> add <path> [note] [--rw]"
     src=$(python3 -c 'import os,sys;print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$src")
     [ -e "$src" ] || die "no such path: $src"
-    case "$src" in "$LANES"/*|"$REPOS"/*) die "that is already part of the control plane; use lane-add (new repo) or lane-with (existing lane) for repos";; esac
+    case "$src" in "$LANES"/*|"$REPOS"/*) die "that is already part of the $PLANE_WORD; use lane-add (new repo) or lane-with (existing lane) for repos";; esac
     mode=read; note=""; shift 3
     for a in "$@"; do [ "$a" = "--rw" ] && mode=rw || note="$a"; done
     name=$(basename "$src"); mkdir -p "$LANES/$id/refs"

@@ -5,6 +5,9 @@
 # which must be run from the control plane root because it moves worktrees.
 set -euo pipefail
 for a in "$@"; do
-  if [ "$a" = "--run" ]; then echo "lane-merge-plan never runs a merge. Use: lane-merge $* (from the control plane root)" >&2; exit 2; fi
+  if [ "$a" = "--run" ]; then
+    where="control plane"; [ -d "${LANE_WORKSPACE:-/nonexistent}/.repolane" ] && where=workspace
+    echo "lane-merge-plan never runs a merge. Use: lane-merge $* (from the $where root)" >&2; exit 2
+  fi
 done
 exec "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lane-merge" "$@"

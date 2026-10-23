@@ -82,6 +82,8 @@ REGISTRY, MEMORY, KNOWLEDGE, CACHE = R.registry, R.memory, R.knowledge, R.cache
 
 def out(obj): print(json.dumps(obj).replace("__OWNER__", OWNER)); sys.exit(0)
 def deny(event, reason):
+    # the refusals are written in a clone's words; a workspace's are its own paths and commands (roots.Roots.words)
+    reason = R.words(reason)
     out({"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason}})
 def allow(event): out({"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "allow"}})
 def context(event, text): out({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}})
@@ -358,6 +360,7 @@ def load_rules():
             if w.get("matches"):
                 try: re.compile(w["matches"])
                 except re.error as e: bad.append(f"{rid}: `matches` is not a valid regular expression ({e})"); continue
+            r["_file"] = label
             good.append(r)
     # A rule id has to be unique across every rules.*.yaml file (including a shared one `lane
     # rules pull` namespaces): doctor verifies a rule by feeding its `example:` through the guard
@@ -404,8 +407,8 @@ def enforce_rules(event, tool, ti, segs, cwd):
     placed after those would never be reached for the files they cover. It can only ever deny."""
     rules, bad = load_rules()
     if bad:
-        print("lane guard: registry/rules.yaml — these project rules are NOT being enforced:\n  "
-              + "\n  ".join(bad) + "\n  The built-in rules are unaffected. Fix them, then `lane doctor`.", file=sys.stderr)
+        print(R.words("lane guard: registry/rules.yaml — these project rules are NOT being enforced:\n  "
+              + "\n  ".join(bad) + "\n  The built-in rules are unaffected. Fix them, then `lane doctor`."), file=sys.stderr)
     for r in rules:
         try: hit = rule_hits(r, tool, ti, segs, cwd)
         except Exception as e:
@@ -413,7 +416,7 @@ def enforce_rules(event, tool, ti, segs, cwd):
                   f"({e.__class__.__name__}) and was skipped.", file=sys.stderr); continue
         if hit:
             deny(event, f"{r['deny']}\n  This is a project rule of this control plane ('{r['id']}' in "
-                        f"registry/rules.yaml), not a built-in one. Why: {r['ref']}")
+                        f"{r.get('_file') or 'registry/rules.yaml'}), not a built-in one. Why: {r['ref']}")
 
 if "--rules" in sys.argv:
     # `lane doctor` asks the guard itself what it loaded, so the doctor and the hook can never
@@ -732,12 +735,17 @@ STAY_MSG = ("You are inside lane '{cur}'. The work stays here; do not create or 
             "`lane-park {cur} \"<note>\"`, ExitWorktree keep, and start it from the root — after they confirm.")
 
 # Memory, preferences and the control plane are never written directly: scope is __OWNER__'s call.
-SCOPES = """MEMORY SCOPES — where a thing belongs is decided by how long it stays true:
-  preference   knowledge/preferences.md            forever, all work    "how should Claude work with me?"
-  cross-repo   memory/<slug>.md                    forever, any repo    "true in every repo?"
-  repo         memory/<repo>/<slug>.md             forever, that repo   "still true after this ticket ships?"
-  lane         registry/lanes/<id>.md              until it finishes    "only matters while this work is live?"
-               (its ## Findings section)                                  then archived with the lane"""
+def _scopes():
+    """The table every memory refusal and the memory brief show, with the paths where this plane keeps them."""
+    rows = [("preference", f"{R.rel(KNOWLEDGE)}/preferences.md", "forever, all work", '"how should Claude work with me?"'),
+            ("cross-repo", f"{R.rel(MEMORY)}/<slug>.md", "forever, any repo", '"true in every repo?"'),
+            ("repo", f"{R.rel(MEMORY)}/<repo>/<slug>.md", "forever, that repo", '"still true after this ticket ships?"'),
+            ("lane", f"{R.rel(LANES_DIR)}/<id>.md", "until it finishes", '"only matters while this work is live?"'),
+            ("", "(its ## Findings section)", "", "  then archived with the lane")]
+    w = max(len(r[1]) for r in rows) + 4
+    return "MEMORY SCOPES — where a thing belongs is decided by how long it stays true:\n" + "\n".join(
+        (f"  {a:<12} {b:<{w}}{c:<21}{d}").rstrip() for a, b, c, d in rows)
+SCOPES = _scopes()
 MEMORY_GATE = (
     "Memories are not written directly — the scope is __OWNER__'s decision.\n" + SCOPES + "\n"
     "Do this instead:\n"
@@ -2713,9 +2721,10 @@ if event == "UserPromptSubmit":
                    f"  run anything in a repo:  lane-run <repo> <cmd…>   ·   GitHub: lane-gh <repo> <args…>\n"
                    f"  do NOT cd into a repo — you never need to, and the hook refuses it\n"
                    f"  NEVER ExitWorktree/EnterWorktree to change repo — a cd does it and keeps the lane.")
+        spec = f"{LANES_DIR}/{cur}.md" if R.workspace else f"registry/lanes/{cur}.md"
         context(event, pre + f"STATE of lane {cur} (every repo in it; * = where you are: {rel}). Report state only in this form:\n"
-                       + state_block(cur, cwd) + how +
-                       f"\nSpec: registry/lanes/{cur}.md. Never mention repos/ or the old checkouts.")
+                       + state_block(cur, cwd) + R.words(how) +
+                       R.words(f"\nSpec: {spec}. Never mention repos/ or the old checkouts."))
     if os.path.realpath(cwd) == os.path.realpath(AD):
         context(event, "[lane] at the dispatcher root, no lane entered. If this request is code work on a repo, first offer/enter a lane (EnterWorktree) and say so; do not edit code from here.")
     sys.exit(0)
@@ -2729,7 +2738,7 @@ if event == "PreCompact":
     except OSError: pass
     if cur and os.path.exists(f"{LANES_DIR}/{cur}.md"):
         spec = open(f"{LANES_DIR}/{cur}.md").read()
-        context(event, ("Preserve through compaction — the session is in lane '%s' at %s.\n"
+        context(event, R.words("Preserve through compaction — the session is in lane '%s' at %s.\n"
                         "Rules that still apply after this compaction:\n"
                         "  - the only way into a lane is EnterWorktree name=\"<id>\"; never cd into one\n"
                         "  - work only under lanes/%s/; repos/ are read-only mirrors; other lanes are out of bounds\n"
@@ -2796,7 +2805,7 @@ if event == "SessionEnd":
 # ------------------------------------------------- WorktreeCreate: EnterWorktree(name="<id>/<repo>")
 if event == "WorktreeCreate":
     if cur:
-        print(STAY_MSG.format(cur=cur), file=sys.stderr); sys.exit(1)
+        print(R.words(STAY_MSG.format(cur=cur)), file=sys.stderr); sys.exit(1)
     # EnterWorktree name= is interpreted by us, not by git:
     #   "<id>"          an existing lane -> resume it and land in whichever repo the work is in
     #   "<id>/<repo>"   that repo of that lane; creates the lane/worktree if needed
@@ -2855,6 +2864,6 @@ if event == "WorktreeCreate":
           f"with `lane-start {lane_id} <repo>[:<branch>][@<base>] …`.", file=sys.stderr); sys.exit(1)
 
 if event == "WorktreeRemove":
-    print("lane: worktrees are removed by scripts/lane-done after the branch is pushed. Nothing was removed.", file=sys.stderr); sys.exit(1)
+    print(R.words("lane: worktrees are removed by scripts/lane-done after the branch is pushed. Nothing was removed."), file=sys.stderr); sys.exit(1)
 
 sys.exit(0)

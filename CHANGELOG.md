@@ -115,6 +115,13 @@ written down. Inside a git checkout it also says how far past the release tag yo
   and keeps every other section. `lane-memory file … lane`, `lane merge`, `lane brief` and `lane done` also read and
   write one section up to the next heading, so a section you add to a lane file, or a Findings at the end of it, is
   kept and shown where it belongs.
+- In a workspace, what a session is told speaks of the workspace: SessionStart (at the root and in a lane), a resumed
+  conversation, UserPromptSubmit, PreCompact, the Worktree hooks, the guard's refusals, the MEMORY SCOPES table, the
+  menu and `lane-memory file` name the real paths (`.repolane/registry/…`, `.repolane/memory/…`, the mirrors under
+  `.repolane/repos/`), the commands by the name on PATH (`lane-with`, `lane sessions`), "the workspace", and
+  `.repolane/REPOLANE.md` for the details, and no longer a clone's `scripts/` folder, a relative path that "exits 127"
+  or the product's own files. A shared project rule's refusal names the file it came from
+  (`registry/rules.shared.yaml`), not `registry/rules.yaml`. A git clone's text is unchanged.
 
 ## [0.9.2] — 2026-10-19
 

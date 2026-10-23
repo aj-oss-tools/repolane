@@ -50,7 +50,7 @@ for f in "$LANES_DIR"/*.md; do [ -f "$f" ] || continue; id=$(basename "$f" .md)
     if [ -d "$d" ]; then echo "     $repo/$branch: $(lane_dirty_count "$d") dirty, $(lane_unpushed_text "$d")"; else echo "     $repo/$branch: no worktree (lane-resume recreates)"; fi
   done < <(lane_repos "$id")
 done
-echo "== drift: checkouts outside the control plane (should be none; work happens here)"
+echo "== drift: checkouts outside the $PLANE_WORD (should be none; work happens here)"
 [ -f "$REGISTRY/old-checkouts.json" ] || exit 0
 python3 - "$REGISTRY/old-checkouts.json" <<'PY'
 import json,subprocess,sys

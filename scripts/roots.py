@@ -7,6 +7,7 @@ as a small command by the shell side:
   python3 -B roots.py make-workspace <product> <dir> [owner] an empty workspace layout (the guts of `lane init`, scripts/workspace.py)
   python3 -B roots.py paths [<start-dir>]                    the resolved roots and data paths, one `NAME=value` per line
   python3 -B roots.py lane-context <lane>                    what a session inside that lane is handed (LANE.md and its header)
+  python3 -B roots.py words                                  stdin to stdout in the workspace's words (Roots.words)
 """
 import json
 import os
@@ -100,13 +101,59 @@ class Roots:
                 f"Owner: {self.owner()} (the rules below and REPOLANE.md call them \"the owner\").\n"
                 f"Lane folder: {self.lanes}/{lane}/  ·  lane file: {self.lanes_dir}/{lane}.md (read it; set its Goal with "
                 f"`lane-memory goal \"<text>\"`, never Edit/Write).\n"
-                f"If a bare lane-* command is not found, the same command is at {self.product}/scripts/<name>.\n")
+                f"The lane-* commands are on PATH next to `lane`; call them by name. If one is not found, the owner runs "
+                f"`lane doctor` in a terminal: it says what to put on PATH.\n")
         return head + "\n" + rules.strip() + "\n"
+
+    def rel(self, path):
+        """A data path as a session should see it written: relative to the workspace (.repolane/memory in a workspace,
+        memory in a clone)."""
+        return os.path.relpath(path, self.ad)
+
+    def command(self, script):
+        """How a session runs one of the product's scripts: by the name the package puts on PATH in a workspace
+        (lane-brief, `lane status` for status-all), by its relative scripts/ path in a clone."""
+        if not self.workspace:
+            return f"scripts/{script}"
+        if script in SCRIPT_COMMANDS:
+            return SCRIPT_COMMANDS[script]
+        return script
+
+    def words(self, text):
+        """Repolane's own messages (the guard's refusals, the hooks' context, the menu) are written in a clone's words:
+        scripts/lane-with, registry/…, memory/…, repos/…, "the control plane". In a workspace the same text is rewritten
+        with the workspace's real paths (from this resolver, so they cannot drift from where the data is) and the
+        commands by the name on PATH. Only a relative path at the start of a word is rewritten: an absolute one is
+        already right. A clone's text is returned unchanged."""
+        if not self.workspace or not text:
+            return text
+        import re
+        start = r"(?<![\w./~$<>-])"
+        prod = re.escape(self.product) + r"/scripts/"
+        name = r"(lane-[\w*<>-]*[\w*>]|<name>|" + "|".join(re.escape(k) for k in SCRIPT_COMMANDS) + r")(?![\w/-]|\.\w)"
+        text = re.sub(prod + name, lambda m: self.command(m.group(1)), text)
+        text = re.sub(start + r"scripts/env\.sh", self.rel(self.env_sh), text)
+        text = re.sub(start + r"scripts/local/", self.rel(self.data) + "/scripts/local/", text)
+        text = re.sub(start + r"scripts/" + name, lambda m: self.command(m.group(1)), text)
+        text = re.sub(start + r"registry/config\.yml", self.rel(self.config), text)
+        text = re.sub(start + r"\.cache/", self.rel(self.cache) + "/", text)
+        dirs = {"registry": self.registry, "memory": self.memory, "knowledge": self.knowledge, "repos": self.repos}
+        text = re.sub(start + r"(registry|memory|knowledge|repos)/", lambda m: self.rel(dirs[m.group(1)]) + "/", text)
+        # where the rules are, when the text means the rules (a repo's own CLAUDE.md is named otherwise)
+        text = re.sub(r"(details in |see )CLAUDE\.md\b", lambda m: m.group(1) + self.rel(self.data) + "/REPOLANE.md", text)
+        text = re.sub(r"\b([Cc])ontrol[ -]plane\b", lambda m: "Workspace" if m.group(1) == "C" else "workspace", text)
+        return text
 
     def paths(self):
         return {"PRODUCT": self.product, "AD": self.ad, "LANE_MODE": self.mode, "DATA": self.data, "REGISTRY": self.registry,
                 "LANES_DIR": self.lanes_dir, "REPOS": self.repos, "MEMORY_DIR": self.memory, "KNOWLEDGE_DIR": self.knowledge,
                 "CACHE_DIR": self.cache, "CONFIG_FILE": self.config, "ENV_SH": self.env_sh, "LANES": self.lanes}
+
+
+# the product's scripts that a workspace runs as a `lane <command>` (the rest are lane-* names on PATH, as they are)
+SCRIPT_COMMANDS = {"sessions": "lane sessions", "status-all": "lane status", "branch-audit": "lane audit", "menu": "lane menu",
+                   "lane-sync": "lane sync", "lane-rules": "lane rules", "lane-upgrade": "lane upgrade",
+                   "hooks/guard-check": "lane doctor", "init": "lane init"}
 
 
 # ------------------------------------------------------------------------------------------------ hooks as commands
@@ -382,6 +429,9 @@ def main(argv):
     if cmd == "lane-context" and len(argv) == 3:
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         sys.stdout.write(Roots(here).lane_context(argv[2])); return 0
+    if cmd == "words" and len(argv) == 2:
+        here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        sys.stdout.write(Roots(here).words(sys.stdin.read())); return 0
     if cmd == "paths" and len(argv) in (2, 3):
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         for k, v in Roots(here, start=argv[2] if len(argv) == 3 else None).paths().items(): print(f"{k}={v}")

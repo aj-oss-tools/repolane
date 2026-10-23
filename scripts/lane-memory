@@ -124,21 +124,21 @@ PY
       rm -f "$src"; exit 0
     fi
     if [ "$scope" = pref ]; then
-      python3 - "$src" "$KNOWLEDGE_DIR/preferences.md" <<'PY'
-import sys,re
-src,dst=sys.argv[1:]; t=open(src).read()
+      python3 - "$src" "$KNOWLEDGE_DIR/preferences.md" "$AD" <<'PY'
+import sys,re,os
+src,dst,ad=sys.argv[1:]; t=open(src).read()
 body=t.split("---",2)[2].strip() if t.startswith("---") else t.strip()
 d=re.search(r"^description: *(.+)$",t,re.M)
 open(dst,"a").write(f"\n- {d.group(1).strip() if d else ''}\n" + ("\n".join("  "+l for l in body.splitlines() if l.strip()) + "\n" if body else ""))
-print("appended to knowledge/preferences.md")
+print("appended to",os.path.relpath(dst,ad))
 PY
       rm -f "$src"; exit 0
     fi
     [ ! -L "$(dirname "$dst")" ] || die "$(dirname "$dst") is a symlink — refusing to write through it"
     mkdir -p "$(dirname "$dst")"; mv "$src" "$dst"
-    python3 - "$dst" "$idx" <<'PY'
+    python3 - "$dst" "$idx" "$AD" <<'PY'
 import sys,os,re
-dst,idx=sys.argv[1:]; t=open(dst).read()
+dst,idx,ad=sys.argv[1:]; t=open(dst).read()
 name=(re.search(r"^name: *(.+)$",t,re.M) or [None,os.path.basename(dst)[:-3]])[1].strip()
 desc=(re.search(r"^description: *(.+)$",t,re.M) or [None,""])[1].strip().strip('"')
 title=name.replace("-"," ").replace("_"," ").strip().capitalize()
@@ -147,7 +147,7 @@ if not os.path.exists(idx): open(idx,"w").write(f"# Memory Index — {os.path.ba
 cur=open(idx).read()
 cur=re.sub(r"^- \[[^\]]*\]\("+re.escape(os.path.basename(dst))+r"\).*$","",cur,flags=re.M)
 open(idx,"w").write(cur.rstrip("\n")+"\n"+line+"\n")
-print("filed:",os.path.relpath(dst,os.path.dirname(os.path.dirname(idx)) if False else os.path.dirname(os.path.dirname(idx))),"\nindexed in:",idx)
+print("filed:",os.path.relpath(dst,ad),"\nindexed in:",os.path.relpath(idx,ad))
 PY
     ;;
   move|rm)

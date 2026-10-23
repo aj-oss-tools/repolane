@@ -34,16 +34,23 @@ lane_resolve_roots(){ # lane_resolve_roots [start-dir] : sets AD, LANE_MODE and 
   else AD="$PRODUCT"; fi
   LANES="$AD/lanes"
   if [ -d "$AD/.repolane" ]; then
-    LANE_MODE=workspace; DATA="$AD/.repolane"
+    LANE_MODE=workspace; DATA="$AD/.repolane"; PLANE_WORD=workspace
     CACHE_DIR="$DATA/cache"; CONFIG_FILE="$DATA/config.yml"; ENV_SH="$DATA/env.sh"
     # every script this one starts acts on the same workspace, whichever folder it is started from
     export LANE_WORKSPACE="$AD"
   else
-    LANE_MODE=clone; DATA="$AD"
+    LANE_MODE=clone; DATA="$AD"; PLANE_WORD="control plane"
     CACHE_DIR="$AD/.cache"; CONFIG_FILE="$AD/registry/config.yml"; ENV_SH="$PRODUCT/scripts/env.sh"
   fi
   REGISTRY="$DATA/registry"; LANES_DIR="$REGISTRY/lanes"; REPOS="$DATA/repos"
   MEMORY_DIR="$DATA/memory"; KNOWLEDGE_DIR="$DATA/knowledge"
+}
+
+# lane_words : stdin to stdout in the workspace's words. Repolane's own text (the menu, the dispatcher instructions) is
+# written in a clone's words (scripts/lane-with, registry/…, "the control plane"); in a workspace roots.py rewrites it with
+# the real paths and the commands by name. A clone's text passes through as it is.
+lane_words(){
+  if [ "${LANE_MODE:-}" = workspace ]; then python3 -B "$PRODUCT/scripts/roots.py" words; else cat; fi
 }
 
 # ---------------------------------------------------------------- the workspace's own copy of the rules
