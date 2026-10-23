@@ -1,6 +1,6 @@
 # Extending Repolane
 
-Two ways to add to a control plane without forking it: your own `lane` subcommands, and (see
+Two ways to add to a workspace without forking it: your own `lane` subcommands, and (see
 below) a shared, git-backed source of `.repolane/registry/rules.yaml`-style rules for a team.
 
 ## Your own `lane <name>` commands

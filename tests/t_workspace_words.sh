@@ -111,6 +111,15 @@ for s in "scripts/lane-" "control plane" " registry/" "\`registry/" " memory/" "
   if [ -z "$hits" ]; then ok "no '$s' in any output"; else bad "no '$s' in any output" "$hits"; fi
 done
 
+echo "-- the editor workspace files hide the mirrors and the cache where they are"
+excl(){ python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))["settings"]; print(" ".join(sorted(k for k in d["files.exclude"] if not k.startswith("**"))), "|", " ".join(sorted(k for k in d["search.exclude"] if not k.startswith("**"))))' "$1"; }
+assert_eq "lane.code-workspace hides .repolane/repos and .repolane/cache" ".repolane/cache .repolane/repos lanes | .repolane/cache .repolane/repos lanes" "$(excl "$W/lane.code-workspace")"
+assert_eq "and so does a lane's" ".repolane/cache .repolane/repos lanes | .repolane/cache .repolane/repos lanes" "$(excl "$W/lanes/L1/L1.code-workspace")"
+echo "-- the package describes itself as a workspace"
+assert_not_contains "pyproject.toml's description" "$(grep '^description' "$PRODUCT/pyproject.toml")" "control plane"
+assert_not_contains "README's first paragraph" "$(sed -n '1,12p' "$PRODUCT/README.md")" "control plane"
+assert_not_contains "extending.md's opening" "$(sed -n '1,5p' "$PRODUCT/docs/extending.md")" "control plane"
+
 echo "-- a git clone keeps a clone's words"
 init_plane >/dev/null 2>&1
 (cd "$PLANE" && ./lane add "$T/remotes/api.git" api </dev/null >/dev/null 2>&1; ./lane start C1 api </dev/null >/dev/null 2>&1; ./lane start C2 api:c2 </dev/null >/dev/null 2>&1)
@@ -125,4 +134,5 @@ assert_contains "the clone's refusal names scripts/lane-with" "$o" "scripts/lane
 o=$(printf '{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"},"cwd":"%s","session_id":"c"}' "$PLANE/memory/x.md" "$PLANE" \
     | CLAUDE_PROJECT_DIR="$PLANE" env -u LANE_PRODUCT -u LANE_WORKSPACE python3 "$PLANE/scripts/hooks/guard.py" 2>&1)
 assert_contains "the clone's scopes table names memory/" "$o" "cross-repo   memory/<slug>.md"
+assert_eq "a clone's lane.code-workspace still hides repos and .cache" ".cache lanes repos | .cache lanes repos" "$(excl "$PLANE/lane.code-workspace")"
 finish

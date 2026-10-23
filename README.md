@@ -6,8 +6,8 @@
 
 **One ticket. Every repo it touches. One bounded AI session.**
 
-Repolane is a local control plane for multi-repository development with Claude Code. It gives each
-piece of work an isolated workspace across every repository it touches, preserves the context
+Repolane is a local workspace for multi-repository development with Claude Code. It gives each
+piece of work an isolated lane across every repository it touches, preserves the context
 needed to resume later, and enforces tested guardrails around what the coding agent can access and
 do.
 
@@ -313,7 +313,7 @@ should go.
 Pull requests are welcome too — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to run the
 guard's test suite, what the project expects of a change, and how to propose one. The short version:
 if you change `scripts/hooks/guard.py`, run `bash scripts/hooks/test-guard.sh` in a checkout of this repo (it
-builds its own throwaway control plane, so it runs anywhere and never touches your lanes) and add a case for
+builds its own throwaway sandbox, so it runs anywhere and never touches your lanes) and add a case for
 whatever you changed. A rule with no test is a rule that will quietly stop working.
 
 Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
