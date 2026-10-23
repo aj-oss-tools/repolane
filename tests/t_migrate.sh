@@ -170,6 +170,8 @@ assert_not_contains "Repolane's old text is gone from it" "$(cat "$OLD/CLAUDE.md
 assert "no CLAUDE.md.pre-0.10 when only lines were added" test ! -e "$OLD/CLAUDE.md.pre-0.10"
 # settings
 S="$OLD/.claude/settings.json"
+assert_contains "the migrated root settings pre-approve lane-memory goal (a session that enters a lane keeps them)" "$(cat "$S")" "Bash(lane-memory goal:*)"
+assert_contains "and lane-memory draft" "$(cat "$S")" "Bash(lane-memory draft:*)"
 hooks_of(){ python3 -c 'import json,sys
 for ev,es in json.load(open(sys.argv[1])).get("hooks",{}).items():
     for e in es:

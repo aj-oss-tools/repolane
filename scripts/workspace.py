@@ -385,17 +385,21 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
         with open(top) as fh: cur = json.load(fh)
         if not isinstance(cur, dict): raise ValueError("not a JSON object")
         have, broken = roots.repolane_hooks(cur), ""
+        perm = cur.get("permissions") if isinstance(cur.get("permissions"), dict) else {}
+        no_allow = sorted(set(roots.WORKSPACE_ALLOW) - set(perm.get("allow") or []))
     except OSError:
-        have, broken = {}, ""
+        have, broken, no_allow = {}, "", list(roots.WORKSPACE_ALLOW)
     except ValueError as e:
-        have, broken = None, str(e)
+        have, broken, no_allow = None, str(e), []
     if broken:
         report(False, f".claude/settings.json is not valid JSON ({broken[:80]}): no hook runs", "mend the file by hand, then run: lane doctor --fix")
-    elif have == want:
+    elif have == want and not no_allow:
         report(True, ".claude/settings.json runs Repolane's lane hook commands")
     elif fix:
         roots.merge_settings(top, want, roots.WORKSPACE_ALLOW)
-        report(True, ".claude/settings.json: Repolane's hooks rewritten (your own keys and hooks kept)")
+        report(True, ".claude/settings.json: Repolane's hooks and approvals rewritten (your own keys and hooks kept)")
+    elif have == want:
+        report(False, ".claude/settings.json does not pre-approve " + ", ".join(no_allow), "run: lane doctor --fix")
     else:
         missing = sorted(set(want) - set(have)); odd = sorted(e for e in have if have.get(e) != want.get(e) and e in want)
         extra = sorted(set(have) - set(want))

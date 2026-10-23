@@ -182,7 +182,12 @@ def workspace_hooks():
 # lists the same, by its bin/ paths)
 WORKSPACE_ALLOW = ["Bash(lane-merge-plan:*)", "Bash(lane-status:*)", "Bash(lane-brief:*)", "Bash(lane-menu:*)",
                    "Bash(lane-sessions:*)", "Bash(lane-env-check:*)", "Bash(lane-env-keys:*)", "Bash(lane-memory list:*)",
-                   "Bash(lane-memory show:*)", "Bash(lane-memory audit:*)", "Bash(lane status:*)", "Bash(lane brief:*)"]
+                   "Bash(lane-memory show:*)", "Bash(lane-memory audit:*)", "Bash(lane status:*)", "Bash(lane brief:*)",
+                   # a dispatcher session that enters a lane with EnterWorktree keeps these root permissions (a lane's
+                   # settings.local.json only applies to a session started inside it), and LANE.md tells it to save the
+                   # Goal and draft memories with these two: they write only that lane's file and the draft inbox, and the
+                   # command itself refuses another lane's Goal from inside a lane. `lane-memory file` still asks.
+                   "Bash(lane-memory goal:*)", "Bash(lane-memory draft:*)"]
 
 
 def is_repolane_hook(cmd):
@@ -357,6 +362,10 @@ def refresh(product, ad, force=False):
     for f in RULE_FILES:
         with open(f"{product}/templates/{f}") as fh: _write(f"{data}/{f}", fh.read())
     install_claude_files(product, ad)
+    try:   # Repolane's hooks and approvals in .claude/settings.json (the user's own keys and hooks kept)
+        merge_settings(f"{ad}/.claude/settings.json", workspace_hooks(), WORKSPACE_ALLOW)
+    except (ValueError, OSError):
+        pass   # a broken settings.json is the user's to mend; lane doctor says so
     _write(f"{data}/version", want + "\n")
     return True
 

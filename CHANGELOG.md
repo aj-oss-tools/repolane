@@ -126,7 +126,7 @@ written down. Inside a git checkout it also says how far past the release tag yo
   kept and shown where it belongs.
 - In a workspace, what a session is told speaks of the workspace: SessionStart (at the root and in a lane), a resumed
   conversation, UserPromptSubmit, PreCompact, the Worktree hooks, the guard's refusals, the MEMORY SCOPES table, the
-  menu and `lane-memory file` name the real paths (`.repolane/registry/…`, `.repolane/memory/…`, the mirrors under
+  menu, `lane-memory file` and the Findings placeholder `lane start` writes into a lane file name the real paths (`.repolane/registry/…`, `.repolane/memory/…`, the mirrors under
   `.repolane/repos/`), the commands by the name on PATH (`lane-with`, `lane sessions`), "the workspace", and
   `.repolane/REPOLANE.md` for the details, and no longer a clone's `scripts/` folder, a relative path that "exits 127"
   or the product's own files. A shared project rule's refusal names the file it came from
@@ -137,6 +137,12 @@ written down. Inside a git checkout it also says how far past the release tag yo
 - `lane help` from the installed package no longer lists a clone's `install` and `use`, and `lane install` / `lane use`
   refuse with what to do instead (`lane init [folder]`, `lane migrate <clone-folder>`); they wrote a clone's router
   into `~/.local/bin` and switched between clones. A git clone keeps both.
+- A session started at the root that enters a lane with `EnterWorktree` can save the Goal and draft a memory without
+  being asked for approval: the root pre-approves `lane-memory goal` and `lane-memory draft` (a lane's own settings
+  only apply to a session started inside it). A workspace gets them in `.claude/settings.json` from `lane init`,
+  `lane migrate`, the refresh after an upgrade and `lane upgrade`, and `lane doctor` reports them missing
+  (`--fix` adds them); a git clone gets them in the root's `.claude/settings.local.json`. `lane-memory file` still
+  asks, and `lane-memory goal` still refuses another lane's Goal from inside a lane.
 - A clone's `./lane install` no longer takes over a `lane` the installed package put on PATH: when `~/.local/bin/lane`
   is the package's launcher (pipx, uv tool or pip) it refuses, changes nothing and points at `lane migrate`. It used to
   write its router over it and register the pipx venv's `bin/` as a plane named "bin"; an old link that does not lead

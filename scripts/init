@@ -454,6 +454,9 @@ if git -C "$AD" remote get-url origin >/dev/null 2>&1; then
   fi
 fi
 
+# the root's local settings: the lanes' folders, and lane-memory goal / draft for a session that enters a lane (lib.sh)
+( source "$PRODUCT/scripts/lib.sh" && write_additional_dirs ) >/dev/null 2>&1 || true
+
 # ---------------------------------------------------------------- 5. is the wiring intact
 echo
 echo "Checking the wiring:"

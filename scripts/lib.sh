@@ -189,9 +189,9 @@ refresh_guards(){ # re-write guards in every lane so new siblings are denied eve
 # repo of a lane, so the sibling repos must be listed. Root local settings: every worktree (hook still denies
 # other lanes). Each worktree's local settings: its siblings.
 write_additional_dirs(){
-  python3 - "$AD" "$LANES_DIR" <<'PY'
+  python3 - "$AD" "$LANES_DIR" "$PRODUCT" <<'PY'
 import json,os,glob,sys
-ad,lanes_dir=sys.argv[1:3]
+ad,lanes_dir,prod=sys.argv[1:4]
 wts=sorted(p for p in glob.glob(f"{ad}/lanes/*/*") if os.path.exists(f"{p}/.git"))
 import re
 def refs_of(lane):
@@ -211,5 +211,15 @@ for lane in set(os.path.dirname(x) for x in wts):
     p=f"{lane}/.claude/settings.local.json"
     if os.path.exists(p): put(p,[s for s in wts if os.path.dirname(s)==lane]+refs_of(os.path.basename(lane)))
 put_root=f"{ad}/.claude/settings.local.json"
+# A dispatcher session at the root that enters a lane keeps the root's permissions, and is told to save the Goal and draft
+# memories with lane-memory goal / draft (they write only that lane's file and the inbox; `lane-memory file` still asks).
+# A clone's .claude/settings.json is tracked and edited by lane init, so the approvals go into the root's local settings,
+# by bare name and by the absolute path the rules give.
+cur=json.load(open(put_root))
+al=cur.setdefault("permissions",{}).setdefault("allow",[])
+for c in ("lane-memory goal","lane-memory draft"):
+    for r in (f"Bash({c}:*)",f"Bash({prod}/scripts/{c}:*)"):
+        if r not in al: al.append(r)
+json.dump(cur,open(put_root,"w"),indent=2)
 PY
 }
