@@ -1832,9 +1832,9 @@ CONTROL_PLANE_CMDS = {"upgrade", "init", "install", "add", "use"}
 # what only the owner runs, by hand in a terminal: they rewrite the plane, its settings and things outside it (lane migrate also
 # removes Repolane's files and refuses while Claude Code runs in the folder), so a session never starts them
 OWNER_ONLY_CMDS = {"migrate", "init", "upgrade"}
-OWNER_ONLY_MSG = ("`{what}` is not run from a lane session. It rewrites the control plane itself (and its settings, and lane migrate "
-                  "the whole folder), so __OWNER__ runs it themselves, from a terminal at the control plane root, with no Claude "
-                  "session inside it. Tell them the command; do not run it.")
+OWNER_ONLY_MSG = ("`{what}` is not run from a lane session. It rewrites the control plane itself and its settings (lane migrate "
+                  "rewrites the whole folder), so __OWNER__ runs it themselves, from a terminal at the control plane root, with no "
+                  "Claude session inside it. Tell them the command; do not run it.")
 CONTROL_PLANE_MSG = ("`{what}` changes the control plane itself (code, rules or the registry). Changing it from inside a lane "
                      "is how the system drifts. Propose it to __OWNER__ and run it from a dispatcher session at the control plane root.")
 OTHER_LANE_MSG = ("`{what}` targets lane '{target}' but you are in '{cur}'. Lifecycle commands only act on this session's own lane; "

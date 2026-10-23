@@ -251,7 +251,7 @@ ok = len(seen) - len(bad)
 if n_lanes:
     print(f"@wired {ok}/{len(seen)} places point at guard.py: {n_lanes} lane(s), {n_trees} worktree(s), the root")
 else:
-    print(f"@wired no lanes yet — nothing to wire but the control plane root ({ok}/{len(seen)} ok)")
+    print(f"@wired no lanes yet — nothing to wire but the root ({ok}/{len(seen)} ok)")
 if verbose:
     for s in seen:
         print("@ok   " + s) if s not in bad else None

@@ -80,7 +80,7 @@ for p in registry memory knowledge repos .cache; do assert "still nothing at the
 W "$WS/lanes/L1" brief L1; assert_eq "brief from inside the lane" 0 "$RC"; assert_contains "names the lane's repos" "$OUT" "api"
 W "$WS" status; assert_eq "status" 0 "$RC"; assert_contains "lists L1" "$OUT" "L1"
 W "$T" status; assert_eq "outside any workspace there is none to act on" 2 "$RC"
-assert_contains "and it says so" "$OUT" "not set up yet"
+assert_contains "and it says so" "$OUT" "not a workspace yet"
 
 echo "-- the lane's settings run lane hook commands"
 LS="$WS/lanes/L1/.claude/settings.local.json"

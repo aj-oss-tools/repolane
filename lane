@@ -64,7 +64,7 @@ map(){ case "$1" in
   sync)        echo "$S/lane-sync|check a repo's real GitHub branch protection: lane sync [repo]" ;;
   doctor)      echo "$S/hooks/guard-check|check the safety rules are working" ;;
   rules)       echo "$S/lane-rules|shared, git-backed rules: lane rules pull|status" ;;
-  upgrade)     echo "$S/lane-upgrade|take an update from upstream: lane upgrade" ;;
+  upgrade)     echo "$S/lane-upgrade|upgrade Repolane: lane upgrade" ;;
   import)      echo "$S/lane-import|bring past Claude conversations in (optional)" ;;
   nested)      echo "$S/lane-nested|find and repair nested worktrees" ;;
   menu)        echo "$S/menu|the long-form menu (needs bin/ on your PATH)" ;;
@@ -392,7 +392,11 @@ if entry=$(map "$cmd"); then
   case "$cmd" in
     init|help) : ;;
     *) [ -f "$REGISTRY/repos.yaml" ] || {
-         printf '\e[31mlane: this %s is not set up yet\e[0m\n' "$PLANE_WORD" >&2
+         if [ "$LANE_MODE" = clone ] && [ -n "${LANE_PRODUCT:-}" ]; then
+           printf '\e[31mlane: this folder is not a workspace yet\e[0m\n' >&2
+         else
+           printf '\e[31mlane: this %s is not set up yet\e[0m\n' "$PLANE_WORD" >&2
+         fi
          echo "  run:  lane init" >&2
          exit 2
        } ;;
