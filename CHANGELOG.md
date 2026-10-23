@@ -111,6 +111,10 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 - In a workspace, a resumed conversation started in a mirror is found again: the hooks look for its project folder
   under the mirror's real path (`.repolane/repos/<repo>`), not under `repos/<repo>`.
+- `lane park` no longer deletes a lane's `## Findings`: it replaces the Resume note's own text, up to the next heading,
+  and keeps every other section. `lane-memory file … lane`, `lane merge`, `lane brief` and `lane done` also read and
+  write one section up to the next heading, so a section you add to a lane file, or a Findings at the end of it, is
+  kept and shown where it belongs.
 
 ## [0.9.2] — 2026-10-19
 

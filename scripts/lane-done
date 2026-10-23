@@ -154,9 +154,9 @@ if [ -n "$REMOVE_FAILED" ]; then
   exit 1
 fi
 rmdir "$LANES/$id" 2>/dev/null || rm -rf "$LANES/$id"
-if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then
+if sed -n '/^## Findings/,/^## /{/^## Findings/d;/^## /d;p;}' "$f" | grep -q '^- '; then
   echo; echo "This lane has findings that will be archived with it:"
-  sed -n '/^## Findings/,/^## Log/p' "$f" | grep '^- ' | sed 's/^/   /'
+  sed -n '/^## Findings/,/^## /{/^## Findings/d;/^## /d;p;}' "$f" | grep '^- ' | sed 's/^/   /'
   echo "   Anything still true after this ships belongs in repo memory — lane-memory draft <slug> then lane-memory file <slug> repo <repo>."
 fi
 lane_set_status "$id" done; mkdir -p "$LANES_DIR/done"; mv "$f" "$LANES_DIR/done/"; "$PRODUCT/scripts/lane-workspace" >/dev/null

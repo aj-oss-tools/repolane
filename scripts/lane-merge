@@ -167,7 +167,7 @@ d = datetime.date.today().isoformat()
 ta, tb = open(fa).read(), open(fb).read()
 def sect(t, name, *nxt):
     for n in nxt:
-        m = re.search(rf"## {name}\n(.*?)(?=\n## {n}|\Z)", t, re.S)
+        m = re.search(rf"## {name}\n(.*?)(?=\n## |\Z)", t, re.S)
         if m and m.group(1).strip(): return m.group(1).strip()
     return ""
 def clean(s):
@@ -177,17 +177,17 @@ def put(t, name, nxt, extra, src):
     extra = clean(extra)
     if not extra: return t
     block = f"\n\n_from {src}, merged {d}_\n{extra}\n"
-    m = re.search(rf"(## {name}\n)(.*?)(?=\n## {nxt}|\Z)", t, re.S)
+    m = re.search(rf"(## {name}\n)(.*?)(?=\n## |\Z)", t, re.S)
     if not m: return t.rstrip("\n") + f"\n\n## {name}\n{block.strip()}\n"
     return t[:m.end(2)].rstrip("\n") + block + t[m.end(2):]
 new_ws = TARGET != B
 if new_ws:
     out = re.sub(r"^id: .*$", f"id: {TARGET}", tb, flags=re.M)
     out = re.sub(r"^status: .*$", "status: active", out, flags=re.M)
-    out = re.sub(r"## Goal\n.*?(?=\n## Resume note)", "## Goal\n", out, flags=re.S)
-    out = re.sub(r"## Resume note\n.*?(?=\n## )", "## Resume note\n", out, flags=re.S)
-    out = re.sub(r"## Findings\n.*?(?=\n## Log)", "## Findings\n", out, flags=re.S)
-    out = re.sub(r"## Log\n(?:.*\n)*", f"## Log\n- {d} created by merging {A} and {B}\n", out)
+    out = re.sub(r"## Goal\n.*?(?=\n## |\Z)", "## Goal\n", out, flags=re.S)
+    out = re.sub(r"## Resume note\n.*?(?=\n## |\Z)", "## Resume note\n", out, flags=re.S)
+    out = re.sub(r"## Findings\n.*?(?=\n## |\Z)", "## Findings\n", out, flags=re.S)
+    out = re.sub(r"## Log\n(?:(?!## ).*\n)*", f"## Log\n- {d} created by merging {A} and {B}\n", out)
     for src, t in ((B, tb), (A, ta)):
         out = put(out, "Goal", "Resume note", sect(t, "Goal", "Resume note"), src)
         out = put(out, "Resume note", "Findings", sect(t, "Resume note", "Findings", "Log"), src)

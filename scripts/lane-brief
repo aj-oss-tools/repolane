@@ -21,7 +21,7 @@ if [ ! -f "$f" ]; then
   fi
 fi
 echo "━━ $id  [$(lane_get "$id" status)]  ticket: $(lane_get "$id" ticket)  updated: $(lane_get "$id" updated)"
-echo "GOAL"; sed -n '/^## Goal/,/^## Resume note/p' "$f" | sed '1d;$d' | grep -v '^$' | sed 's/^/  /'
+echo "GOAL"; sed -n '/^## Goal/,/^## /{/^## Goal/d;/^## /d;p;}' "$f" | grep -v '^$' | sed 's/^/  /'
 echo "RESUME NOTE"; sed -n '/^## Resume note/,/^## /{/^## Resume note/d;/^## /d;p;}' "$f" | grep -v '^$' | sed 's/^/  /'
 # links: is optional and hand-written — a breadcrumb for things the one ticket URL cannot reach.
 if [ -n "$(lane_links "$id")" ]; then
@@ -37,7 +37,7 @@ while read -r repo branch; do d="$LANES/$id/$repo"
   else echo "  no worktree (lane-resume $id recreates it)"; fi
   m="$MEMORY_DIR/$repo/MEMORY.md"; [ -f "$m" ] && { echo "  memory index ($m):"; { grep '^- ' "$m" || true; } | head -8 | cut -c1-140 | sed 's/^/    /'; }
 done < <(lane_repos "$id")
-if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then echo "FINDINGS (live only — archived when this lane finishes)"; sed -n '/^## Findings/,/^## Log/p' "$f" | grep '^- ' | cut -c1-150 | sed 's/^/  /'; fi
+if sed -n '/^## Findings/,/^## /{/^## Findings/d;/^## /d;p;}' "$f" | grep -q '^- '; then echo "FINDINGS (live only — archived when this lane finishes)"; sed -n '/^## Findings/,/^## /{/^## Findings/d;/^## /d;p;}' "$f" | grep '^- ' | cut -c1-150 | sed 's/^/  /'; fi
 if grep -q '^  - path: ' "$f"; then
   if [ "$archived" = 1 ]; then echo "REFERENCES (were attached; links removed with the lane)"; sed -n 's/^  - path: /  /p' "$f"
   else echo "REFERENCES (lanes/$id/refs/)"; "$PRODUCT/scripts/lane-ref" "$id" list 2>/dev/null | grep -v '^ref'; fi

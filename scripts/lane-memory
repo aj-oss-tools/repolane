@@ -116,7 +116,7 @@ desc=(re.search(r"^description: *(.+)$",t,re.M) or [None,""])[1].strip().strip('
 entry=f"- {datetime.date.today()} — {desc}\n" + ("\n".join("  "+l for l in body.splitlines() if l.strip())+"\n" if body else "")
 d=open(dst).read()
 if "\n## Findings" in d:
-    d=re.sub(r"(## Findings\n(?:.*?\n)??)(?=\n## |\Z)", lambda m: m.group(1).rstrip("\n")+"\n"+entry, d, count=1, flags=re.S)
+    d=re.sub(r"(^## Findings\n.*?)(?=\n## |\Z)", lambda m: m.group(1).rstrip("\n")+"\n"+entry, d, count=1, flags=re.S|re.M)
 else:
     d=d.replace("\n## Log", "\n## Findings\n"+entry+"\n## Log",1) if "\n## Log" in d else d.rstrip("\n")+"\n\n## Findings\n"+entry
 open(dst,"w").write(d); print("added to ## Findings of",dst.split("/")[-1])
