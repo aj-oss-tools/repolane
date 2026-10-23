@@ -419,7 +419,10 @@ class Plan:
         if isinstance(planes, dict):
             for name, e in (planes.get("planes") or {}).items():
                 p = (e or {}).get("path", "") if isinstance(e, dict) else ""
-                (mine if p and os.path.realpath(p) == self.ad else others).append(name)
+                if p and os.path.realpath(p) == self.ad: mine.append(name)
+                # only a real clone install still needs the router: an entry for a folder that is gone, or for something
+                # that is not a clone (an older `lane install` registered a pipx venv's bin/ as a plane) does not
+                elif p and is_clone(os.path.realpath(p)): others.append(name)
         binp = f"{home}/.local/bin"
         router = f"{binp}/lane"
         is_router = False

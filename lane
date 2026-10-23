@@ -230,6 +230,19 @@ case "$cmd" in
       esac
       i=$((i+1))
     done
+    # The `lane` already there may be the installed package's (pipx, uv tool and pip all write a small Python launcher,
+    # pipx and uv as a link into their venv). It is not a clone and not the router: writing the router over it would take
+    # the package's `lane` away, and registering it would make its venv's bin/ a "plane". Refuse, and say what to do.
+    if [ -e "$dest/lane" ]; then
+      _l=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$dest/lane" 2>/dev/null)
+      if [ -f "$_l" ] && head -c 4096 "$_l" 2>/dev/null | grep -qE 'repolane\.cli|from repolane'; then
+        echo "lane install: $dest/lane is the installed Repolane package's lane (pipx, uv tool or pip), not a clone's router." >&2
+        echo "  Writing the router there would replace it, so nothing was changed. The package works on workspaces:" >&2
+        echo "    move this clone over:            lane migrate $(printf %q "$AD")" >&2
+        echo "    or keep the clone's own router:  ./lane install <another-folder-on-PATH>" >&2
+        exit 2
+      fi
+    fi
     mkdir -p "$dest" || exit 1
     SHARE="$HOME/.local/share/lane"; mkdir -p "$SHARE" || exit 1
     PY="$SHARE/planes.py"
@@ -249,6 +262,11 @@ case "$cmd" in
       old_real="$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$dest/lane" 2>/dev/null)"
       if [ -n "$old_real" ] && [ -x "$old_real" ]; then
         migrated_from="$(cd "$(dirname "$old_real")" && pwd)"
+        # only a git clone of Repolane is a plane: a link to anything else is not registered
+        if [ ! -f "$migrated_from/lane" ] || [ ! -f "$migrated_from/scripts/lib.sh" ]; then
+          echo "not registering $migrated_from (the old $dest/lane pointed there): it is not a git clone of Repolane" >&2
+          migrated_from=""
+        fi
       fi
     fi
 

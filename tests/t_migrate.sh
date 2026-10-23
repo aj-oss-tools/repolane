@@ -299,12 +299,24 @@ O status; assert_eq "$TAG lane status works" 0 "$RC"
 
 echo "-- the router stays while another clone install uses it"
 cp "$PLANES" "$T/planes.saved"
+mkdir -p "$T/another-clone/scripts/hooks"; : > "$T/another-clone/lane"; : > "$T/another-clone/scripts/lib.sh"
 python3 - "$PLANES" "$T/another-clone" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1])); d["planes"]["another"] = {"path": sys.argv[2], "registered": "x"}; json.dump(d, open(sys.argv[1], "w"))
 PY
 M --dry-run; assert_contains "the preview keeps it, and says why" "$OUT" "other clone installs still use it (another)"
 assert_not_contains "and does not offer to remove it" "$OUT" "remove ~/.local/bin/lane"
+cp "$T/planes.saved" "$PLANES"
+echo "-- an entry that is not a clone install does not keep the router (a pipx venv's bin/, a folder that is gone)"
+mkdir -p "$T/pipx/venvs/repolane/bin"; printf '#!/usr/bin/env python3\nfrom repolane.cli import main\n' > "$T/pipx/venvs/repolane/bin/lane"
+python3 - "$PLANES" "$T/pipx/venvs/repolane/bin" "$T/gone-clone" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["planes"]["bin"] = {"path": sys.argv[2], "registered": "x"}; d["planes"]["gone"] = {"path": sys.argv[3], "registered": "x"}
+json.dump(d, open(sys.argv[1], "w"))
+PY
+M --dry-run
+assert_not_contains "the preview does not keep the router for them" "$OUT" "other clone installs still use it"
+assert_contains "and plans to remove it" "$OUT" "~/.local/bin/lane"
 cp "$T/planes.saved" "$PLANES"
 
 echo "-- a migration stopped half way continues when run again (--git, CLAUDE.md with Repolane's text edited)"

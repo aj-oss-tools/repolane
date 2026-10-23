@@ -54,4 +54,31 @@ o=$(printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"co
     | CLAUDE_PROJECT_DIR="$PLANE/lanes/C1" env -u LANE_PRODUCT -u LANE_WORKSPACE python3 "$PLANE/scripts/hooks/guard.py" 2>&1)
 assert_contains "a clone's lane session is refused lane migrate too" "$o" '"deny"'
 assert_contains "  in a clone's words" "$o" "control plane root"
+
+echo "-- a clone's lane install over the package's lane on PATH refuses, and registers no venv as a plane"
+PLANES="$HOME/.local/share/lane/planes.json"
+CI(){ OUT=$(cd "$PLANE" && env -u LANE_PRODUCT -u LANE_WORKSPACE ./lane install "$@" </dev/null 2>&1); RC=$?; }
+mkdir -p "$HOME/.local/bin" "$T/pipx/venvs/repolane/bin"
+printf '#!%s/pipx/venvs/repolane/bin/python\nimport sys\nfrom repolane.cli import main\nsys.exit(main())\n' "$T" > "$T/pipx/venvs/repolane/bin/lane"
+chmod +x "$T/pipx/venvs/repolane/bin/lane"
+ln -sf "$T/pipx/venvs/repolane/bin/lane" "$HOME/.local/bin/lane"
+CI; assert_eq "lane install over pipx's lane exits 2" 2 "$RC"
+assert_contains "it says that lane is the installed package's" "$OUT" "is the installed Repolane package's lane"
+assert_contains "and points at lane migrate" "$OUT" "lane migrate"
+assert_eq "pipx's link is left as it was" "$T/pipx/venvs/repolane/bin/lane" "$(readlink "$HOME/.local/bin/lane")"
+assert_not_contains "no venv bin/ is registered as a plane" "$(cat "$PLANES" 2>/dev/null)" "venvs"
+if head -c 4096 "$BIN/lane" | grep -q 'repolane'; then
+  ln -sf "$BIN/lane" "$HOME/.local/bin/lane"
+  CI; assert_eq "the same over the real installed package's launcher" 2 "$RC"
+  assert_eq "  which is left in place" "$BIN/lane" "$(readlink "$HOME/.local/bin/lane")"
+fi
+rm -f "$HOME/.local/bin/lane"; printf '#!/usr/bin/env python3\nfrom repolane.cli import main\n' > "$HOME/.local/bin/lane"
+CI; assert_eq "and over pip's plain launcher file" 2 "$RC"
+echo "-- an old link to something that is not a clone is replaced, but not registered"
+mkdir -p "$T/notaclone"; printf '#!/bin/sh\necho hi\n' > "$T/notaclone/lane"; chmod +x "$T/notaclone/lane"
+rm -f "$HOME/.local/bin/lane"; ln -s "$T/notaclone/lane" "$HOME/.local/bin/lane"
+CI; assert_eq "lane install succeeds" 0 "$RC"
+assert_contains "it says why it does not register it" "$OUT" "it is not a git clone of Repolane"
+assert_not_contains "planes.json has no entry for it" "$(cat "$PLANES" 2>/dev/null)" "notaclone"
+assert_contains "the clone itself is registered" "$(cat "$PLANES" 2>/dev/null)" "$PLANE"
 finish

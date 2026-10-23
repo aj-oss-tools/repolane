@@ -137,6 +137,11 @@ written down. Inside a git checkout it also says how far past the release tag yo
 - `lane help` from the installed package no longer lists a clone's `install` and `use`, and `lane install` / `lane use`
   refuse with what to do instead (`lane init [folder]`, `lane migrate <clone-folder>`); they wrote a clone's router
   into `~/.local/bin` and switched between clones. A git clone keeps both.
+- A clone's `./lane install` no longer takes over a `lane` the installed package put on PATH: when `~/.local/bin/lane`
+  is the package's launcher (pipx, uv tool or pip) it refuses, changes nothing and points at `lane migrate`. It used to
+  write its router over it and register the pipx venv's `bin/` as a plane named "bin"; an old link that does not lead
+  to a git clone of Repolane is no longer registered at all. `lane migrate` keeps the router only for registered
+  entries that are real clone installs, not for a venv or a folder that is gone.
 - A session inside a lane is refused `lane migrate`, `lane init` and `lane upgrade`, with a message that the owner runs
   them from a terminal at the root.
 
