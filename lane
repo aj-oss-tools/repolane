@@ -32,6 +32,10 @@ else lane_resolve_roots; fi
 # nor for `lane upgrade`, which refreshes every registered workspace itself and reports what it did
 case "${1:-} ${2:-}" in "doctor "*|"upgrade "*|"hook ping") : ;; *) lane_refresh_workspace ;; esac
 
+# the installed package (LANE_PRODUCT set by its launcher, and no git checkout of its own) as opposed to a clone: a few
+# commands only make sense for one of the two
+PKG=""; [ -n "${LANE_PRODUCT:-}" ] && [ ! -e "$PRODUCT/.git" ] && PKG=1
+
 # command → implementation, and the one line shown in `lane help`
 map(){ case "$1" in
   init)        echo "$S/init|set this machine up (safe to re-run)" ;;
@@ -75,9 +79,14 @@ usage(){
   for c in $ORDER; do
     line=$(map "$c"); printf "    \e[1m%-10s\e[0m %s\n" "$c" "${line#*|}"
   done
-  printf '\n    %-10s %s\n' "install" "put lane on your PATH so it works from anywhere"
-  printf '    %-10s %s\n' "migrate" "turn a git-clone install into a workspace (from the installed package): lane migrate [folder]"
-  printf '    %-10s %s\n\n' "use" "switch which registered plane is active; lane use --remove <name> forgets one (stable ~/.local/bin/lane dispatcher)"
+  if [ -n "$PKG" ]; then
+    # the package is on PATH already and finds the workspace from the folder: install and use are a clone's
+    printf '\n    %-10s %s\n\n' "migrate" "turn a git-clone install into a workspace: lane migrate [folder]"
+  else
+    printf '\n    %-10s %s\n' "install" "put lane on your PATH so it works from anywhere"
+    printf '    %-10s %s\n' "migrate" "turn a git-clone install into a workspace (from the installed package): lane migrate [folder]"
+    printf '    %-10s %s\n\n' "use" "switch which registered plane is active; lane use --remove <name> forgets one (stable ~/.local/bin/lane dispatcher)"
+  fi
   # scripts/local/<name> (docs/extending.md): any executable there is a `lane <name>` too. Listed
   # separately, after the built-ins, so a shadowed name is never confused for one of them.
   if [ -d "$DATA/scripts/local" ]; then
@@ -150,6 +159,21 @@ if [ $# -ge 2 ] && { [ "$2" = "--help" ] || [ "$2" = "-h" ]; } && entry=$(map "$
   awk 'NR==1{next} /^#/{print; next} {exit}' "${entry%%|*}" | sed 's/^# \{0,1\}//' | sed 's/^/  /'
   echo
   exit 0
+fi
+
+# `lane install` and `lane use` belong to a git clone: install writes the router into ~/.local/bin that picks a clone,
+# use switches between clones. The installed package is on PATH already and finds the workspace from the current folder.
+if [ -n "$PKG" ] && { [ "$cmd" = install ] || [ "$cmd" = use ]; }; then
+  if [ "$cmd" = install ]; then
+    echo "lane install is for a git clone of Repolane (it writes a router into ~/.local/bin). The installed package already" >&2
+    echo "put lane on your PATH, so there is nothing to install." >&2
+  else
+    echo "lane use switched between git-clone installs. The installed package acts on the workspace you are in: it looks up" >&2
+    echo "from the current folder for one with a .repolane/ folder (or LANE_WORKSPACE names it)." >&2
+  fi
+  echo "  make a workspace:            lane init [folder]" >&2
+  echo "  move a clone install over:   lane migrate <clone-folder>" >&2
+  exit 2
 fi
 
 case "$cmd" in

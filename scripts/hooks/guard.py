@@ -1829,6 +1829,12 @@ GIT_WRITE_SUBS = {"commit", "checkout", "switch", "reset", "push", "add", "rm", 
                   "apply", "am", "cherry-pick", "branch", "tag", "worktree"}
 MIRROR_BLOCKED = {"checkout", "switch", "reset", "commit", "merge", "rebase", "stash", "cherry-pick", "am", "apply", "clean", "restore", "push"}
 CONTROL_PLANE_CMDS = {"upgrade", "init", "install", "add", "use"}
+# what only the owner runs, by hand in a terminal: they rewrite the plane, its settings and things outside it (lane migrate also
+# removes Repolane's files and refuses while Claude Code runs in the folder), so a session never starts them
+OWNER_ONLY_CMDS = {"migrate", "init", "upgrade"}
+OWNER_ONLY_MSG = ("`{what}` is not run from a lane session. It rewrites the control plane itself (and its settings, and lane migrate "
+                  "the whole folder), so __OWNER__ runs it themselves, from a terminal at the control plane root, with no Claude "
+                  "session inside it. Tell them the command; do not run it.")
 CONTROL_PLANE_MSG = ("`{what}` changes the control plane itself (code, rules or the registry). Changing it from inside a lane "
                      "is how the system drifts. Propose it to __OWNER__ and run it from a dispatcher session at the control plane root.")
 OTHER_LANE_MSG = ("`{what}` targets lane '{target}' but you are in '{cur}'. Lifecycle commands only act on this session's own lane; "
@@ -2366,6 +2372,8 @@ if event == "PreToolUse":
                 target = first_arg(w, j)
                 if target and target != cur:
                     deny(event, OTHER_LANE_MSG.format(what=f"lane {name}", target=target, cur=cur))
+            if cur and name in OWNER_ONLY_CMDS:
+                deny(event, OWNER_ONLY_MSG.format(what=f"lane {name}"))
             if cur and (name in CONTROL_PLANE_CMDS or (name == "rules" and first_arg(w, j) == "pull")
                         or (name == "secrets" and any(a in ("add", "ignore") for a in w[j:j + 4]))):
                 deny(event, CONTROL_PLANE_MSG.format(what=f"lane {name}"))

@@ -122,6 +122,11 @@ written down. Inside a git checkout it also says how far past the release tag yo
   `.repolane/REPOLANE.md` for the details, and no longer a clone's `scripts/` folder, a relative path that "exits 127"
   or the product's own files. A shared project rule's refusal names the file it came from
   (`registry/rules.shared.yaml`), not `registry/rules.yaml`. A git clone's text is unchanged.
+- `lane help` from the installed package no longer lists a clone's `install` and `use`, and `lane install` / `lane use`
+  refuse with what to do instead (`lane init [folder]`, `lane migrate <clone-folder>`); they wrote a clone's router
+  into `~/.local/bin` and switched between clones. A git clone keeps both.
+- A session inside a lane is refused `lane migrate`, `lane init` and `lane upgrade`, with a message that the owner runs
+  them from a terminal at the root.
 
 ## [0.9.2] — 2026-10-19
 
