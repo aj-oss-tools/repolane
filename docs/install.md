@@ -68,6 +68,8 @@ Three things at the top are yours and Claude Code's; everything Repolane keeps i
   CLAUDE.md                  yours. It imports Repolane's rules with the line  @.repolane/REPOLANE.md
   .claude/settings.json      Claude Code's settings: Repolane's `lane hook …` commands, `lane statusline`,
                              and anything of your own
+  .claude/commands/          Repolane's slash commands (/status, /lane-brief, /lane-start, …), beside your own
+  .claude/agents/            Repolane's agents (lane-manager, context-loader, branch-gardener), beside your own
   lanes/<id>/<repo>/         the worktrees: one folder per piece of work
   .repolane/
     REPOLANE.md              the rules every session here gets (through the import line in CLAUDE.md)
@@ -84,10 +86,16 @@ Three things at the top are yours and Claude Code's; everything Repolane keeps i
     cache/                   machine-local caches
     scripts/local/           your own `lane <name>` commands (optional; see extending.md)
     declined.json            the memory links you said no to (only when there are some)
+    claude-files.json        which slash command and agent files Repolane wrote into .claude/, so it never replaces yours
 ```
 
 `REPOLANE.md`, `LANE.md` and `version` are Repolane's: they are written again on the first `lane` command or hook after
-the installed version changes, so do not edit them. Nothing else in the workspace is ever overwritten. Neither rule
+the installed version changes, so do not edit them. Nothing else in the workspace is ever overwritten.
+
+Repolane's slash commands and agents are copied into `.claude/commands/` and `.claude/agents/` by name, and brought up to
+date with the rule files. Only a file that is still exactly what Repolane wrote is ever replaced: a file of your own
+with the same name, or one of Repolane's you edited, is kept (`lane init` and `lane doctor` say so), and one you
+delete stays deleted. Neither rule
 file carries your name; the hooks name you when a session starts.
 
 The hooks in `.claude/settings.json` and in every lane's settings are commands (`lane hook pre-tool-use`,
@@ -143,6 +151,8 @@ is not on the remote, so push lane branches you want to continue elsewhere.
 - `REPOLANE.md` and `LANE.md` are the installed version's, and the workspace is registered in `planes.json`.
 - Claude Code's memory links for the root and every mirror point into `.repolane/memory` (one you declined is a note,
   not a failure).
+- Repolane's slash commands and agents in `.claude/` are the installed version's (a file of your own by the same name
+  is a note, and is never replaced).
 - The status line: `lane statusline`, your own, or none (a note).
 
 Then it compiles the guard, fires its named probes at it, and checks every lane is wired to it. Each problem comes
@@ -160,7 +170,7 @@ lane upgrade                    # upgrade the package, then refresh every regist
 `lane upgrade` upgrades the package the way it was installed (`pipx upgrade repolane`, or `uv tool upgrade repolane`;
 for a pip install it prints the `pip` command to run), then refreshes every workspace in `planes.json` with the new
 version: the rule files and data migrations, Repolane's hooks in `.claude/settings.json` (your own keys and hooks
-kept), and every lane's `settings.local.json` and `CLAUDE.md`. Nothing you wrote is changed. It reports each
+kept), Repolane's slash commands and agents in `.claude/`, and every lane's `settings.local.json` and `CLAUDE.md`. Nothing you wrote is changed. It reports each
 workspace and exits non-zero if one could not be refreshed.
 
 A registered folder that is gone is skipped and reported, and you are asked whether to drop it from the registry

@@ -59,6 +59,10 @@ Claude, and a `systemMessage` shown to you on the startup screen.
 in the main session spends the window you wanted the context *for*. A subagent reads widely and
 returns a page.
 
+In a workspace (the installed package) these folders are not used: `lane init` copies the workspace's versions,
+`../templates/claude/agents/` and `../templates/claude/commands/`, into the workspace's own `.claude/`, which call the
+`lane-*` commands on PATH and name the `.repolane/` paths. Change both when you change one.
+
 ## `commands/`
 
 Most are three lines — a description, an `allowed-tools` entry naming exactly one script, and the

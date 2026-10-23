@@ -150,6 +150,9 @@ def refresh_one(ad):
             parts.append("Repolane's hooks in .claude/settings.json updated (yours kept)")
     except ValueError as e:
         raise RuntimeError(f".claude/settings.json is not valid JSON ({str(e)[:80]}): mend it, then run lane upgrade --refresh-only")
+    written, kept = roots.install_claude_files(PRODUCT, ad)
+    if written: parts.append(f"{len(written)} of Repolane's slash command / agent file(s) in .claude/ updated")
+    if kept: parts.append(f"kept your own {', '.join('.claude/' + k for k in kept)}")
     n = rewrite_lanes(ad)
     if n: parts.append(f"{n} lane(s)' settings written again")
     return "; ".join(parts)

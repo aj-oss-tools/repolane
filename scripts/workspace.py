@@ -487,7 +487,26 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
                     report(False, f"{tilde(p)}/memory ({label}) {why}: Claude Code's memory for it is not kept in the workspace",
                            "run: lane doctor --fix (it asks before changing anything under ~/.claude)")
 
-    # 8. the status line (optional: missing is a note, a clone's stale path is a problem, the user's own is left alone)
+    # 8. Repolane's slash commands and agents in .claude/ (only its own files, by name; the user's are never replaced)
+    states = roots.claude_files_state(PRODUCT, ad)
+    if fix and any(s in ("missing", "old", "retired") for _, s in states):
+        roots.install_claude_files(PRODUCT, ad)
+        states = roots.claude_files_state(PRODUCT, ad)
+    by = {}
+    for rel, s in states: by.setdefault(s, []).append(rel)
+    n_ours = len(by.get("ours", []))
+    if not any(by.get(s) for s in ("missing", "old", "retired")):
+        report(True, f"Repolane's slash commands and agents are in .claude/ ({n_ours} file(s), version {ver}'s)")
+    else:
+        what = "; ".join(f"{label}: " + ", ".join(by[s]) for s, label in
+                         (("missing", "missing"), ("old", "from an earlier version"), ("retired", "no longer shipped")) if by.get(s))
+        report(False, f"Repolane's slash commands and agents in .claude/ are not the installed version's ({what})", "run: lane doctor --fix")
+    for rel in by.get("mine", []):
+        lines.append(("note", Y, f".claude/{rel} is your own file (or one you edited), so Repolane's of that name is not installed", ""))
+    for rel in by.get("removed", []):
+        lines.append(("note", Y, f".claude/{rel} was removed, and stays removed", ""))
+
+    # 9. the status line (optional: missing is a note, a clone's stale path is a problem, the user's own is left alone)
     st = roots.statusline_state(ad)
     if st in ("stale", "none") and fix and roots.set_statusline(ad):
         report(True, f"status line: {roots.STATUSLINE_CMD} " + ("(a clone's statusline.sh path replaced)" if st == "stale" else "(added)"))
@@ -603,6 +622,8 @@ def init(argv):
         print(f"lane init: {ad}/.claude/settings.json is not valid JSON ({e}); mend it, then run lane init again", file=sys.stderr)
         return 1
     for m in made: say("made", G, m)
+    for rel, st in roots.claude_files_state(PRODUCT, ad):
+        if st == "mine": say("kept", Y, f".claude/{rel} is yours: kept, Repolane's file of that name is not installed")
     imported = offer_import(ad, assume_yes)
     no = declined(ad)
     pend = [x for x in pending_links(ad) if link_key(ad, x[1]) not in no]

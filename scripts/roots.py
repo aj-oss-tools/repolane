@@ -356,8 +356,91 @@ def refresh(product, ad, force=False):
         if applies(have, want): step(ad)
     for f in RULE_FILES:
         with open(f"{product}/templates/{f}") as fh: _write(f"{data}/{f}", fh.read())
+    install_claude_files(product, ad)
     _write(f"{data}/version", want + "\n")
     return True
+
+
+# ------------------------------------------------------------------------------ slash commands and agents
+# Repolane's slash commands (/status, /lane-brief, …) and agents (lane-manager, …) for a workspace are the product's
+# templates/claude/{commands,agents}/*.md, copied into the workspace's .claude/ by name. .claude/ is the user's folder,
+# so a file is only ever written when it is missing, or when it is still exactly what Repolane wrote there before (a
+# previous version, never edited): .repolane/claude-files.json records each file Repolane wrote, with a hash of its
+# text. A file of the user's by the same name, or one of ours they edited, is kept; one they deleted stays deleted.
+CLAUDE_KINDS = ("commands", "agents")
+CLAUDE_RECORD = "claude-files.json"
+
+
+def _sha(text):
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def claude_files(product):
+    """{"commands/status.md": text, …}: what the installed version puts in a workspace's .claude/."""
+    out = {}
+    for kind in CLAUDE_KINDS:
+        d = f"{product}/templates/claude/{kind}"
+        try: names = sorted(os.listdir(d))
+        except OSError: continue
+        for n in names:
+            if n.endswith(".md") and os.path.isfile(f"{d}/{n}"):
+                with open(f"{d}/{n}") as fh: out[f"{kind}/{n}"] = fh.read()
+    return out
+
+
+def _claude_record(ad):
+    try:
+        with open(f"{ad}/.repolane/{CLAUDE_RECORD}") as fh: rec = json.load(fh)
+        return {k: v for k, v in rec.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(rec, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def claude_files_state(product, ad):
+    """[(path under .claude/, state)], state one of:
+      ours     the installed version's, word for word
+      old      what an earlier version wrote, never edited: a refresh replaces it
+      missing  never written here: a refresh writes it
+      mine     a file of the user's by that name, or one of ours they edited: kept
+      removed  written once, deleted since: left deleted
+      retired  an earlier version's file this one no longer ships, never edited: a refresh removes it"""
+    want, rec, out = claude_files(product), _claude_record(ad), []
+    for rel, text in want.items():
+        try:
+            with open(f"{ad}/.claude/{rel}") as fh: cur = fh.read()
+        except OSError:
+            out.append((rel, "removed" if rel in rec else "missing")); continue
+        out.append((rel, "ours" if cur == text else "old" if rec.get(rel) == _sha(cur) else "mine"))
+    for rel, h in sorted(rec.items()):
+        if rel in want or "/" not in rel or rel.split("/", 1)[0] not in CLAUDE_KINDS or ".." in rel.split("/"): continue
+        try:
+            with open(f"{ad}/.claude/{rel}") as fh:
+                if _sha(fh.read()) == h: out.append((rel, "retired"))
+        except OSError:
+            pass
+    return out
+
+
+def install_claude_files(product, ad):
+    """Bring the workspace's copies of Repolane's slash commands and agents up to the installed version, by the rules
+    above. Returns (written, kept): the paths written or removed, and the user's files left in their place."""
+    want, rec = claude_files(product), _claude_record(ad)
+    before, written, kept = dict(rec), [], []
+    for rel, st in claude_files_state(product, ad):
+        p = f"{ad}/.claude/{rel}"
+        if st in ("missing", "old"):
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            _write(p, want[rel]); rec[rel] = _sha(want[rel]); written.append(rel)
+        elif st == "ours":
+            rec[rel] = _sha(want[rel])
+        elif st == "retired":
+            os.remove(p); rec.pop(rel, None); written.append(rel)
+        elif st == "mine":
+            kept.append(rel)
+    if rec != before and os.path.isdir(f"{ad}/.repolane"):
+        _write(f"{ad}/.repolane/{CLAUDE_RECORD}", json.dumps(rec, indent=2, sort_keys=True) + "\n")
+    return written, kept
 
 
 # ------------------------------------------------------------------------------------------- an empty workspace
@@ -415,6 +498,9 @@ def make_workspace(product, ad, owner=""):
         made.append(".claude/settings.json (Repolane's hooks)")
     if set_statusline(ad, replace_stale=False):
         made.append(f".claude/settings.json (status line: {STATUSLINE_CMD})")
+    written, _ = install_claude_files(product, ad)   # the user's own files of those names are kept (lane init says which)
+    if written:
+        made.append(f".claude/commands, .claude/agents (Repolane's {len(written)} slash command and agent file(s))")
     if refresh(product, ad):
         made.append(f".repolane/REPOLANE.md, .repolane/LANE.md (version {product_version(product)})")
     return made

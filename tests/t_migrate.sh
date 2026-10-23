@@ -189,7 +189,11 @@ assert_contains "the worktree's memory is the new folder" "$(cat "$OLD/lanes/L1/
 assert_contains "the lane's pointer file names the new paths" "$(cat "$OLD/lanes/L1/CLAUDE.md")" "$OLD/.repolane/registry/lanes/L1.md"
 # product files gone, the owner's kept
 for f in lane VERSION CLAUDE.md.template README.md CHANGELOG.md LICENSE .gitignore scripts/lib.sh scripts/hooks/guard.py bin docs tests .github \
-         .claude/agents .claude/commands .claude/README.md; do assert "Repolane's $f is gone" test ! -e "$OLD/$f"; done
+         .claude/README.md; do assert "Repolane's $f is gone" test ! -e "$OLD/$f"; done
+# the clone's slash commands and agents (which run bin/ by path) are replaced by the workspace's, by name
+assert_not_contains "the clone's slash commands are gone" "$(cat "$OLD"/.claude/commands/*.md 2>/dev/null)" "/bin/lane-"
+assert_eq "the workspace's are in their place" "$(cat "$PROD/templates/claude/commands/status.md")" "$(cat "$OLD/.claude/commands/status.md" 2>/dev/null)"
+assert_eq "and its agents" "$(cat "$PROD/templates/claude/agents/lane-manager.md")" "$(cat "$OLD/.claude/agents/lane-manager.md" 2>/dev/null)"
 assert ".git (the Repolane repo's) is gone" test ! -e "$OLD/.git"
 assert_eq "the owner's notes.txt is kept" "my notes" "$(cat "$OLD/notes.txt")"
 assert "the owner's scripts/my-tool is kept" test -x "$OLD/scripts/my-tool"

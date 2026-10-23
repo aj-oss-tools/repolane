@@ -32,7 +32,8 @@ for f in repolane/__init__.py repolane/cli.py $P/lane $P/VERSION $P/LICENSE $P/N
          $P/scripts/hooks/guard.py $P/scripts/hooks/guard-check $P/scripts/hooks/test-guard.sh \
          $P/scripts/board/server.py $P/scripts/board/index.html $P/scripts/board/board.js $P/scripts/board/board.css \
          $P/knowledge/preferences.md.example $P/.claude/settings.json $P/scripts/roots.sh $P/scripts/roots.py \
-         $P/templates/REPOLANE.md $P/templates/LANE.md $P/templates/config.yml $P/templates/env.sh; do
+         $P/templates/REPOLANE.md $P/templates/LANE.md $P/templates/config.yml $P/templates/env.sh \
+         $P/templates/claude/commands/status.md $P/templates/claude/commands/lane-start.md $P/templates/claude/agents/lane-manager.md; do
   assert_contains "wheel has $f" "$names" "$f"
 done
 # every script the dispatcher maps to must be in the wheel, or `lane <cmd>` dies on an installed copy
@@ -42,7 +43,8 @@ for s in $cmds; do
   printf '%s\n' "$names" | grep -qxF "$P/scripts/$s" || missing="$missing $s"
 done
 assert_eq "wheel has every script a lane command runs" "" "$missing"
-for x in tests/ docs/ .github/ registry/ memory/ repos/ lanes/ bin/ scripts/local/ scripts/release __pycache__ .git/; do
+# a clone's own slash commands run bin/ by path, which a workspace has none of: the workspace's are templates/claude/
+for x in tests/ docs/ .github/ registry/ memory/ repos/ lanes/ bin/ scripts/local/ scripts/release __pycache__ .git/ .claude/commands/ .claude/agents/; do
   assert_not_contains "wheel has no $x" "$names" "$P/$x"
 done
 assert_eq "knowledge/ carries only the template, no user notes" "$P/knowledge/preferences.md.example" "$(printf '%s\n' "$names" | grep "^$P/knowledge/")"

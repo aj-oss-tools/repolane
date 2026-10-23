@@ -11,7 +11,7 @@ in it. `lane` finds the workspace by looking up from the current folder, so ever
 ```
 ~/work/
   CLAUDE.md          yours; imports Repolane's rules with @.repolane/REPOLANE.md
-  .claude/           Claude Code's settings, with Repolane's `lane hook …` commands
+  .claude/           Claude Code's settings, with Repolane's `lane hook …` commands, slash commands and agents
   lanes/             the work: one folder per lane
   .repolane/         everything else Repolane keeps: the registry, memory, knowledge, the mirrors, config
 ```

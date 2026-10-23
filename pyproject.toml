@@ -66,7 +66,7 @@ path = "VERSION"
 pattern = "(?P<version>\\S+)"
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src", "lane", "scripts", "templates", ".claude/agents", ".claude/commands", ".claude/settings.json", "CLAUDE.md.template",
+only-include = ["src", "lane", "scripts", "templates", ".claude/settings.json", "CLAUDE.md.template",
                 "knowledge/preferences.md.example", "VERSION", "LICENSE", "NOTICE", "README.md", "CHANGELOG.md", "pyproject.toml",
                 "hatch_build.py"]
 exclude = ["scripts/local", "**/__pycache__", "scripts/migrate-head.json"]
@@ -81,6 +81,6 @@ packages = ["src/repolane"]
 # nothing else. No tests/, docs/, .github/, no user data, not the repo's own release tooling (scripts/release*), and no
 # bin/ (links into scripts/, which a wheel cannot carry).
 [tool.hatch.build.targets.wheel.hooks.custom]
-include = ["lane", "scripts", "templates", ".claude/agents", ".claude/commands", ".claude/settings.json", "CLAUDE.md.template",
+include = ["lane", "scripts", "templates", ".claude/settings.json", "CLAUDE.md.template",
            "knowledge/preferences.md.example", "VERSION", "LICENSE", "NOTICE"]
 exclude = ["scripts/local", "*/__pycache__/*", "*.pyc", "*.DS_Store", "scripts/release", "scripts/release-*", "scripts/migrate-head.json"]

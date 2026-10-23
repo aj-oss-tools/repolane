@@ -87,6 +87,15 @@ written down. Inside a git checkout it also says how far past the release tag yo
   which workspaces are behind, and changes nothing (it says so when PyPI cannot be reached); `--refresh-only` skips
   the package step.
 
+- A workspace gets Repolane's slash commands (`/status`, `/lane-brief`, `/lane-start`, …) and agents (`lane-manager`,
+  `context-loader`, `branch-gardener`): `lane init`, the refresh after an upgrade and `lane upgrade` copy them into the
+  workspace's `.claude/commands/` and `.claude/agents/`, by name, in versions that run the `lane-*` commands on PATH and
+  name the `.repolane/` paths. `.repolane/claude-files.json` records what Repolane wrote, so only a file that is still
+  exactly that is ever replaced: your own file of the same name, or one of Repolane's you edited, is kept, and one you
+  delete stays deleted. `lane doctor` checks them, and `lane doctor --fix` brings them up to date. `lane migrate`
+  replaces a clone's (which ran `bin/` by path) with them. The package no longer carries a clone's own `.claude/agents`
+  and `.claude/commands`.
+
 - Each release is published to PyPI as `repolane` (`pipx install repolane`, `uv tool install repolane`) by
   `.github/workflows/publish.yml`, with trusted publishing and no stored token, from the wheel the package test has
   just checked.
