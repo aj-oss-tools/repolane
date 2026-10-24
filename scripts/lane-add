@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lane-add <git-url|path-to-existing-checkout> [name] [--local <path-you-already-have>]
+# lane-add <git-url|path-to-existing-checkout> [name] [--local <path-you-already-have>] [--yes]
 # Brings a repo under management at any time: clone (or copy an existing checkout's .git), register in
 # registry/repos.yaml, create memory/<name>, and point the repo's Claude project memory at it.
 # A local checkout with no origin remote is registered as local-only — no push/fetch/PR features
@@ -8,9 +8,11 @@
 # Not to be confused with lane-with, which implements `lane with` (add a repo to a lane already
 # started) — see scripts/README.md's naming note if these get mixed up again.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 url="${1:-}"; [ -n "$url" ] || die "usage: lane-add <git-url|path-to-existing-checkout> [name]"
-name="${2:-}"; [ "${name#--}" != "$name" ] && name=""
+name="${2:-}"; [ "${name#--}" != "$name" ] && name=""; [ "$name" = -y ] && name=""
+# --yes: in a workspace, link the mirror's Claude Code memory without asking (it is under ~/.claude, outside the workspace)
+assume_yes=""; for a in "$@"; do case "$a" in --yes|-y) assume_yes=--yes ;; esac; done
 from=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--from" ] && j=$((i+1)) && from="${!j}"; done
 given_local=""; for ((i=1;i<=$#;i++)); do [ "${!i}" = "--local" ] && j=$((i+1)) && given_local="${!j}"; done
 
@@ -47,13 +49,13 @@ fi
 
 dst="$REPOS/$name"; [ -e "$dst" ] && die "$dst already exists"
 if [ -n "$from" ]; then
-  "$AD/scripts/copy-repo.sh" "$from" "$dst" || die "could not copy the checkout at $from"
+  "$PRODUCT/scripts/copy-repo.sh" "$from" "$dst" || die "could not copy the checkout at $from"
 else
   git clone -q "$url" "$dst" || { rm -rf "$dst"; die "could not clone $url"; }
   echo "cloned $url -> $dst"
 fi
 def=$(repo_default "$name")
-python3 - "$AD/registry/repos.yaml" "$name" "$url" "$def" "$local_path" <<'PY'
+python3 - "$REGISTRY/repos.yaml" "$name" "$url" "$def" "$local_path" <<'PY'
 import sys; p,name,url,default,frm=sys.argv[1:]
 t=open(p).read()
 if f"\n  {name}:\n" in t: sys.exit(0)
@@ -73,7 +75,7 @@ PY
 # there instead of in a lane, and so the guard can refuse to read it. Three readers of
 # registry/old-checkouts.json existed before this; nothing ever wrote it.
 if [ -n "$local_path" ]; then
-  python3 - "$AD/registry/old-checkouts.json" "$local_path" <<'OLDCHK'
+  python3 - "$REGISTRY/old-checkouts.json" "$local_path" <<'OLDCHK'
 import json, os, subprocess, sys
 path, src = sys.argv[1:]
 def git(*a):
@@ -87,16 +89,22 @@ json.dump(d, open(path, "w"), indent=2, sort_keys=True)
 OLDCHK
   echo "  recorded $local_path as an old checkout — lane status flags work that happens there"
 fi
-mkdir -p "$AD/memory/$name"; [ -f "$AD/memory/$name/MEMORY.md" ] || printf '# Memory Index — %s\n' "$name" > "$AD/memory/$name/MEMORY.md"
+mkdir -p "$MEMORY_DIR/$name"; [ -f "$MEMORY_DIR/$name/MEMORY.md" ] || printf '# Memory Index — %s\n' "$name" > "$MEMORY_DIR/$name/MEMORY.md"
+if [ "$LANE_MODE" = workspace ]; then
+  # anything under ~/.claude is shown and asked first (scripts/workspace.py), the same rule as lane init
+  echo "registered $name (default $def); its memory is .repolane/memory/$name. Edit .repolane/registry/repos.yaml: stack/product."
+  python3 -B "$PRODUCT/scripts/workspace.py" link-mirror "$AD" "$name" $assume_yes
+else
 slug=$(claude_project_dir "$dst"); proj="$HOME/.claude/projects/$slug"; mkdir -p "$proj"
-if [ -d "$proj/memory" ] && [ ! -L "$proj/memory" ]; then cp -an "$proj/memory/." "$AD/memory/$name/" && rm -rf "$proj/memory"; fi
-[ -L "$proj/memory" ] || ln -s "$AD/memory/$name" "$proj/memory"
+if [ -d "$proj/memory" ] && [ ! -L "$proj/memory" ]; then cp -an "$proj/memory/." "$MEMORY_DIR/$name/" && rm -rf "$proj/memory"; fi
+[ -L "$proj/memory" ] || ln -s "$MEMORY_DIR/$name" "$proj/memory"
 echo "registered $name (default $def); memory -> memory/$name. Edit registry/repos.yaml: stack/product."
+fi
 
 # guard.py already denies a fixed set of secret-shaped filenames globally; every repo can also have
 # its own (service-account.json, .npmrc, id_rsa, …) that set was never going to cover. Scan by
 # filename only, never contents.
-candidates=$("$AD/scripts/repo-secrets" "$name" scan 2>/dev/null || true)
+candidates=$("$PRODUCT/scripts/repo-secrets" "$name" scan 2>/dev/null || true)
 if [ -n "$candidates" ]; then
   if [ -t 0 ] && [ -t 2 ]; then
     echo
@@ -110,7 +118,7 @@ if [ -n "$candidates" ]; then
         # (not `mapfile`: macOS ships bash 3.2, which does not have it)
         cand_arr=()
         while IFS= read -r cand_line; do [ -z "$cand_line" ] || cand_arr+=("$cand_line"); done <<< "$candidates"
-        "$AD/scripts/repo-secrets" "$name" add "${cand_arr[@]}"
+        "$PRODUCT/scripts/repo-secrets" "$name" add "${cand_arr[@]}"
         ;;
       *) echo "  skipped. To deny a real secret later: lane secrets $name add <path>...  To dismiss a false positive without denying it: lane secrets $name ignore <path>..." ;;
     esac
@@ -140,7 +148,7 @@ if [ -n "$local_path" ]; then
     if [ -t 0 ] && [ -t 2 ]; then
       printf "  look at them now and turn them into a lane? [y/N]: " >&2
       read -r yn || true
-      case "${yn:-n}" in [yY]*) exec "$AD/scripts/lane-import" ;; esac
+      case "${yn:-n}" in [yY]*) exec "$PRODUCT/scripts/lane-import" ;; esac
     fi
     echo "  see them any time:  lane import --list"
   fi

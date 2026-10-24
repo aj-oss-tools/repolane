@@ -7,8 +7,8 @@ dispatcher that maps a one-word command to one of these files and `exec`s it.
 lane start ABC-123 web        →  scripts/lane-start ABC-123 web
 ```
 
-`../bin/` holds a symlink to each one under its long-form name (`lane-start`, `lane-run`, …), and
-`lane install` links those onto your `PATH`. That is why the guard messages and the agent prompts
+The package installs each one under its long-form name (`lane-start`, `lane-run`, …) next to `lane`
+(`[project.scripts]` in `pyproject.toml`); in a git clone, `../bin/` holds those names as symlinks. That is why the guard messages and the agent prompts
 can tell you to type `lane-brief <id>` and have it work from any directory.
 
 ## What is in here

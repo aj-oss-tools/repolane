@@ -1,64 +1,43 @@
 # Concepts
 
-Five words carry the whole system.
+Six words carry the whole system.
 
-## The clone is the control plane
+## Workspace
 
-This is the foundational fact everything else here builds on, not an upgrade footnote. There is no
-server, no daemon, no separately-installed app: the folder you cloned **is** Repolane. Every
-script resolves its own root the same way, from `scripts/lib.sh`:
+The folder your work lives in: any folder where `lane init` ran. Repolane itself is an installed package
+(`pipx install repolane`); the workspace is yours, and the package never ships it and never overwrites what you wrote
+in it. `lane` finds the workspace by looking up from the current folder, so every command works from anywhere inside.
 
 ```
-AD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+~/work/
+  CLAUDE.md          yours; imports Repolane's rules with @.repolane/REPOLANE.md
+  .claude/           Claude Code's settings, with Repolane's `lane hook …` commands, slash commands and agents
+  lanes/             the work: one folder per lane
+  .repolane/         everything else Repolane keeps: the registry, memory, knowledge, the mirrors, config
 ```
 
-`AD` is wherever this checkout happens to sit on disk — nothing hardcodes a path. That single line
-is why `lane` works from a clone anywhere, and it is also why this checkout is not a static copy of
-the repository the way most clones are: after `lane init`, `registry/` holds your repos and lanes,
-`memory/` and `knowledge/` hold what sessions have learned, and `CLAUDE.md` has your name in it.
-`git status` on this checkout is dirty by design — that dirt is your control plane's actual state,
-not drift to clean up.
+The registry (`.repolane/registry/`) is the source of truth: `repos.yaml` lists the repos, and
+`registry/lanes/<id>.md` is one file per lane. The mirrors and the worktrees are machine state that the registry can
+rebuild, so the parts worth keeping are small text files, and the workspace can be a git repo of your own
+(`lane init --git`). [Installing Repolane, and your workspace](install.md) lists every file, says which are yours to
+commit, and covers `lane doctor`, `lane upgrade` and moving from an older git-clone install.
 
-It also means `origin` is a real git remote pointed at a real repo — at first, this public
-template. `registry/config.yml` can hold a private tracker URL and `registry/old-checkouts.json`
-can hold local filesystem paths, so `lane init` disables the push side of `origin`
-(`git remote set-url --push origin DISABLED-set-a-private-remote-first`) whenever it still points
-at the public template, so a plain `git push` from inside the control plane can't publish either
-of those to it. Point `origin` at your own private repo, then re-enable push yourself:
-`git remote set-url --push origin <your-repo>`. `lane doctor` flags it if this was never applied.
-
-Two things follow directly:
-
-- **This checkout is where the plane lives.** There is nothing to "deploy" or "install" beyond
-  `lane install` registering this checkout in `~/.local/share/lane/planes.json` (the one piece of
-  genuinely machine-global state — a small registry of every checkout you've registered, and
-  which one is `active`) and putting `lane` plus the long-form commands on your `PATH`. That
-  `lane` is a small, stable dispatcher that is never repointed at one specific checkout again —
-  it routes each call to whichever registered plane applies (being physically inside a project's
-  directory tree wins outright; `active`, set with `lane use <name>`, is the fallback for running
-  from outside any of them). One clone is still one control plane; a machine can now cleanly have
-  several registered at once, which is what makes it safe to run `lane install` from a second or
-  third project without breaking whichever one you were already using.
-- **Upgrading means updating THIS checkout in place**, not replacing it or cloning a fresh one.
-  `lane upgrade` (or the manual recipe when it refuses) pulls new code from upstream into the same
-  folder that holds your registry, memory and knowledge — see
-  ["Upgrade friction"](troubleshooting.md#upgrade-friction-the-clone-is-the-control-plane) in
-  Troubleshooting for the actual procedure.
+Paths on these pages are written from the workspace root: `.repolane/repos/<name>`, `lanes/<id>/<repo>`.
 
 ## Repo
 
-A repo you work on. It lives once, at `repos/<name>`, and is a **mirror**: always on its default
+A repo you work on. It lives once, at `.repolane/repos/<name>`, and is a **mirror**: always on its default
 branch, never edited, never switched. It exists so every piece of work can share one object store.
 Add one with `lane add <git-url>` or `lane add <path-to-a-checkout-you-already-have>`.
 
-**Adopting a checkout you already have** (`lane add <path>`) runs `scripts/copy-repo.sh` under the
+**Adopting a checkout you already have** (`lane add <path>`) runs Repolane's `copy-repo.sh` under the
 hood. What it actually does, verified from the script:
 
 - It **copies** `.git` (`cp -a`), it never moves it — your original checkout is completely
   untouched, on whatever branch it was already on, and stays usable exactly as before.
 - **All branches and stashes come along**, since they live in `.git` and the whole directory is
   copied — not just the current branch.
-- Only the **default branch is checked out** into the new mirror at `repos/<name>`, freshly reset
+- Only the **default branch is checked out** into the new mirror at `.repolane/repos/<name>`, freshly reset
   to `origin/<default>` (or the source's own checked-out branch if there is no `origin/HEAD`).
 - **Worktrees are dropped, not carried over**: `.git/worktrees` metadata is deleted after the copy,
   since a mirror never has worktrees of its own. Any worktree the original checkout had (including
@@ -74,8 +53,8 @@ branch of that name in each repo it touches, and a folder at `lanes/<id>/` holdi
 
 ```
 lanes/ABC-123/
-  web/     a worktree of repos/web on branch ABC-123
-  api/     a worktree of repos/api on branch ABC-123
+  web/     a worktree of .repolane/repos/web on branch ABC-123
+  api/     a worktree of .repolane/repos/api on branch ABC-123
   refs/    anything you attached for reference
 ```
 
@@ -111,9 +90,11 @@ What Claude has learned, kept in four scopes chosen by **how long it stays true*
 
 | scope | means | lives in |
 |---|---|---|
-| `pref` | how to work with you, always | `knowledge/preferences.md` |
-| `cross` | true in every repo | `memory/` |
-| `repo` | true for one repo after this work ships | `memory/<repo>/` |
-| `lane` | only while this lane is live | the lane file |
+| `pref` | how to work with you, always | `.repolane/knowledge/preferences.md` |
+| `cross` | true in every repo | `.repolane/memory/` |
+| `repo` | true for one repo after this work ships | `.repolane/memory/<repo>/` |
+| `lane` | only while this lane is live | the lane file, `.repolane/registry/lanes/<id>.md` |
 
-Memory is never written directly. `lane note` drafts it and asks you which scope it belongs in.
+Memory is never written directly. `lane note` drafts it and asks you which scope it belongs in. A session inside a
+lane uses `lane-memory draft` and `lane-memory goal`, because Claude Code refuses Edit and Write outside the lane
+folder; see [how a lane session saves its Goal](install.md#how-a-lane-session-saves-its-goal-and-its-notes).

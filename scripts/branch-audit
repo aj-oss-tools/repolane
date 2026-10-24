@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # branch-audit [repo]: writes registry/branch-audit.md — every local branch with no upstream or unpushed commits.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-out="$AD/registry/branch-audit.md"; { echo "# Branch audit — $(date +%F)"; echo; echo "Local branches that exist only on this machine (no upstream) or are ahead of upstream. Decide: lane / keep / delete."; }> "$out"
+out="$REGISTRY/branch-audit.md"; { echo "# Branch audit — $(date +%F)"; echo; echo "Local branches that exist only on this machine (no upstream) or are ahead of upstream. Decide: lane / keep / delete."; }> "$out"
 for r in "$REPOS"/*/; do n=$(basename "$r"); if [ -n "${1:-}" ] && [ "$1" != "$n" ]; then continue; fi
   { echo; echo "## $n"; echo; echo "| branch | last commit | age | state |"; echo "|---|---|---|---|"; } >> "$out"
   git -C "$r" for-each-ref --sort=-committerdate --format='%(refname:short)|%(objectname:short) %(contents:subject)|%(committerdate:relative)|%(upstream:track)|%(upstream:short)' refs/heads \

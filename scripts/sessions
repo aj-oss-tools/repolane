@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sessions <repo|lane-id> [n]  — list resumable Claude conversations for a repo (newest first)
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 key="${1:-}"; n="${2:-10}"; [ -n "$key" ] || die "usage: sessions <repo|lane-id> [n]"
 
 # A lane id resolves to exactly one worktree — no union needed, current behaviour unchanged.
@@ -28,7 +28,7 @@ else
     done < <(sed -n '/^---$/,/^---$/p' "$lf" | awk '/^  - repo:/{r=$3} /^    branch:/{print r, $2}')
   done
   # source #3: the pre-Repolane checkout this repo was added from, if any
-  old_path=$(sed -n "/^  $repo:\$/,/^  [a-z]/p" "$AD/registry/repos.yaml" | sed -n 's/^      - //p' | head -1)
+  old_path=$(sed -n "/^  $repo:\$/,/^  [a-z]/p" "$REGISTRY/repos.yaml" | sed -n 's/^      - //p' | head -1)
   old_n=0
   if [ -n "$old_path" ]; then
     olddir="$HOME/.claude/projects/$(claude_project_dir "$old_path")"

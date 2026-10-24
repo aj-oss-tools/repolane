@@ -1,0 +1,121 @@
+name: Publish to PyPI
+
+# Builds the sdist and wheel from main at VERSION and uploads them to PyPI with trusted publishing (OIDC): PyPI trusts
+# this file (owner aj-oss-tools, repo repolane, workflow publish.yml, environment pypi), so there is no API token.
+#
+# When it runs: on a push to main that changes VERSION, which is exactly the merge of a "Release vX.Y.Z" PR (sync PRs
+# carry no version, so they never publish). It does not hang off the vX.Y.Z tag: tag-release.yml pushes that tag with
+# the default GITHUB_TOKEN, and pushes made with that token never start another workflow, so an `on: push: tags` here
+# would never fire. Calling this from tag-release.yml (workflow_call) does not work either: PyPI checks the OIDC token's
+# top-level workflow, which would then be tag-release.yml, not the publish.yml PyPI was told to trust.
+#
+# workflow_dispatch re-runs it by hand (say, after PyPI was down): give the version you expect, and it refuses unless
+# VERSION on the chosen ref says the same.
+#
+# Guards: the version must match VERSION, must look like X.Y.Z, and must not be on PyPI yet (if it is, nothing is
+# built or uploaded and the run says so). The wheel PyPI gets is the one tests/t_package.sh just checked.
+
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to publish; must equal VERSION on the chosen ref (e.g. 0.10.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the version against VERSION and PyPI
+        id: version
+        env:
+          WANTED: ${{ inputs.version }}
+        run: |
+          v=$(tr -d '[:space:]' < VERSION)
+          echo "VERSION says $v"
+          if ! printf '%s\n' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::VERSION ($v) is not X.Y.Z"; exit 1
+          fi
+          if [ -n "$WANTED" ] && [ "$WANTED" != "$v" ]; then
+            echo "::error::asked to publish $WANTED but VERSION on this ref is $v"; exit 1
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/repolane/$v/json")
+          case "$code" in
+            200) echo "::notice::repolane $v is already on PyPI: nothing to publish"; echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "repolane $v is not on PyPI yet"; echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "::error::PyPI answered $code for repolane $v; not publishing blind"; exit 1 ;;
+          esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv
+        if: steps.version.outputs.publish == 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build the sdist and the wheel
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          uv build -o dist .
+          ls -l dist
+          v=${{ steps.version.outputs.version }}
+          test -f "dist/repolane-$v.tar.gz" || { echo "::error::no dist/repolane-$v.tar.gz"; exit 1; }
+          test -f "dist/repolane-$v-py3-none-any.whl" || { echo "::error::no dist/repolane-$v-py3-none-any.whl"; exit 1; }
+          test "$(ls dist | wc -l)" -eq 2 || { echo "::error::dist/ should hold exactly the sdist and the wheel"; exit 1; }
+
+      - name: Check the distributions' metadata
+        if: steps.version.outputs.publish == 'true'
+        run: uvx twine check --strict dist/*
+
+      - name: Set a git identity (the package test commits in a scratch repo)
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.com"
+
+      - name: Test the wheel that will be uploaded
+        if: steps.version.outputs.publish == 'true'
+        run: REPOLANE_WHEEL="dist/repolane-${{ steps.version.outputs.version }}-py3-none-any.whl" bash tests/t_package.sh
+
+      - name: Keep the distributions for the publish job
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/repolane/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: true

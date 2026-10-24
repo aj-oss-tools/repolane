@@ -16,7 +16,10 @@ while [ -L "$_self" ]; do
   _l=$(readlink "$_self")
   case "$_l" in /*) _self="$_l" ;; *) _self="$(dirname "$_self")/$_l" ;; esac
 done
-AD="$(cd "$(dirname "$_self")/.." && pwd)"
+# PRODUCT ships the templates and scripts; AD is the workspace being set up (the same split as scripts/lib.sh,
+# which init cannot source: it runs before a plane has a registry).
+PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "$_self")/.." && pwd)}"
+AD="${LANE_WORKSPACE:-$PRODUCT}"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 OWNER=""; TRACKER=""; ASSUME_YES=0; CHECK_ONLY=0; DELETE_SESSIONS_ON_DONE=""; SYNC_DAYS=""; PRIVATE=""; PRIVATE_EXPLICIT=0
 
@@ -303,16 +306,16 @@ fi
 
 if [ -f "$AD/knowledge/preferences.md" ]; then
   kept "knowledge/preferences.md"
-elif [ -f "$AD/knowledge/preferences.md.example" ]; then
-  cp "$AD/knowledge/preferences.md.example" "$AD/knowledge/preferences.md"; made "knowledge/preferences.md"
+elif [ -f "$PRODUCT/knowledge/preferences.md.example" ]; then
+  cp "$PRODUCT/knowledge/preferences.md.example" "$AD/knowledge/preferences.md"; made "knowledge/preferences.md"
 fi
 
 if [ -f "$AD/CLAUDE.md" ]; then
   kept "CLAUDE.md"
-elif [ -f "$AD/CLAUDE.md.template" ]; then
+elif [ -f "$PRODUCT/CLAUDE.md.template" ]; then
   # the template's placeholder is {{owner}}; escape the name so a "/" or "&" in it cannot break the substitution
   OWNER_SED=$(printf '%s' "$OWNER" | sed 's/[\/&]/\\&/g')
-  sed "s/{{owner}}/$OWNER_SED/g" "$AD/CLAUDE.md.template" > "$AD/CLAUDE.md"; made "CLAUDE.md"
+  sed "s/{{owner}}/$OWNER_SED/g" "$PRODUCT/CLAUDE.md.template" > "$AD/CLAUDE.md"; made "CLAUDE.md"
 fi
 
 # ---------------------------------------------------------------- 3b. private: true tracks the files that are gitignored by default
@@ -404,7 +407,11 @@ fi
 # The script ships, but nothing points Claude Code at it. Add it only if neither settings file
 # already does, so an existing setup is never disturbed.
 if ! grep -qs statusLine "$AD/.claude/settings.json" "$AD/.claude/settings.local.json" 2>/dev/null; then
-  if python3 "$AD/scripts/wire-statusline.py" "$AD/.claude/settings.json" 2>/dev/null; then
+  # Relative to the project folder while the product sits in it (a clone); an absolute path, naming the workspace,
+  # once it lives somewhere else.
+  if [ "$PRODUCT" = "$AD" ]; then sl='"$CLAUDE_PROJECT_DIR"/scripts/statusline.sh'
+  else sl="LANE_PRODUCT=$(printf %q "$PRODUCT") LANE_WORKSPACE=$(printf %q "$AD") $(printf %q "$PRODUCT/scripts/statusline.sh")"; fi
+  if python3 "$PRODUCT/scripts/wire-statusline.py" "$AD/.claude/settings.json" "$sl" 2>/dev/null; then
     made "status line wired into .claude/settings.json"
   else
     warn "could not wire the status line — add it by hand if you want it"
@@ -447,12 +454,15 @@ if git -C "$AD" remote get-url origin >/dev/null 2>&1; then
   fi
 fi
 
+# the root's local settings: the lanes' folders, and lane-memory goal / draft for a session that enters a lane (lib.sh)
+( source "$PRODUCT/scripts/lib.sh" && write_additional_dirs ) >/dev/null 2>&1 || true
+
 # ---------------------------------------------------------------- 5. is the wiring intact
 echo
 echo "Checking the wiring:"
 [ -f "$AD/.claude/settings.json" ] && ok "hooks configured (.claude/settings.json)" \
                                    || bad ".claude/settings.json is missing — hooks will not run"
-if [ -x "$AD/bin/guard-check" ] && "$AD/bin/guard-check" >/dev/null 2>&1; then
+if [ -x "$PRODUCT/scripts/hooks/guard-check" ] && "$PRODUCT/scripts/hooks/guard-check" >/dev/null 2>&1; then
   ok "the guard compiles and still refuses what it should"
 else
   bad "the guard is not working — run: bash scripts/hooks/test-guard.sh"
