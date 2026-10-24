@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # Claude Code status line (design A): line 1 = where you are, line 2 = only repos that need attention.
-AD="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd)"
+# PRODUCT (this script's own files) and AD (the workspace it reports on): one folder in a clone, see scripts/roots.sh
+PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd)}"
+source "$PRODUCT/scripts/roots.sh"
 input=$(cat)
-source "$AD/scripts/gitstate.sh" 2>/dev/null || { lane_unpushed(){ echo "?"; }; lane_dirty_count(){ git -C "$1" status --porcelain 2>/dev/null | wc -l | tr -d " "; }; }
+source "$PRODUCT/scripts/gitstate.sh" 2>/dev/null || { lane_unpushed(){ echo "?"; }; lane_dirty_count(){ git -C "$1" status --porcelain 2>/dev/null | wc -l | tr -d " "; }; }
 read -r cwd model ctx <<<"$(printf '%s' "$input" | python3 -c '
 import json,sys; d=json.load(sys.stdin)
 cwd=d.get("cwd") or d.get("workspace",{}).get("current_dir","")
 m=d.get("model",{}).get("display_name","")
 v=d.get("context_window",{}).get("used_percentage"); c=f"{v:.0f}%" if v is not None else "-"
 print(cwd, m.replace(" ","_"), c)' 2>/dev/null)"
+# an installed product finds the workspace from the folder the session is in
+if [ -n "$cwd" ] && [ -d "$cwd" ]; then lane_resolve_roots "$cwd"; else lane_resolve_roots; fi
 short(){ python3 -c "
-import re,sys; t=open('$AD/registry/repos.yaml').read()
+import re,sys; t=open('$REGISTRY/repos.yaml').read()
 m=re.search(r'^  '+re.escape(sys.argv[1])+r':\n(?:    .*\n)*?    short: (\S+)', t, re.M); print(m.group(1) if m else sys.argv[1])" "$1"; }
 Y=$'\e[33m'; G=$'\e[32m'; D=$'\e[2m'; B=$'\e[1m'; R=$'\e[0m'
 case "$cwd" in
@@ -34,10 +38,10 @@ case "$cwd" in
     printf '%s⧉ %s%s  %s%s repo%s · %s · ctx %s%s\n' "$B" "$id" "$R" "$D" "$n" "$plural" "${model//_/ }" "$ctx" "$R"
     printf '   %s' "$(IFS=·; echo "${items[*]}" | sed 's/·/ · /g')"
     ;;
-  "$AD"/repos/*)
+  "$REPOS"/*)
     printf '%s⚠ MIRROR (read-only) %s%s · %s' "$Y" "$(short "$(basename "$cwd")")" "$R" "${model//_/ }";;
   "$AD"*)
-    n=$(grep -l '^status: active' "$AD"/registry/lanes/*.md 2>/dev/null | wc -l | tr -d ' ')
+    n=$(grep -l '^status: active' "$LANES_DIR"/*.md 2>/dev/null | wc -l | tr -d ' ')
     printf '%s⌂ lane%s · %s active lanes · %s%s · ctx %s%s' "$B" "$R" "$n" "$D" "${model//_/ }" "$ctx" "$R";;
   *)
     br=$(git -C "$cwd" branch --show-current 2>/dev/null)

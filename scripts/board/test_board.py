@@ -52,6 +52,7 @@ def get(route, **q):
 
 def setUpModule():
     global ROOT, PLANE, HOME, LANE_REPO, PORT, TOKEN, PROC
+    for k in ("LANE_PRODUCT", "LANE_WORKSPACE"): os.environ.pop(k, None)   # the scratch plane is both roots, by its own location
     ROOT = os.path.realpath(tempfile.mkdtemp(prefix="board-test-"))
     PLANE, HOME = f"{ROOT}/plane", f"{ROOT}/home"
     os.makedirs(HOME)
@@ -496,7 +497,7 @@ class TestMemory(unittest.TestCase):
 
     def test_traversal_never_reaches_lane_memory(self):
         marker = f"{ROOT}/invoked"
-        orig = f"{PLANE}/bin/lane-memory"
+        orig = f"{PLANE}/scripts/lane-memory"   # the file itself: bin/lane-memory is a link to it, the server runs either
         os.rename(orig, orig + ".real")
         open(orig, "w").write(f'#!/bin/sh\necho "$@" >> {marker}\n'); os.chmod(orig, 0o755)
         try:

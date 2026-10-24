@@ -34,9 +34,31 @@ another contributor─┘                     here, but it's protected against f
                                           see that PR's own page for who can merge it)
                                    │
                      merging triggers .github/workflows/tag-release.yml
-                     (tags the merge commit vX.Y.Z) and notify-site.yml
+                     (tags the merge commit vX.Y.Z), publish.yml
+                     (uploads the package to PyPI) and notify-site.yml
                      (rebuilds repolane.dev's changelog page)
 ```
+
+## Publishing to PyPI
+
+`.github/workflows/publish.yml` puts each release on [PyPI](https://pypi.org/project/repolane/), which is where
+`pipx install repolane` and `lane upgrade` get it from. It uses PyPI's trusted publishing: PyPI trusts this one
+workflow file in this repo, run in the `pypi` environment, so no API token is stored anywhere.
+
+- **When it runs.** On a push to `main` that changes `VERSION`, which is the merge of a "Release vX.Y.Z" PR (a sync PR
+  never changes `VERSION`, so it never publishes). It does not wait for the `vX.Y.Z` tag: `tag-release.yml` pushes the
+  tag with the default `GITHUB_TOKEN`, and GitHub never starts a workflow from something that token pushed. It is not
+  called from `tag-release.yml` either, because PyPI checks which workflow file the upload came from, and that has to be
+  `publish.yml`.
+- **What it does.** Builds the source distribution and the wheel with `uv build` (the version comes from `VERSION`),
+  checks them with `twine check --strict`, runs `tests/t_package.sh` against the exact wheel it is about to upload
+  (`REPOLANE_WHEEL=<wheel>`), and only then uploads, from a separate job that is the only one allowed to ask GitHub
+  for the OIDC token PyPI accepts.
+- **Guards.** `VERSION` has to be `X.Y.Z`. If that version is already on PyPI, nothing is built or uploaded and the run
+  says so. Run by hand (Actions, "Publish to PyPI", "Run workflow", for example after PyPI was down), it asks for the
+  version and refuses unless `VERSION` on the chosen branch says the same.
+- `tests/t_publish.sh` checks these assumptions in `publish.yml` (environment, permissions, trigger, no secrets,
+  pinned actions), so an edit that would break publishing fails the tests first.
 
 ## Who does what
 
@@ -74,7 +96,7 @@ another contributor─┘                     here, but it's protected against f
 4. Open the PR against `release`, not `main`.
 
 That's genuinely the whole contributor-facing surface. Everything past step 4 — the version
-number, the PR into `main`, the tag, the site rebuild — happens without you, and without the
+number, the PR into `main`, the tag, the PyPI upload, the site rebuild — happens without you, and without the
 maintainer needing to do anything by hand either, once they decide to merge.
 
 ## Why the changelog entry isn't auto-generated

@@ -7,7 +7,7 @@
 # Removes worktrees, archives the file, and asks what to do with each repo's leftover
 # Claude session folder (see registry/config.yml `lanes: delete_sessions_on_done:` for the default).
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 id="${1:-}"; f=$(lane_file "$id"); [ -f "$f" ] || die "no lane '$id'"
 shift || true
 DELETE_BRANCHES=0; DISCARD_IGNORED=0; SESSIONS_MODE=""   # SESSIONS_MODE: "" (ask/report) | delete | keep
@@ -100,7 +100,7 @@ fi
 
 # default answer for the interactive session-cleanup prompt below — config only ever changes
 # which way the prompt defaults, never whether it is asked
-CFG_DELETE=$(sed -n 's/^[[:space:]]*delete_sessions_on_done:[[:space:]]*//p' "$AD/registry/config.yml" 2>/dev/null | head -1 | tr -d '"'"'"' ')
+CFG_DELETE=$(sed -n 's/^[[:space:]]*delete_sessions_on_done:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -1 | tr -d '"'"'"' ')
 [ "$CFG_DELETE" = "true" ] || CFG_DELETE="false"
 
 # everything checked out; now it is safe to remove
@@ -154,10 +154,10 @@ if [ -n "$REMOVE_FAILED" ]; then
   exit 1
 fi
 rmdir "$LANES/$id" 2>/dev/null || rm -rf "$LANES/$id"
-if sed -n '/^## Findings/,/^## Log/p' "$f" | grep -q '^- '; then
+if sed -n '/^## Findings/,/^## /{/^## Findings/d;/^## /d;p;}' "$f" | grep -q '^- '; then
   echo; echo "This lane has findings that will be archived with it:"
-  sed -n '/^## Findings/,/^## Log/p' "$f" | grep '^- ' | sed 's/^/   /'
+  sed -n '/^## Findings/,/^## /{/^## Findings/d;/^## /d;p;}' "$f" | grep '^- ' | sed 's/^/   /'
   echo "   Anything still true after this ships belongs in repo memory — lane-memory draft <slug> then lane-memory file <slug> repo <repo>."
 fi
-lane_set_status "$id" done; mkdir -p "$LANES_DIR/done"; mv "$f" "$LANES_DIR/done/"; "$AD/scripts/lane-workspace" >/dev/null
+lane_set_status "$id" done; mkdir -p "$LANES_DIR/done"; mv "$f" "$LANES_DIR/done/"; "$PRODUCT/scripts/lane-workspace" >/dev/null
 refresh_guards; echo "done: $id -> registry/lanes/done/"

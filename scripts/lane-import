@@ -17,8 +17,7 @@ while [ -L "$_self" ]; do
   _l=$(readlink "$_self")
   case "$_l" in /*) _self="$_l" ;; *) _self="$(dirname "$_self")/$_l" ;; esac
 done
-AD="$(cd "$(dirname "$_self")/.." && pwd)"
-source "$AD/scripts/lib.sh"
+source "$(cd "$(dirname "$_self")" && pwd)/lib.sh"   # sets PRODUCT and AD
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 
 LIST_ONLY=0; INTO=""; PICKS=""
@@ -43,7 +42,7 @@ PROJ="$CLAUDE_HOME/projects"
 # ---------------------------------------------------------------------------
 SCAN=$(mktemp "${TMPDIR:-/tmp}/lane-import.XXXXXX")
 trap 'rm -f "$SCAN"' EXIT
-python3 - "$PROJ" "$AD" > "$SCAN" <<'PY'
+python3 - "$PROJ" "$DATA" > "$SCAN" <<'PY'
 import json, os, sys, time
 proj, ad = sys.argv[1], sys.argv[2]
 managed, old_paths, cur = {}, {}, None
@@ -196,18 +195,18 @@ if [ -z "$INTO" ]; then
   [ -n "${INTO// /}" ] || { echo "No lane given. Nothing changed."; exit 0; }
 fi
 
-if [ ! -f "$AD/registry/lanes/$INTO.md" ]; then
+if [ ! -f "$REGISTRY/lanes/$INTO.md" ]; then
   [ -n "$REPOS" ] || { echo "Cannot create '$INTO': none of those conversations map to a managed repo."; exit 1; }
   echo
   echo "Creating lane '$INTO' with: $REPOS"
-  "$AD/scripts/lane-start" "$INTO" $REPOS || exit 1
+  "$PRODUCT/scripts/lane-start" "$INTO" $REPOS || exit 1
 fi
 
 # ---------------------------------------------------------------------------
 # 4. Copy. The lane folder is where you will run `claude`, so that is where
 #    the conversations have to live. Originals are never touched.
 # ---------------------------------------------------------------------------
-dest_slug=$(claude_project_dir "$AD/lanes/$INTO")
+dest_slug=$(claude_project_dir "$LANES/$INTO")
 dest="$PROJ/$dest_slug"
 mkdir -p "$dest"
 copied=0; skipped=0
@@ -231,4 +230,4 @@ python3 -c '
 import json,sys
 for r in json.load(open(sys.argv[1]))[:3]: print("  claude --resume "+r["id"]+"   # "+r["first"][:52])' "$CHOSEN"
 echo
-echo "  cd $AD/lanes/$INTO && claude"
+echo "  cd $LANES/$INTO && claude"

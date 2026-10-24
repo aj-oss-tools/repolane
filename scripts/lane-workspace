@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # lane-workspace — regenerate VS Code workspace files from the registry:
-#   lane.code-workspace         control plane + every ACTIVE lane's worktrees
+#   lane.code-workspace         the workspace (or a clone's control plane) + every ACTIVE lane's worktrees
 #   lanes/<id>/<id>.code-workspace        one focused window per lane (any status)
 # Run by lane-start / lane-resume / lane-park / lane-done. Safe to run any time.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-python3 - "$AD" <<'PY'
+python3 - "$AD" "$LANES_DIR" "$REGISTRY" "$REPOS" "$CACHE_DIR" <<'PY'
 import json,os,re,sys,glob
-AD=sys.argv[1]; LANES=f"{AD}/lanes"; LANES_DIR=f"{AD}/registry/lanes"
+AD=sys.argv[1]; LANES=f"{AD}/lanes"; LANES_DIR=sys.argv[2]
+# the mirrors and the cache are hidden where they are: repos/ and .cache/ in a clone, .repolane/repos and .repolane/cache
+# in a workspace
+HIDE=[os.path.relpath(sys.argv[4],AD),"lanes",os.path.relpath(sys.argv[5],AD)]
 short={}
-for m in re.finditer(r"^  ([\w.-]+):\n(?:    .*\n)*?    short: (\S+)", open(f"{AD}/registry/repos.yaml").read(), re.M): short[m.group(1)]=m.group(2)
+for m in re.finditer(r"^  ([\w.-]+):\n(?:    .*\n)*?    short: (\S+)", open(f"{sys.argv[3]}/repos.yaml").read(), re.M): short[m.group(1)]=m.group(2)
 def fm(path):
     t=open(path).read(); head=t.split("---")[1] if t.startswith("---") else ""
     st=re.search(r"^status: *(\S*)",head,re.M); repos=re.findall(r"^  - repo: (\S+)",head,re.M)
     return (st.group(1) if st else ""), repos
-common={"files.exclude":{"repos":True,"lanes":True,".cache":True,"**/node_modules":True,"**/dist":True,"**/target":True,"**/.nx":True,"**/.venv":True},
-        "search.exclude":{"repos":True,"lanes":True,".cache":True,"**/node_modules":True,"**/dist":True,"**/target":True,"**/.nx":True,"**/.venv":True},
+EXCL={**{h:True for h in HIDE},"**/node_modules":True,"**/dist":True,"**/target":True,"**/.nx":True,"**/.venv":True}
+common={"files.exclude":dict(EXCL),"search.exclude":dict(EXCL),
         "git.repositoryScanMaxDepth":0,"git.autoRepositoryDetection":True,"git.openRepositoryInParentFolders":"never"}
 root_folders=[{"name":"lane","path":"."}]
 for f in sorted(glob.glob(f"{LANES_DIR}/*.md")):

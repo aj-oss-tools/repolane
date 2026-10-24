@@ -10,6 +10,151 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 Nothing yet.
 
+## [0.10.0] — 2026-10-24
+
+### Added
+
+- **Workspaces.** A folder with a `.repolane/` folder in it is a workspace: your own `CLAUDE.md`, `.claude/` and
+  `lanes/` stay at the top, and everything else Repolane keeps (`registry/`, `memory/`, `knowledge/`, `repos/`,
+  `cache/`, `config.yml`, `env.sh`) lives under `.repolane/`. An installed `lane` finds the workspace by looking up
+  from the current folder; `LANE_WORKSPACE` still names one directly. A git clone of Repolane keeps its layout and
+  keeps acting on itself, whatever folder you run it from.
+- A workspace's hooks are `lane hook <event>` commands (`lane hook pre-tool-use`, `lane hook session-start`, …), in
+  `.claude/settings.json` and in every lane's settings, so no hook names a file inside the installed product.
+- `.repolane/REPOLANE.md` holds the rules every session gets (your `CLAUDE.md` imports it with
+  `@.repolane/REPOLANE.md`) and `.repolane/LANE.md` the rules for a session inside a lane. Neither carries your
+  name: the hooks name the owner when a session starts. Both are rewritten on the first `lane` command or hook after
+  the installed version changes; your data is never overwritten.
+- A session that enters a lane with `EnterWorktree`, or starts inside one, is handed `LANE.md` right away. It says
+  plainly that Edit and Write outside the lane folder are refused, and to save the Goal with
+  `lane-memory goal "<text>"` and memories with `lane-memory draft <slug> "<text>"`.
+- The Python package installs the long command names (`lane-memory`, `lane-brief`, `lane-run`, …) next to `lane`.
+- `lane init` from the installed package makes a workspace in the current folder, or in the folder you name
+  (`lane init ~/work`). It asks for your name (`--owner`, or `--yes` to ask nothing), and `--git` makes the workspace
+  a git repo with a `.gitignore` for what is machine-local (`lanes/`, `.repolane/repos/`, `.repolane/cache/`). It
+  adds Repolane's hooks to an existing `.claude/settings.json` without touching your own keys or hooks, and records
+  the workspace in `~/.local/share/lane/planes.json` so `lane upgrade` can refresh every workspace. Running it again
+  over a workspace in use changes nothing and says so. `lane init` in a git clone of Repolane works as before.
+- `lane doctor` in a workspace checks that `lane` is on PATH the way the hooks call it (if it is not, every hook
+  fails and Claude Code runs tools unguarded, and the doctor says so loudly), that `CLAUDE.md` imports
+  `.repolane/REPOLANE.md`, that `.claude/settings.json` runs the expected `lane hook` commands, that the rule files
+  are the installed version's, that the workspace is registered, and that every lane's settings run the current
+  hooks. Each problem comes with its fix, and `lane doctor --fix` repairs what it safely can (`--yes` answers its
+  question). It exits non-zero while anything is wrong. It reports an outdated workspace instead of refreshing it.
+- `lane init` in a workspace links Claude Code's memory for the workspace root
+  (`~/.claude/projects/<folder>/memory`) to `.repolane/memory`, the way a clone's `lane init` links it to
+  `memory/`; `lane add` links each mirror's to `.repolane/memory/<repo>`. Nothing under `~/.claude` is changed
+  without asking: init shows each link and asks "Make these links under ~/.claude? [Y/n]" (`--yes` accepts; with no
+  terminal and no `--yes` nothing is changed and it prints the commands). Notes already in Claude Code's own memory
+  folder are copied in first. `--claude-home <dir>` (or `CLAUDE_HOME`) names a different Claude Code folder.
+  `lane doctor` checks the links of the root and every mirror, and `lane doctor --fix` repairs them after asking.
+  When you answer no, that is recorded in `.repolane/declined.json`: `lane init` and `lane add` do not ask again, and
+  `lane doctor` shows a note with how to make the link later instead of a failure (`lane doctor --fix` still offers
+  it, and a yes clears the record). A missing link nobody declined is still a failure. In a workspace `lane add`
+  follows the same rule for the new mirror's link: it asks, `--yes` accepts, and with no terminal it changes nothing
+  under `~/.claude` and prints the command.
+- A workspace's status line is `lane statusline`, added to `.claude/settings.json` by `lane init` when no status line
+  is set (your own is never replaced). `lane doctor` reports one that still runs a clone's
+  `scripts/statusline.sh` by path, and `--fix` replaces it; a workspace with no status line gets a note, not a failure.
+- **`lane migrate` turns a git-clone install (a 0.9.x control plane) into a workspace, in place.** Run it from the
+  installed package: `lane migrate [folder]` (default: the current one). It first shows everything it would do and
+  changes nothing until you confirm ("Migrate now? [y/N]", or `--yes`; with no terminal and no `--yes`, or with
+  `--dry-run`, it only shows the plan). It refuses while Claude Code is running inside the folder. Before the first
+  change it writes a backup of everything it changes or removes to `~/.local/share/lane/backups/<folder>-<time>.tar.gz`,
+  and `lane migrate --undo <backup>` puts the clone install back (keeping what was written in the workspace since).
+  - Your data moves under `.repolane/` (`registry/`, `memory/`, `knowledge/`, `repos/`, `.cache/` as `cache/`,
+    `registry/config.yml`, `scripts/env.sh`, `scripts/local/`); the worktrees stay in `lanes/` and are repaired with
+    `git worktree repair`, and their `.env` links follow the mirrors.
+  - Repolane's own files are removed: only the paths a release shipped (the 0.9.x releases are listed in
+    `scripts/migrate-manifest.json`, made from their tags by `scripts/release-migrate-manifest`; the installed
+    release's own list is written into the package when it is built), never anything else in the folder. The
+    clone's `.git` is Repolane's repo, so it is removed too (it is in the backup); `--git` starts a fresh, empty one.
+  - The generated `CLAUDE.md` becomes a short one that imports `.repolane/REPOLANE.md`, keeping every line you added.
+    If lines of Repolane's own text were edited, the old file is also kept as `CLAUDE.md.pre-0.10`.
+  - `.claude/settings.json` runs `lane hook …` commands and `lane statusline`, keeping your own keys and hooks, and
+    every lane's `settings.local.json` is written again.
+  - Outside the folder, each asked first: the memory links under `~/.claude/projects` (and a mirror's project folder,
+    whose path changed) point into `.repolane/memory`; the router `lane install` wrote in `~/.local/bin` is removed
+    when no other clone install uses it. `planes.json` records the workspace instead of the clone.
+  - A migration that stops half way continues when you run it again; running it on a workspace says there is nothing
+    to do and changes nothing.
+- A git-clone install that has been set up shows one line on SessionStart and in `lane status`: Repolane installs as a
+  package now, and `lane migrate` converts the folder. `migrate_reminder: false` in `registry/config.yml` turns it off.
+- **`lane upgrade` from the installed package** upgrades it the way it was installed (`pipx upgrade repolane` for a
+  pipx install, `uv tool upgrade repolane` for a uv tool install; for any other install it prints the `pip` command to
+  run), then refreshes every workspace registered in `planes.json` with the new version: the rule files and data
+  migrations, Repolane's hooks in `.claude/settings.json` (your own keys and hooks kept), and every lane's
+  `settings.local.json` and `CLAUDE.md`. It reports each workspace; nothing you wrote is changed. A registered folder
+  that is gone is skipped and reported, and you are asked whether to drop it from the registry (`--drop-missing` or
+  `--yes` drops it). It exits non-zero when a workspace could not be refreshed. Run inside a workspace that is not
+  registered, it registers it. `lane upgrade --check` shows the installed version against the newest on PyPI and
+  which workspaces are behind, and changes nothing (it says so when PyPI cannot be reached); `--refresh-only` skips
+  the package step.
+
+- A workspace gets Repolane's slash commands (`/status`, `/lane-brief`, `/lane-start`, …) and agents (`lane-manager`,
+  `context-loader`, `branch-gardener`): `lane init`, the refresh after an upgrade and `lane upgrade` copy them into the
+  workspace's `.claude/commands/` and `.claude/agents/`, by name, in versions that run the `lane-*` commands on PATH and
+  name the `.repolane/` paths. `.repolane/claude-files.json` records what Repolane wrote, so only a file that is still
+  exactly that is ever replaced: your own file of the same name, or one of Repolane's you edited, is kept, and one you
+  delete stays deleted. `lane doctor` checks them, and `lane doctor --fix` brings them up to date. `lane migrate`
+  replaces a clone's (which ran `bin/` by path) with them. The package no longer carries a clone's own `.claude/agents`
+  and `.claude/commands`.
+
+- Each release is published to PyPI as `repolane` (`pipx install repolane`, `uv tool install repolane`) by
+  `.github/workflows/publish.yml`, with trusted publishing and no stored token, from the wheel the package test has
+  just checked.
+
+### Changed
+
+- Repolane's own files (`lane`, `scripts/`, templates, `VERSION`) and your data (`registry/`, `lanes/`, `repos/`,
+  `memory/`, `knowledge/`) are located through two separate roots, which are the same folder in a clone, so nothing
+  behaves differently. The repo also builds a Python package (`repolane`) whose `lane` runs the bundled product.
+- Your `CLAUDE.md` is only edited when you say so. A workspace without one gets a small `CLAUDE.md` that imports
+  `.repolane/REPOLANE.md`; for an existing one, `lane init` shows the line and asks "Add it? [Y/n]" (`--yes` adds it;
+  with no terminal and no `--yes` it is left alone, and the output says how to add it). Until the line is there,
+  Repolane's rules do not load, and `lane doctor --fix` can add it later.
+- `lane upgrade` in a git clone still fast-forwards the clone when the new version is 0.10 or later, so it keeps
+  working, and `lane doctor` in such a clone then spells out the two steps that move it over: `pipx install repolane`
+  (or `uv tool install repolane`), then `lane migrate <folder>`.
+- `lane status` in a workspace heads its first section "workspace" instead of describing a clone.
+- `lane doctor` no longer writes a `__pycache__` folder into Repolane's own files, and the guard refuses a tool call
+  (instead of letting it through) if its path resolver is missing.
+
+### Fixed
+
+- In a workspace, a resumed conversation started in a mirror is found again: the hooks look for its project folder
+  under the mirror's real path (`.repolane/repos/<repo>`), not under `repos/<repo>`.
+- `lane park` no longer deletes a lane's `## Findings`: it replaces the Resume note's own text, up to the next heading,
+  and keeps every other section. `lane-memory file … lane`, `lane merge`, `lane brief` and `lane done` also read and
+  write one section up to the next heading, so a section you add to a lane file, or a Findings at the end of it, is
+  kept and shown where it belongs.
+- In a workspace, what a session is told speaks of the workspace: SessionStart (at the root and in a lane), a resumed
+  conversation, UserPromptSubmit, PreCompact, the Worktree hooks, the guard's refusals, the MEMORY SCOPES table, the
+  menu, `lane-memory file` and the Findings placeholder `lane start` writes into a lane file name the real paths (`.repolane/registry/…`, `.repolane/memory/…`, the mirrors under
+  `.repolane/repos/`), the commands by the name on PATH (`lane-with`, `lane sessions`), "the workspace", and
+  `.repolane/REPOLANE.md` for the details, and no longer a clone's `scripts/` folder, a relative path that "exits 127"
+  or the product's own files. A shared project rule's refusal names the file it came from
+  (`registry/rules.shared.yaml`), not `registry/rules.yaml`. A git clone's text is unchanged.
+- In a workspace the editor workspace files (`lane.code-workspace`, `lanes/<id>/<id>.code-workspace`) hide the mirrors
+  and the cache where they are, `.repolane/repos` and `.repolane/cache`, instead of a clone's `repos` and `.cache`.
+- The README, the package's description and `docs/extending.md` describe Repolane as a workspace, not a control plane.
+- `lane help` from the installed package no longer lists a clone's `install` and `use`, and `lane install` / `lane use`
+  refuse with what to do instead (`lane init [folder]`, `lane migrate <clone-folder>`); they wrote a clone's router
+  into `~/.local/bin` and switched between clones. A git clone keeps both.
+- A session started at the root that enters a lane with `EnterWorktree` can save the Goal and draft a memory without
+  being asked for approval: the root pre-approves `lane-memory goal` and `lane-memory draft` (a lane's own settings
+  only apply to a session started inside it). A workspace gets them in `.claude/settings.json` from `lane init`,
+  `lane migrate`, the refresh after an upgrade and `lane upgrade`, and `lane doctor` reports them missing
+  (`--fix` adds them); a git clone gets them in the root's `.claude/settings.local.json`. `lane-memory file` still
+  asks, and `lane-memory goal` still refuses another lane's Goal from inside a lane.
+- A clone's `./lane install` no longer takes over a `lane` the installed package put on PATH: when `~/.local/bin/lane`
+  is the package's launcher (pipx, uv tool or pip) it refuses, changes nothing and points at `lane migrate`. It used to
+  write its router over it and register the pipx venv's `bin/` as a plane named "bin"; an old link that does not lead
+  to a git clone of Repolane is no longer registered at all. `lane migrate` keeps the router only for registered
+  entries that are real clone installs, not for a venv or a folder that is gone.
+- A session inside a lane is refused `lane migrate`, `lane init` and `lane upgrade`, with a message that the owner runs
+  them from a terminal at the root.
+
 ## [0.9.2] — 2026-10-19
 
 ### Fixed
@@ -656,7 +801,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/aj-oss-tools/repolane/compare/v0.8.1...v0.9.0

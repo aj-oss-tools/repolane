@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Write scripts/migrate-manifest.json: what `lane migrate` needs to know about the 0.9.x git-clone installs it converts.
+
+  python3 scripts/release-migrate-manifest          rewrite the manifest from this repo's release tags
+  python3 scripts/release-migrate-manifest --check  exit 1 when the manifest does not match the tags (tests/t_migrate.sh)
+
+An installed package carries no git history, so the facts about past releases are written down here, from git:
+  files              every path a clone shipped in each release in RELEASES, with the git blob ids it had there: the files
+                     `lane migrate` removes from a clone (and the only ones; anything else in the folder is the user's),
+                     and the ids that tell an unchanged one apart
+  claude_templates   every CLAUDE.md.template those releases shipped: a clone's CLAUDE.md was made from one of them, and
+                     the user's own lines are what differs
+  settings_allow     every permissions.allow entry their .claude/settings.json shipped (Repolane's, not the user's)
+Only the tags up to the last one in RELEASES are read, so the file changes only when that list does: adding or removing
+a file in the repo never needs it regenerated. The paths of the release being built are written at build time instead
+(hatch_build.py, scripts/shipped.py: scripts/migrate-head.json in the package), and migrate.py adds the installed
+CLAUDE.md.template.
+This script is release tooling (scripts/release-*, left out of the wheel); the JSON it writes ships with the product.
+"""
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+OUT = os.path.join(HERE, "scripts", "migrate-manifest.json")
+RELEASES = ("v0.9.0", "v0.9.1", "v0.9.2")
+
+
+def git(*a):
+    return subprocess.run(["git", "-C", HERE, *a], capture_output=True, text=True, check=True).stdout
+
+
+def tree(ref):
+    out = {}
+    for line in git("ls-tree", "-r", "-z", ref).split("\0"):
+        if not line: continue
+        meta, path = line.split("\t", 1)
+        _, kind, sha = meta.split()
+        if kind == "blob": out[path] = sha
+    return out
+
+
+def build():
+    tags = set(git("tag", "--list", "v*").split())
+    files = {}
+    for t in RELEASES:
+        if t not in tags: sys.exit(f"release-migrate-manifest: tag {t} is missing (fetch the tags first)")
+        for p, sha in tree(t).items():
+            files.setdefault(p, set()).add(sha)
+    templates, allow = [], set()
+    key = lambda v: [int(x) if x.isdigit() else x for x in v[1:].replace("-", ".").split(".")]
+    last = max(RELEASES, key=key)
+    # every tag up to the last release listed (a later release ships its own list in the package)
+    for t in sorted((t for t in tags if key(t) <= key(last)), key=key):
+        try: txt = git("show", f"{t}:CLAUDE.md.template")
+        except subprocess.CalledProcessError: txt = None
+        if txt and txt not in templates: templates.append(txt)
+        try: st = json.loads(git("show", f"{t}:.claude/settings.json"))
+        except (subprocess.CalledProcessError, ValueError): st = {}
+        allow |= set((st.get("permissions") or {}).get("allow") or [])
+    return {"releases": list(RELEASES), "files": {p: sorted(s) for p, s in sorted(files.items())},
+            "claude_templates": templates, "settings_allow": sorted(allow)}
+
+
+def main():
+    data = json.dumps(build(), indent=1, sort_keys=True) + "\n"
+    if "--check" in sys.argv[1:]:
+        try:
+            with open(OUT) as fh: cur = fh.read()
+        except OSError:
+            cur = ""
+        if cur != data:
+            print("scripts/migrate-manifest.json does not match the release tags in RELEASES: run"
+                  " python3 scripts/release-migrate-manifest (and commit the result)", file=sys.stderr)
+            return 1
+        return 0
+    with open(OUT, "w") as fh: fh.write(data)
+    print(f"wrote {os.path.relpath(OUT, HERE)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

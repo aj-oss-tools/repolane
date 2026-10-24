@@ -42,7 +42,25 @@ def _crash(et, ev, tb):
     os._exit(0 if _EVENT == "PreToolUse" else 1)
 sys.excepthook = _crash
 
-AD = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))  # lane, wherever the session was launched
+# Two roots, as in scripts/lib.sh: PRODUCT holds Repolane's own files (this one, scripts/, templates), AD is the workspace
+# with the user's data. A clone is both, so by default they are the one folder this file sits in, wherever the session
+# was launched; LANE_PRODUCT / LANE_WORKSPACE point either somewhere else. scripts/roots.py decides them and every data
+# path, for a workspace (data under .repolane/) and a clone alike, exactly as scripts/roots.sh does for the shell.
+# Real paths, always: every rule below compares real paths. The product is never written to, not even a __pycache__.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+try:
+    import roots as _roots
+except Exception as _e:
+    # Without its resolver the guard cannot know what to protect. That must not become a silent pass: a PreToolUse
+    # call is refused, like any other internal error (fail closed), every other event shows a hook error.
+    _raw0 = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if re.search(r'"hook_event_name"\s*:\s*"PreToolUse"', _raw0):
+        _EVENT = "PreToolUse"
+    raise
+sys.path.pop(0)
+R = _roots.Roots(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+PRODUCT, AD = R.product, R.ad
 HOME = os.path.expanduser("~")
 
 
@@ -50,7 +68,7 @@ def _owner():
     """Who the messages should name. One line in registry/config.yml. Falls back to a neutral
     word so a fresh clone nobody has configured yet still reads sensibly."""
     try:
-        with open(f"{AD}/registry/config.yml") as fh:
+        with open(R.config) as fh:
             m = re.search(r"^owner:\s*$.*?^\s+name:\s*(.+?)\s*$", fh.read(), re.M | re.S)
             if m:
                 return m.group(1).strip().strip("\"'") or "the user"
@@ -59,10 +77,13 @@ def _owner():
     return "the user"
 
 OWNER = _owner()
-REPOS, LANES, LANES_DIR = f"{AD}/repos", f"{AD}/lanes", f"{AD}/registry/lanes"
+REPOS, LANES, LANES_DIR = R.repos, R.lanes, R.lanes_dir
+REGISTRY, MEMORY, KNOWLEDGE, CACHE = R.registry, R.memory, R.knowledge, R.cache
 
 def out(obj): print(json.dumps(obj).replace("__OWNER__", OWNER)); sys.exit(0)
 def deny(event, reason):
+    # the refusals are written in a clone's words; a workspace's are its own paths and commands (roots.Roots.words)
+    reason = R.words(reason)
     out({"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason}})
 def allow(event): out({"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "allow"}})
 def context(event, text): out({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}})
@@ -127,7 +148,7 @@ def state_block(lane, cwd):
                      + (f"   [{sl}]" if sl else ""))
     return "\n".join(lines)
 
-SESS_DIR = f"{AD}/.cache/sessions"
+SESS_DIR = f"{CACHE}/sessions"
 def sess_file(sid):
     """The per-session cache file. The id comes from the payload, so it cannot be allowed to carry a path."""
     return f"{SESS_DIR}/{re.sub(r'[^A-Za-z0-9_.-]', '_', str(sid or 'nosid'))[:120]}.json"
@@ -145,20 +166,20 @@ def read(path, limit=6000):
 def memory_brief(lane):
     """Cross-repo index + every lane repo's index. Indexes only; Claude opens files it needs."""
     parts = ["MEMORY for this session (indexes; open a linked file when it is relevant):",
-             f"## preferences — {AD}/knowledge/preferences.md", read(f"{AD}/knowledge/preferences.md", 3000).strip() or "(empty)"]
+             f"## preferences — {KNOWLEDGE}/preferences.md", read(f"{KNOWLEDGE}/preferences.md", 3000).strip() or "(empty)"]
     # knowledge/shared/ (lane rules pull's knowledge.d/, docs/extending.md) is written but was
     # never read by anything -- it landed on disk and stayed invisible unless someone wired a
     # pointer to it by hand. Team knowledge is the same "applies to every session, forever" shape
     # as knowledge/preferences.md, so it's read the same automatic way, one section per file
     # (not concatenated) so each file's own name stays visible.
-    shared_dir = f"{AD}/knowledge/shared"
+    shared_dir = f"{KNOWLEDGE}/shared"
     if os.path.isdir(shared_dir):
         for f in sorted(os.listdir(shared_dir)):
             if f.endswith(".md"):
                 parts += [f"## shared: {f} — {shared_dir}/{f}", read(f"{shared_dir}/{f}", 3000).strip() or "(empty)"]
-    parts += [f"## cross-repo — {AD}/memory/MEMORY.md", read(f"{AD}/memory/MEMORY.md", 3000).strip()]
+    parts += [f"## cross-repo — {MEMORY}/MEMORY.md", read(f"{MEMORY}/MEMORY.md", 3000).strip()]
     for r in lane_repo_dirs(lane):
-        parts += [f"## {r} — {AD}/memory/{r}/MEMORY.md", read(f"{AD}/memory/{r}/MEMORY.md", 3000).strip() or "(empty)"]
+        parts += [f"## {r} — {MEMORY}/{r}/MEMORY.md", read(f"{MEMORY}/{r}/MEMORY.md", 3000).strip() or "(empty)"]
     refs = lane_refs(lane)
     if refs:
         parts.append("## references attached to this lane (read-only unless marked rw) — under lanes/%s/refs/:" % lane)
@@ -213,7 +234,7 @@ def protected_branches(cwd, cur, cmd):
         repo = m.group(1) if m else None
     if repo:
         try:
-            t = read(f"{AD}/registry/repos.yaml", 20000)
+            t = read(f"{REGISTRY}/repos.yaml", 20000)
             m = re.search(r"(?:^|\n)  " + re.escape(repo) + r":\n((?:    .*\n)*)", t)
             if m:
                 block = m.group(1)
@@ -235,7 +256,7 @@ def protected_branches(cwd, cur, cmd):
 # and gitignored, and what it can say is deliberately small: a rule adds a refusal on top of the
 # built-ins. There is no syntax for granting anything — the only thing the code below can do with
 # a rule is call deny(), so a rules file can tighten this guard and never loosen it.
-RULES_FILE = f"{AD}/registry/rules.yaml"
+RULES_FILE = f"{REGISTRY}/rules.yaml"
 # Every registry/rules.*.yaml file is read and unioned the same way RULES_FILE is — in
 # particular registry/rules.shared.yaml, which `lane rules pull` (docs/extending.md) writes with
 # rules copied, SHA-pinned, from a shared git repo. There is deliberately no special-casing here:
@@ -311,7 +332,7 @@ def load_rules():
     the complaint goes to stderr from the hook and is a failure in `lane doctor`. Reads every
     registry/rules.*.yaml file (registry/rules.yaml plus, e.g., registry/rules.shared.yaml) and
     unions them through the identical parse/validate path — no file is trusted any differently."""
-    files = sorted(glob.glob(f"{AD}/registry/rules.*.yaml"))
+    files = sorted(glob.glob(f"{REGISTRY}/rules.*.yaml"))
     if os.path.exists(RULES_FILE) and RULES_FILE not in files:
         files = [RULES_FILE] + files
     good, bad = [], []
@@ -339,6 +360,7 @@ def load_rules():
             if w.get("matches"):
                 try: re.compile(w["matches"])
                 except re.error as e: bad.append(f"{rid}: `matches` is not a valid regular expression ({e})"); continue
+            r["_file"] = label
             good.append(r)
     # A rule id has to be unique across every rules.*.yaml file (including a shared one `lane
     # rules pull` namespaces): doctor verifies a rule by feeding its `example:` through the guard
@@ -385,8 +407,8 @@ def enforce_rules(event, tool, ti, segs, cwd):
     placed after those would never be reached for the files they cover. It can only ever deny."""
     rules, bad = load_rules()
     if bad:
-        print("lane guard: registry/rules.yaml — these project rules are NOT being enforced:\n  "
-              + "\n  ".join(bad) + "\n  The built-in rules are unaffected. Fix them, then `lane doctor`.", file=sys.stderr)
+        print(R.words("lane guard: registry/rules.yaml — these project rules are NOT being enforced:\n  "
+              + "\n  ".join(bad) + "\n  The built-in rules are unaffected. Fix them, then `lane doctor`."), file=sys.stderr)
     for r in rules:
         try: hit = rule_hits(r, tool, ti, segs, cwd)
         except Exception as e:
@@ -394,7 +416,7 @@ def enforce_rules(event, tool, ti, segs, cwd):
                   f"({e.__class__.__name__}) and was skipped.", file=sys.stderr); continue
         if hit:
             deny(event, f"{r['deny']}\n  This is a project rule of this control plane ('{r['id']}' in "
-                        f"registry/rules.yaml), not a built-in one. Why: {r['ref']}")
+                        f"{r.get('_file') or 'registry/rules.yaml'}), not a built-in one. Why: {r['ref']}")
 
 if "--rules" in sys.argv:
     # `lane doctor` asks the guard itself what it loaded, so the doctor and the hook can never
@@ -682,7 +704,7 @@ def ref_mode(path, lane):
 def old_paths():
     ps = set()
     try:
-        for k in json.load(open(f"{AD}/registry/old-checkouts.json")): ps.add(os.path.realpath(k))
+        for k in json.load(open(f"{REGISTRY}/old-checkouts.json")): ps.add(os.path.realpath(k))
     except Exception: pass
     ps.add(os.path.expanduser("~/.cursor/worktrees"))
     ps.add(os.path.dirname(AD) + "/clones")
@@ -713,12 +735,17 @@ STAY_MSG = ("You are inside lane '{cur}'. The work stays here; do not create or 
             "`lane-park {cur} \"<note>\"`, ExitWorktree keep, and start it from the root — after they confirm.")
 
 # Memory, preferences and the control plane are never written directly: scope is __OWNER__'s call.
-SCOPES = """MEMORY SCOPES — where a thing belongs is decided by how long it stays true:
-  preference   knowledge/preferences.md            forever, all work    "how should Claude work with me?"
-  cross-repo   memory/<slug>.md                    forever, any repo    "true in every repo?"
-  repo         memory/<repo>/<slug>.md             forever, that repo   "still true after this ticket ships?"
-  lane         registry/lanes/<id>.md              until it finishes    "only matters while this work is live?"
-               (its ## Findings section)                                  then archived with the lane"""
+def _scopes():
+    """The table every memory refusal and the memory brief show, with the paths where this plane keeps them."""
+    rows = [("preference", f"{R.rel(KNOWLEDGE)}/preferences.md", "forever, all work", '"how should Claude work with me?"'),
+            ("cross-repo", f"{R.rel(MEMORY)}/<slug>.md", "forever, any repo", '"true in every repo?"'),
+            ("repo", f"{R.rel(MEMORY)}/<repo>/<slug>.md", "forever, that repo", '"still true after this ticket ships?"'),
+            ("lane", f"{R.rel(LANES_DIR)}/<id>.md", "until it finishes", '"only matters while this work is live?"'),
+            ("", "(its ## Findings section)", "", "  then archived with the lane")]
+    w = max(len(r[1]) for r in rows) + 4
+    return "MEMORY SCOPES — where a thing belongs is decided by how long it stays true:\n" + "\n".join(
+        (f"  {a:<12} {b:<{w}}{c:<21}{d}").rstrip() for a, b, c, d in rows)
+SCOPES = _scopes()
 MEMORY_GATE = (
     "Memories are not written directly — the scope is __OWNER__'s decision.\n" + SCOPES + "\n"
     "Do this instead:\n"
@@ -1658,6 +1685,7 @@ _OTHER_HOME = re.compile(r"^(/Users|/home)/[^/]+(/|$)|^(/var)?/root(/|$)")      
 def _outside(a):
     in_home = HOME not in ("", "/") and (a == HOME or a.startswith(HOME + "/"))
     if a == AD or a.startswith(AD + "/"): return None          # inside the control plane
+    if a == PRODUCT or a.startswith(PRODUCT + "/"): return None  # the product's own files, wherever they are installed
     # /tmp is the scratchpad, unless the home directory itself lives under it
     if SCRATCH.match(a) and not in_home: return None
     if in_home: return a
@@ -1702,7 +1730,7 @@ def ref_add_refusal(raw, base):
     """Why `lane-ref add <raw>` is refused, or None. A reference is read by every session of the lane, so it may not be
     the home directory, an ancestor of it or of the plane, a system directory, a credential directory or a secret file."""
     rp = os.path.realpath(abs_of(raw, base))
-    if rp == "/" or HOME == rp or HOME.startswith(rp + "/") or AD.startswith(rp + "/") or rp == AD:
+    if rp == "/" or HOME == rp or HOME.startswith(rp + "/") or any(r.startswith(rp + "/") or rp == r for r in (AD, PRODUCT)):
         return "that folder holds the home directory or the control plane itself"
     if any(rp == d or rp.startswith(d + "/") for d in SYSTEM_DIRS):
         return "that is a system directory"
@@ -1711,12 +1739,16 @@ def ref_add_refusal(raw, base):
     if is_secret(rp, base): return "that is a secret file"
     return None
 
-PLANE_TOP = ("scripts", "docs", ".claude", "bin", ".github", ".git")
+PLANE_TOP = ("scripts", "src", "docs", ".claude", "bin", ".github", ".git")   # src/: the package launcher, product code like scripts/
+WORKSPACE_TOP = (".claude", ".repolane", ".git")
 def plane_target(rp):
     """What part of the control plane a path belongs to, or None."""
     if rp == AD: return "plane"
+    # the product installed apart from the workspace is the plane's code all the same
+    if PRODUCT != AD and (rp == PRODUCT or rp.startswith(PRODUCT + "/")): return "plane"
     if not rp.startswith(AD + "/"): return None
-    rel = rp[len(AD) + 1:]
+    # judged by the name it has in a clone, so a workspace's .repolane/memory/x is memory/x (scripts/roots.py)
+    rel = R.logical(rp[len(AD) + 1:])
     top = rel.split("/")[0]
     if top == "memory": return "memory"
     if top == "knowledge": return "knowledge"
@@ -1724,7 +1756,9 @@ def plane_target(rp):
     if top == ".cache":
         # the inbox is where lane-memory drafts are written, and nx is a build cache; the rest is the guard's own state
         return None if rel.split("/")[1:2] in (["memory-inbox"], ["nx"]) else "plane"
-    if top in PLANE_TOP or top == "registry" or "/" not in rel: return "plane"     # a file at the root is the plane's too
+    # a workspace holds no product code at its top: what is the plane's there is .claude/ and the rest of .repolane/
+    tops = WORKSPACE_TOP if R.workspace else PLANE_TOP
+    if top in tops or top == "registry" or "/" not in rel: return "plane"     # a file at the root is the plane's too
     return None
 
 def session_config_msg(rp):
@@ -1795,6 +1829,12 @@ GIT_WRITE_SUBS = {"commit", "checkout", "switch", "reset", "push", "add", "rm", 
                   "apply", "am", "cherry-pick", "branch", "tag", "worktree"}
 MIRROR_BLOCKED = {"checkout", "switch", "reset", "commit", "merge", "rebase", "stash", "cherry-pick", "am", "apply", "clean", "restore", "push"}
 CONTROL_PLANE_CMDS = {"upgrade", "init", "install", "add", "use"}
+# what only the owner runs, by hand in a terminal: they rewrite the plane, its settings and things outside it (lane migrate also
+# removes Repolane's files and refuses while Claude Code runs in the folder), so a session never starts them
+OWNER_ONLY_CMDS = {"migrate", "init", "upgrade"}
+OWNER_ONLY_MSG = ("`{what}` is not run from a lane session. It rewrites the control plane itself and its settings (lane migrate "
+                  "rewrites the whole folder), so __OWNER__ runs it themselves, from a terminal at the control plane root, with no "
+                  "Claude session inside it. Tell them the command; do not run it.")
 CONTROL_PLANE_MSG = ("`{what}` changes the control plane itself (code, rules or the registry). Changing it from inside a lane "
                      "is how the system drifts. Propose it to __OWNER__ and run it from a dispatcher session at the control plane root.")
 OTHER_LANE_MSG = ("`{what}` targets lane '{target}' but you are in '{cur}'. Lifecycle commands only act on this session's own lane; "
@@ -1804,9 +1844,9 @@ def plane_script(w0, base):
     """Is this command word a script of THIS plane (scripts/ or bin/)? A bare name counts only if the plane really has it; a path
     counts only if it leads there from `base`. `scripts/lane-evil` in a repo that has its own scripts/ is just another program."""
     if not w0: return False
-    if "/" not in w0: return bool(re.fullmatch(r"lane-[\w-]+", w0)) and (os.path.isfile(f"{AD}/scripts/{w0}") or os.path.lexists(f"{AD}/bin/{w0}"))
+    if "/" not in w0: return bool(re.fullmatch(r"lane-[\w-]+", w0)) and (os.path.isfile(f"{PRODUCT}/scripts/{w0}") or os.path.lexists(f"{PRODUCT}/bin/{w0}"))
     p = os.path.normpath(w0 if os.path.isabs(w0) else os.path.join(base, w0))
-    return os.path.dirname(p) in (f"{AD}/scripts", f"{AD}/bin") and os.path.lexists(p)
+    return os.path.dirname(p) in (f"{PRODUCT}/scripts", f"{PRODUCT}/bin") and os.path.lexists(p)
 def ours_word(w0, base):
     """One of OUR lane-* scripts, as opposed to lane-run / lane-gh (which carry someone else's command)."""
     return bool(re.fullmatch(r"(\S*/)?lane-[\w-]+", w0)) and not re.fullmatch(r"(\S*/)?lane-(run|gh)", w0) and plane_script(w0, base)
@@ -2332,6 +2372,8 @@ if event == "PreToolUse":
                 target = first_arg(w, j)
                 if target and target != cur:
                     deny(event, OTHER_LANE_MSG.format(what=f"lane {name}", target=target, cur=cur))
+            if cur and name in OWNER_ONLY_CMDS:
+                deny(event, OWNER_ONLY_MSG.format(what=f"lane {name}"))
             if cur and (name in CONTROL_PLANE_CMDS or (name == "rules" and first_arg(w, j) == "pull")
                         or (name == "secrets" and any(a in ("add", "ignore") for a in w[j:j + 4]))):
                 deny(event, CONTROL_PLANE_MSG.format(what=f"lane {name}"))
@@ -2619,7 +2661,7 @@ if event == "PreToolUse":
         fp = ti.get("file_path") or ti.get("notebook_path") or ""
         rp = os.path.realpath(fp) if fp else ""
         if rp.startswith(REPOS + "/") and (tool != "Read" or cur):
-            deny(event, f"{AD}/repos/ is the read-only mirror. Work in the lane worktree under lanes/ (scripts/lane-start or lane-resume).")
+            deny(event, f"{REPOS}/ is the read-only mirror. Work in the lane worktree under lanes/ (scripts/lane-start or lane-resume).")
         target = lane_of(rp)
         if cur and target and target != cur:
             deny(event, f"'{target}' is a different lane. This session is in '{cur}'. Ask __OWNER__ to add that repo with scripts/lane-with {cur} <repo>, or switch lanes.")
@@ -2647,6 +2689,14 @@ if event == "PostToolUse":
     if not isinstance(ti, dict): ti = {}
     ti = {k: (v if isinstance(v, (str, dict, list)) else str(v)) for k, v in ti.items()}
     if not isinstance(ti.get("file_path"), (str, type(None))) or not isinstance(ti.get("notebook_path"), (str, type(None))): sys.exit(0)
+    # A session that has just entered a lane gets the lane's rules (LANE.md) now: from here on Claude Code refuses its
+    # Edit/Write outside the lane folder before any hook runs, so only told instructions can point it at lane-memory.
+    # The lane is the one the session now sits in, or the one EnterWorktree named (`<id>` or `<id>/<repo>`).
+    if tool == "EnterWorktree" and R.workspace:
+        lid = cur or (ti.get("name") if isinstance(ti.get("name"), str) else "").split("/")[0]
+        if lid and re.fullmatch(r"[A-Za-z0-9._-]+", lid) and lid not in (".", "..") and os.path.isfile(f"{LANES_DIR}/{lid}.md"):
+            context(event, R.lane_context(lid))
+        sys.exit(0)
     if cur and tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
         fp = ti.get("file_path") or ti.get("notebook_path")
         if fp:
@@ -2679,9 +2729,10 @@ if event == "UserPromptSubmit":
                    f"  run anything in a repo:  lane-run <repo> <cmd…>   ·   GitHub: lane-gh <repo> <args…>\n"
                    f"  do NOT cd into a repo — you never need to, and the hook refuses it\n"
                    f"  NEVER ExitWorktree/EnterWorktree to change repo — a cd does it and keeps the lane.")
+        spec = f"{LANES_DIR}/{cur}.md" if R.workspace else f"registry/lanes/{cur}.md"
         context(event, pre + f"STATE of lane {cur} (every repo in it; * = where you are: {rel}). Report state only in this form:\n"
-                       + state_block(cur, cwd) + how +
-                       f"\nSpec: registry/lanes/{cur}.md. Never mention repos/ or the old checkouts.")
+                       + state_block(cur, cwd) + R.words(how) +
+                       R.words(f"\nSpec: {spec}. Never mention repos/ or the old checkouts."))
     if os.path.realpath(cwd) == os.path.realpath(AD):
         context(event, "[lane] at the dispatcher root, no lane entered. If this request is code work on a repo, first offer/enter a lane (EnterWorktree) and say so; do not edit code from here.")
     sys.exit(0)
@@ -2695,7 +2746,7 @@ if event == "PreCompact":
     except OSError: pass
     if cur and os.path.exists(f"{LANES_DIR}/{cur}.md"):
         spec = open(f"{LANES_DIR}/{cur}.md").read()
-        context(event, ("Preserve through compaction — the session is in lane '%s' at %s.\n"
+        context(event, R.words("Preserve through compaction — the session is in lane '%s' at %s.\n"
                         "Rules that still apply after this compaction:\n"
                         "  - the only way into a lane is EnterWorktree name=\"<id>\"; never cd into one\n"
                         "  - work only under lanes/%s/; repos/ are read-only mirrors; other lanes are out of bounds\n"
@@ -2719,13 +2770,14 @@ if event == "SessionEnd":
     root_f = f"{proj}/{root_slug}/{sid}.jsonl"
     if sid and os.path.exists(root_f):
         import glob as _g
-        others = _g.glob(f"{proj}/{root_slug}-repos-*/{sid}.jsonl")
+        # a mirror's project folder: the slug of repos/<repo> (under .repolane/ in a workspace)
+        others = _g.glob(f"{proj}/{re.sub(r'[^A-Za-z0-9-]', '-', REPOS)}-*/{sid}.jsonl")
         if len(others) == 1:
             repo_f = others[0]
             newer, older = (root_f, repo_f) if os.path.getmtime(root_f) >= os.path.getmtime(repo_f) else (repo_f, root_f)
             os.replace(older, older + ".superseded")
             if newer == root_f: os.replace(root_f, repo_f)
-            with open(f"{AD}/.cache/transcript-moves.log", "a") as lg:
+            with open(f"{CACHE}/transcript-moves.log", "a") as lg:
                 lg.write(f"{datetime.datetime.now():%F %T} {sid}: kept newest under {os.path.dirname(repo_f)}; older -> .superseded\n")
     if cur and os.path.exists(f"{LANES_DIR}/{cur}.md"):
         touched = set()
@@ -2761,7 +2813,7 @@ if event == "SessionEnd":
 # ------------------------------------------------- WorktreeCreate: EnterWorktree(name="<id>/<repo>")
 if event == "WorktreeCreate":
     if cur:
-        print(STAY_MSG.format(cur=cur), file=sys.stderr); sys.exit(1)
+        print(R.words(STAY_MSG.format(cur=cur)), file=sys.stderr); sys.exit(1)
     # EnterWorktree name= is interpreted by us, not by git:
     #   "<id>"          an existing lane -> resume it and land in whichever repo the work is in
     #   "<id>/<repo>"   that repo of that lane; creates the lane/worktree if needed
@@ -2783,7 +2835,8 @@ if event == "WorktreeCreate":
             print(f"lane: no lane '{lane_id}'. To start new work name a repo too: <id>/<repo>.\n"
                   f"  repos: {', '.join(known)}\n  lanes: {', '.join(active)}", file=sys.stderr)
             sys.exit(1)
-        r = subprocess.run([f"{AD}/scripts/lane-resume", lane_id], capture_output=True, text=True)
+        # inherits LANE_PRODUCT / LANE_WORKSPACE when they were set, so it acts on the workspace this guard judged
+        r = subprocess.run([f"{PRODUCT}/scripts/lane-resume", lane_id], capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stdout + r.stderr, file=sys.stderr); sys.exit(1)
         live = [x for x in rs if os.path.exists(f"{LANES}/{lane_id}/{x}/.git")]
@@ -2819,6 +2872,6 @@ if event == "WorktreeCreate":
           f"with `lane-start {lane_id} <repo>[:<branch>][@<base>] …`.", file=sys.stderr); sys.exit(1)
 
 if event == "WorktreeRemove":
-    print("lane: worktrees are removed by scripts/lane-done after the branch is pushed. Nothing was removed.", file=sys.stderr); sys.exit(1)
+    print(R.words("lane: worktrees are removed by scripts/lane-done after the branch is pushed. Nothing was removed."), file=sys.stderr); sys.exit(1)
 
 sys.exit(0)

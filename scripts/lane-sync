@@ -30,13 +30,13 @@ if [ -n "$want" ]; then
   repo_exists "$want"
   names="$want"
 else
-  names=$(sed -n 's/^  \([a-zA-Z0-9._-]*\):$/\1/p' "$AD/registry/repos.yaml")
+  names=$(sed -n 's/^  \([a-zA-Z0-9._-]*\):$/\1/p' "$REGISTRY/repos.yaml")
   [ -n "$names" ] || { echo "lane sync: no repos in registry/repos.yaml"; exit 1; }
 fi
 
 any_failed=0; checked=0
 for repo in $names; do
-  origin=$(sed -n "/^  $repo:\$/,/^  [a-zA-Z0-9._-]*:\$/p" "$AD/registry/repos.yaml" | sed -n 's/^    origin: //p' | head -1)
+  origin=$(sed -n "/^  $repo:\$/,/^  [a-zA-Z0-9._-]*:\$/p" "$REGISTRY/repos.yaml" | sed -n 's/^    origin: //p' | head -1)
   if [ -z "$origin" ] || [ "$origin" = "(local-only)" ]; then
     echo "$repo: $NOT_ON_GITHUB"
     continue
@@ -68,7 +68,7 @@ for repo in $names; do
   fi
   rm -f "${TMPDIR:-/tmp}/lane-sync-err.$$"
 
-  python3 "$AD/scripts/sync-write.py" "$AD/registry/repos.yaml" "$repo" "$protected"
+  python3 "$PRODUCT/scripts/sync-write.py" "$REGISTRY/repos.yaml" "$repo" "$protected"
   checked=$((checked+1))
   if [ -n "$protected" ]; then
     echo "$repo ($owner/$ghrepo): protected — $(printf '%s' "$protected" | tr '\n' ' ')"

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-cat <<'TXT'
+# The menu is written in a clone's words; a workspace shows it in its own (roots.sh lane_words).
+_here=$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")
+PRODUCT="${LANE_PRODUCT:-$(dirname "$_here")}"
+source "$_here/roots.sh"; lane_resolve_roots
+lane_words <<'TXT'
 Everything below is a script — instant, no model call. In a terminal type it as is; inside Claude prefix it with "! ".
 
   lane status                          repos, lanes, drift

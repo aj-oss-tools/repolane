@@ -3,7 +3,7 @@
 # Files whose NAME says secret (.env, *.pem, *credentials*.json, ... — the guard's list) are never
 # committed: they stay on disk, untracked, and park says which it left out.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 export GIT_LITERAL_PATHSPECS=1   # every path below is a literal name, never a glob (a file called ".env*" must not pull .env in)
 id="${1:-}"; note="${2:-}"; f=$(lane_file "$id"); [ -f "$f" ] || die "no lane '$id'"
 # The note is what you read in a week. The board already insists on a real one; so does this.
@@ -65,8 +65,15 @@ done < <(lane_repos "$id")
 python3 - "$f" "$note" <<'PY'
 import sys,re,datetime
 f,note=sys.argv[1:]; t=open(f).read(); d=datetime.date.today().isoformat()
-t=re.sub(r"## Resume note\n.*?(?=\n## Log)",f"## Resume note\n_{d}_: {note}\n",t,flags=re.S)
+# only the Resume note's own body, up to the next heading (Findings, Log, or anything the owner added), never past it
+body=f"_{d}_: {note}\n"
+if re.search(r"^## Resume note\n",t,re.M):
+    t=re.sub(r"(^## Resume note\n).*?(?=^## |\Z)",lambda m:m.group(1)+body+"\n",t,count=1,flags=re.S|re.M)
+elif re.search(r"^## Log\n",t,re.M):
+    t=re.sub(r"^## Log\n",lambda m:"## Resume note\n"+body+"\n"+m.group(0),t,count=1,flags=re.M)
+else:
+    t=t.rstrip("\n")+"\n\n## Resume note\n"+body
 t=t.rstrip()+f"\n- {d} parked: {note}\n"; open(f,"w").write(t)
 PY
-"$AD/scripts/lane-workspace" >/dev/null
+"$PRODUCT/scripts/lane-workspace" >/dev/null
 lane_set_status "$id" parked; echo "parked $id"

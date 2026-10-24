@@ -24,9 +24,9 @@
 #     parse/validate/deny-only path; nothing here bypasses that.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 
-CONFIG="$AD/registry/config.yml"
-CACHE="$AD/registry/.shared-cache"
-SHARED_RULES="$AD/registry/rules.shared.yaml"
+CONFIG="$CONFIG_FILE"
+CACHE="$REGISTRY/.shared-cache"
+SHARED_RULES="$REGISTRY/rules.shared.yaml"
 
 # --- registry/config.yml `shared_rules: { url:, pinned_sha: }` -------------------------------
 cfg_get(){ # cfg_get <key>  (url|pinned_sha), read from the shared_rules: block only
@@ -150,7 +150,7 @@ PY
     fi
 
     if [ -d "$REPO_DIR/scripts.d" ]; then
-      mkdir -p "$AD/scripts/local"
+      mkdir -p "$DATA/scripts/local"
       n=0; kept=""
       # Names an earlier pull put in scripts/local/. Anything else already there is the user's own
       # file (docs/extending.md: that folder is theirs) and a shared script must not replace it.
@@ -162,11 +162,11 @@ PY
         [ -L "$f" ] && { echo "  skipped scripts.d/$(basename "$f") — a symlink, not a plain file" >&2; continue; }
         [ -f "$f" ] || continue
         b=$(basename "$f")
-        if [ -e "$AD/scripts/local/$b" ] && ! grep -qxF "$b" "$MANIFEST" && ! cmp -s "$f" "$AD/scripts/local/$b"; then
+        if [ -e "$DATA/scripts/local/$b" ] && ! grep -qxF "$b" "$MANIFEST" && ! cmp -s "$f" "$DATA/scripts/local/$b"; then
           kept="$kept $b"; continue
         fi
-        cp "$f" "$AD/scripts/local/$b"
-        chmod +x "$AD/scripts/local/$b"
+        cp "$f" "$DATA/scripts/local/$b"
+        chmod +x "$DATA/scripts/local/$b"
         grep -qxF "$b" "$MANIFEST" || echo "$b" >> "$MANIFEST"
         n=$((n+1))
       done
@@ -180,7 +180,7 @@ PY
     # is copied (never symlinked, same as scripts.d/) into a separate knowledge/shared/ namespace,
     # mirroring how registry/rules.shared.yaml never touches registry/rules.yaml.
     if [ -d "$REPO_DIR/knowledge.d" ]; then
-      mkdir -p "$AD/knowledge/shared"
+      mkdir -p "$KNOWLEDGE_DIR/shared"
       n=0
       for f in "$REPO_DIR/knowledge.d"/*; do
         # Same reason as scripts.d/ above -- and more consequential here, since knowledge/ is
@@ -189,7 +189,7 @@ PY
         # contents copied straight into what a future session reads).
         [ -L "$f" ] && { echo "  skipped knowledge.d/$(basename "$f") — a symlink, not a plain file" >&2; continue; }
         [ -f "$f" ] || continue
-        cp "$f" "$AD/knowledge/shared/$(basename "$f")"
+        cp "$f" "$KNOWLEDGE_DIR/shared/$(basename "$f")"
         n=$((n+1))
       done
       [ "$n" -gt 0 ] && echo "copied $n file(s) from knowledge.d/ into knowledge/shared/"
@@ -226,12 +226,12 @@ PY
     else
       echo "loaded:      registry/rules.shared.yaml does not exist"
     fi
-    if [ -d "$AD/scripts/local" ] && [ -n "$(ls -A "$AD/scripts/local" 2>/dev/null)" ]; then
-      echo "scripts.d:   $(ls "$AD/scripts/local" | tr '\n' ' ')"
+    if [ -d "$DATA/scripts/local" ] && [ -n "$(ls -A "$DATA/scripts/local" 2>/dev/null)" ]; then
+      echo "scripts.d:   $(ls "$DATA/scripts/local" | tr '\n' ' ')"
     fi
-    if [ -d "$AD/knowledge/shared" ] && [ -n "$(ls -A "$AD/knowledge/shared" 2>/dev/null)" ]; then
-      kn=$(ls "$AD/knowledge/shared" | wc -l | tr -d ' ')
-      echo "knowledge.d: $kn file(s) in knowledge/shared/: $(ls "$AD/knowledge/shared" | tr '\n' ' ')"
+    if [ -d "$KNOWLEDGE_DIR/shared" ] && [ -n "$(ls -A "$KNOWLEDGE_DIR/shared" 2>/dev/null)" ]; then
+      kn=$(ls "$KNOWLEDGE_DIR/shared" | wc -l | tr -d ' ')
+      echo "knowledge.d: $kn file(s) in knowledge/shared/: $(ls "$KNOWLEDGE_DIR/shared" | tr '\n' ' ')"
     else
       echo "knowledge.d: knowledge/shared/ does not exist"
     fi

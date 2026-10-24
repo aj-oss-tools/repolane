@@ -1,6 +1,6 @@
 # When something goes wrong
 
-Every failure on this page has been reproduced against a real control plane, and every command
+Every failure on this page has been reproduced against a real workspace, and every command
 shown was run. Where the tool's own advice is wrong, this page says so.
 
 Start with `lane doctor` and `lane status`. Between them they detect most of what follows, and
@@ -24,7 +24,7 @@ error: cannot start web: no such base
 ### What is on disk
 
 The lane folder exists and holds only the repos that got as far as being created. The lane file in
-`registry/lanes/<id>.md` exists too, and lists only those repos — the one that failed was never
+`.repolane/registry/lanes/<id>.md` exists too, and lists only those repos — the one that failed was never
 written to it, because registration happens after the worktree succeeds.
 
 What is *missing* is everything that runs after the loop: the lane's `CLAUDE.md`, the anchor repo
@@ -33,6 +33,11 @@ guards. So the half-made lane is **unguarded**:
 
 ```
 $ lane doctor
+Workspace ~/work:
+  …
+  !!    lanes/SHOP-431: a settings.local.json is missing, so a session there is unguarded
+        fix: run: lane resume SHOP-431
+  …
 guard.py compiles; 11/11 probes answered as they should:
   …
 7/9 places point at guard.py: 3 lane(s), 5 worktree(s), the root
@@ -71,19 +76,19 @@ lane done SHOP-431 --delete-branches
 `--delete-branches` is what stops a half-made lane leaving a branch behind. If you drop the lane
 without it, the branch stays in the mirror and the next `lane start <same-id>` silently checks the
 old branch out instead of creating one — which looks like the base you asked for being ignored,
-because it is. `git -C repos/<repo> branch --list` shows what is there.
+because it is. `git -C .repolane/repos/<repo> branch --list` shows what is there.
 
 ---
 
 ## A worktree that was deleted or moved behind git's back
 
 Deleting `lanes/<id>/<repo>` with `rm -rf`, or moving it, does not tell git. Git keeps the
-registration in `repos/<repo>/.git/worktrees/`, so the path is still claimed and nothing can be
+registration in `.repolane/repos/<repo>/.git/worktrees/`, so the path is still claimed and nothing can be
 created there again:
 
 ```
-$ git -C repos/api worktree list
-/…/repos/api                 5a5171c [main]
+$ git -C .repolane/repos/api worktree list
+/…/.repolane/repos/api       5a5171c [main]
 /…/lanes/SHOP-431/api        0d94433 [SHOP-431] prunable
 ```
 
@@ -105,7 +110,7 @@ lane resume SHOP-431
 ```
 
 Because it prunes every mirror, not just the lane's, one `lane resume` on any lane clears stale
-entries left anywhere in the control plane.
+entries left anywhere in the workspace.
 
 **`lane nested` is for a different problem** and will not help here. It finds worktrees that sit
 *inside* another worktree — a genuinely broken state, because the outer repo then sees the inner
@@ -134,12 +139,60 @@ first — but on its own it only forgets the dead path. It does not bring the wo
 
 ## `lane doctor` is failing
 
-`lane doctor` makes three separate claims, and a failure in each has a different repair. Read which
-of the three sections it got to before it stopped.
+`lane doctor` makes four separate claims, and a failure in each has a different repair. Read which
+section the `!!` line is in.
 
 The stale-lane list at the bottom is not one of them: it never fails the command, and it is
 describing untidiness, not breakage. What each line means, and what the command it suggests will
 do, is in [rules.md](rules.md), under "Rules of your own".
+
+### 0. The workspace is not wired
+
+The first block, `Workspace <folder>:`, checks what the hooks depend on. Each `!!` line carries its fix, and
+`lane doctor --fix` applies the safe ones (it asks before editing `CLAUDE.md` or anything under `~/.claude`;
+`--yes` answers yes).
+
+#### The hooks fail because `lane` is not on PATH
+
+```
+  !!    `lane` is not on PATH: every hook in this workspace runs `lane hook …`, so every hook fails and Claude Code runs tools UNGUARDED
+        fix: put the folder lane is installed in on PATH (in your shell profile), then open a new terminal: export PATH="…:$PATH"
+```
+
+This is the most serious line the doctor can print. Every hook in `.claude/settings.json` and in every lane is a
+`lane hook …` command, run by Claude Code through your shell's PATH. When `lane` cannot be found, the hook cannot
+start, and Claude Code treats a hook that fails to start as no objection: **the guard fails open**, every tool call
+goes through, and nothing on screen says so. No refusals, no `[lane]` line on prompts, no SessionStart text: if a
+session is suddenly that quiet, this is why.
+
+It happens after a pipx install whose bin folder (usually `~/.local/bin`) is not on PATH (`pipx ensurepath` adds
+it), or when Claude Code is started from an app or launcher that does not read your shell profile. Add the `export`
+line the doctor prints to your shell profile, open a new terminal, start Claude Code from it, and run `lane doctor`
+again. Running the doctor itself by full path (`~/.local/bin/lane doctor`) works when `lane` is not on PATH.
+
+#### Repolane's rules do not load: the import line is missing
+
+```
+  !!    CLAUDE.md does not import .repolane/REPOLANE.md: Repolane's rules do not load here
+        fix: add the line @.repolane/REPOLANE.md to CLAUDE.md, or run: lane doctor --fix (it asks first)
+```
+
+The hooks still guard every tool call, but the session never reads the rules: it does not know about lanes, the
+`lane-*` commands or how to save memory, and works against the refusals instead of with them. `lane init` adds the
+line to an existing `CLAUDE.md` only after you say yes, and with no terminal and no `--yes` it leaves the file
+alone, so this is what you see after `lane init` ran in a script, or after you answered no. Add the line anywhere in
+`CLAUDE.md` yourself, or run `lane doctor --fix`.
+
+#### The other workspace lines
+
+| what it says | what to run |
+|---|---|
+| `.claude/settings.json does not run the expected lane hook commands` | `lane doctor --fix` (Repolane's hooks rewritten, your own keys and hooks kept) |
+| `REPOLANE.md and LANE.md are version X's`, not the installed one | `lane upgrade --refresh-only` (or any `lane` command, which refreshes them) |
+| not registered in `planes.json` | `lane doctor --fix`; `lane upgrade` only refreshes registered workspaces |
+| `lanes/<id>: a settings.local.json is missing` or runs old hooks | `lane resume <id>` |
+| Claude Code's memory is not linked into `.repolane/memory` | `lane doctor --fix` (asks first). One you declined is a note, not a failure |
+| the status line runs a clone's `scripts/statusline.sh` | `lane doctor --fix` (sets `lane statusline`) |
 
 ### 1. The guard does not compile
 
@@ -152,15 +205,16 @@ do, is in [rules.md](rules.md), under "Rules of your own".
 ```
 
 This is the worst of the three and the most urgent: a hook that cannot start cannot refuse
-anything, so every rule in [`docs/rules.md`](rules.md) is off right now. It is almost always a
-half-finished edit. Fix the syntax, or throw the edit away:
+anything, so every rule in [`docs/rules.md`](rules.md) is off right now. The guard is part of the
+installed package, so this means the package's files were changed or damaged. Put them back:
 
 ```
-git checkout scripts/hooks/guard.py
+pipx reinstall repolane          # or: uv tool install --reinstall repolane
+lane doctor -v
 ```
 
-Then `bash scripts/hooks/test-guard.sh` before you trust it again. The suite builds its own
-throwaway control plane under `$HOME` and deletes it on exit, so it is safe to run at any time.
+`lane doctor -v` runs the full guard suite against a throwaway one it builds under `$HOME` and deletes on exit,
+so it is safe to run at any time.
 
 ### 2. A probe answered wrongly
 
@@ -174,17 +228,16 @@ throwaway control plane under `$HOME` and deletes it on exit, so it is safe to r
 ```
 
 The guard runs, but a rule has stopped firing. The probes are named after the rule they check, so
-the failing line tells you which. This means an edit to `guard.py` changed behaviour, whether or not
-that was the intention — `git diff scripts/hooks/guard.py` is the first thing to read, and
-`git log -p scripts/hooks/guard.py` the second.
+the failing line tells you which. With the package as it was released, every probe passes, so either the
+package's files were edited (reinstall it, as above) or a rule of your own in `.repolane/registry/rules.yaml`
+changed what an ordinary command gets.
 
 One of the eleven is a control: *"ordinary work is untouched"* must come back `pass`. If it is the one
 that failed, the guard has become too strict rather than too loose, and every ordinary command in
 every session is being refused.
 
-Run `bash scripts/hooks/test-guard.sh` for the detail — well over a thousand cases against the same guard will say
-far more than eleven probes will. If you are keeping the change, add a case for it; a rule with no test is a
-rule that will quietly stop working.
+Run `lane doctor -v` for the detail — well over a thousand cases against the same guard will say
+far more than eleven probes will.
 
 ### 3. Something is not pointing at the guard
 
@@ -198,8 +251,8 @@ This is the common one.
 ```
 
 Each lane folder and each worktree inside it has a generated `.claude/settings.local.json` holding
-the hooks that call the guard. It is generated, gitignored, and rewritten by `lane start`,
-`lane resume`, `lane with` and `lane ref`. A session whose copy is missing, emptied, or overwritten
+the `lane hook` commands that call the guard. It is generated, machine-local, and rewritten by `lane start`,
+`lane resume`, `lane with`, `lane ref` and `lane upgrade`. A session whose copy is missing, emptied, or overwritten
 by something that writes that file without preserving its `hooks` block is unguarded, even though
 `guard.py` itself is in perfect health. `lane doctor` distinguishes three states:
 
@@ -241,18 +294,15 @@ lane resume SHOP-412
    fix with: lane resume <id>   (rewrites the guard for that lane)
 ```
 
-**Ignore that advice here too.** The root's hooks live in `.claude/settings.json`, which is a
-tracked file in the repository, not a generated one — so neither `lane resume` nor `lane init`
-rewrites it, and running them changes nothing. This is nearly always a botched merge after pulling
-upstream (see below). Restore the tracked version:
+**Ignore that advice here.** The root's hooks live in `.claude/settings.json`, which is your file, not a lane's,
+so `lane resume` does not touch it. The workspace block above it says the same thing with the right fix:
 
 ```
-git checkout .claude/settings.json
-lane doctor
+lane doctor --fix
 ```
 
-If you have deliberate changes of your own in there, put them in `.claude/settings.local.json`
-instead. That file is gitignored, so it never conflicts on a pull, and Claude Code reads both.
+It rewrites Repolane's hooks in `.claude/settings.json` and keeps every key and hook of your own. If the file is not
+valid JSON, the doctor says so and leaves it alone; mend it (or move it aside), then run `lane doctor --fix`.
 
 ---
 
@@ -266,7 +316,7 @@ They look similar in the transcript and come from different places.
 names a tool and a pattern. Approving it is the whole answer.
 
 **A guard refusal** never asks. The tool call is denied outright, and the message explains itself in
-this tool's vocabulary — lanes, mirrors, the owner's name from `registry/config.yml` — and usually
+this tool's vocabulary — lanes, mirrors, the owner's name from `.repolane/config.yml` — and usually
 names the command that would make it legitimate:
 
 ```
@@ -286,10 +336,10 @@ hook event on stdin:
 
 ```
 printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"'$PWD'","tool_input":{"command":"git push origin main"}}' \
-  | python3 scripts/hooks/guard.py
+  | lane hook pre-tool-use
 ```
 
-Empty output means the guard has no objection.
+Run it from the workspace (or a lane). Empty output means the guard has no objection.
 
 ### The documented ways through
 
@@ -324,8 +374,8 @@ itself is the problem, and approving it does not make the secret un-read. There 
 answers. For the *names*, which is what is almost always actually wanted:
 
 ```
-$ lane keys repos/api/.env
-variables in repos/api/.env (names only):
+$ lane keys .repolane/repos/api/.env
+variables in .repolane/repos/api/.env (names only):
   API_KEY
   DATABASE_URL
 ```
@@ -336,106 +386,76 @@ it helps every human who clones the repo too. For *behaviour*, run the app and r
 
 ---
 
-## Upgrade friction: the clone is the control plane
+## Upgrading
 
-This is the sharpest edge in the whole tool, and it is not a bug. See
-["The clone is the control plane"](concepts.md#the-clone-is-the-control-plane) in Concepts for why:
-in short, this checkout is not a static copy of the repository — `registry/`, `memory/`,
-`knowledge/` and `CLAUDE.md` hold your actual state, `git status` is dirty by design, and taking an
-update from upstream is a real merge between upstream's code and your state.
+`lane upgrade` upgrades the package and then refreshes every registered workspace; `lane upgrade --check` shows what
+it would do. What can go wrong:
 
-`lane upgrade` automates exactly the procedure below: it refuses if anything tracked outside
-`registry/`, `memory/`, `knowledge/`, `CLAUDE.md` and `.claude/settings*.json` is dirty (plus
-`.gitignore` and `scripts/local/` on a `private: true` fork),
-fetches, and fast-forwards only if that's clean — never an automatic merge. If it isn't a clean
-fast-forward (real divergence, or a conflict) it stops and prints the manual steps below rather
-than attempting anything. Run the steps by hand whenever `lane upgrade` itself refuses.
+- **It printed a `pip` command instead of upgrading.** The package was installed with pip (into a venv, say), not
+  pipx or uv. Run the command it printed, then `lane upgrade --refresh-only`.
+- **"PyPI cannot be reached".** `--check` needs the network; nothing was changed.
+- **A workspace "is gone".** A registered folder was moved or deleted. It is skipped, and you are asked whether to
+  drop it from `~/.local/share/lane/planes.json` (`--drop-missing` drops it). A moved workspace registers itself again
+  the next time you run `lane init` or `lane upgrade` inside it.
+- **A workspace could not be refreshed.** Usually a `.claude/settings.json` that is not valid JSON. Mend it, then
+  `lane upgrade --refresh-only`. The exit status stays non-zero until every workspace is refreshed.
 
-**The one rule that matters**: once you commit your own control-plane state (the "before you pull"
-step just below), `lane upgrade` will always refuse from then on — a local commit is never a clean
-fast-forward, so use the manual recipe instead. This is not a contradiction: committing is exactly
-what the manual recipe expects you to do, and exactly what disqualifies the automated one.
+A workspace that was not refreshed by `lane upgrade` still catches up on its own: the first `lane` command or hook
+after the installed version changes rewrites `REPOLANE.md` and `LANE.md`.
 
-### Before you pull
+---
 
-Commit your own state, or you will be merging on top of uncommitted changes and it will be hard to
-tell whose is whose:
+## Moving from a git-clone install
 
-```
-git add registry knowledge memory CLAUDE.md
-git commit -m "my control plane"
-```
+The steps are in [Installing Repolane](install.md#moving-from-a-git-clone-install). The ways it stops:
 
-Nothing in `repos/` or `lanes/` is ever committed — they are gitignored machine state, rebuildable
-from `registry/` with `lane resume`. Only the registry and what sessions have learned are worth
-keeping. If you want them backed up, point the clone at a private remote of your own.
-
-### The conflict you will get
-
-Almost always `.claude/settings.json`, because it is the one tracked file that both you and upstream
-have reason to change:
+**`lane migrate` refuses while Claude Code is running.**
 
 ```
-$ git pull
-Auto-merging .claude/settings.json
-CONFLICT (content): Merge conflict in .claude/settings.json
-Automatic merge failed; fix conflicts and then commit the result.
+lane migrate: Claude Code is running inside ~/repolane:
+    pid 4242 in /Users/you/repolane/lanes/SHOP-412
+  Its hooks would vanish under it. End those sessions (/exit), then run lane migrate again, from a terminal.
 ```
 
-**Resolve it in favour of upstream.** That file carries the hook wiring — the thing `lane doctor`
-checks for at the root — and upstream's version is the one that matches the `guard.py` you are
-pulling in:
+A running session's hooks point into the clone, and the migration removes those files, so a session left running
+would go on unguarded. End every session in the folder and its lanes, then run `lane migrate` again from a plain
+terminal (not from a Claude Code shell).
+
+**`lane migrate` "runs from the installed package, not from the clone itself".** The `lane` you ran is still the
+clone's (the router `lane install` wrote to `~/.local/bin/lane` sends every call to the clone). Run the installed one
+by its full path; pipx prints where it put it, and `pipx list` shows it again. After the migration has removed the
+router, `pipx reinstall repolane` links the package's own `lane` there if pipx skipped it before.
+
+**"both X and Y exist".** The folder already has a `.repolane/<name>` next to the clone's `<name>`, from an earlier
+attempt or by hand. Move one aside, then run `lane migrate` again.
+
+**`.claude/settings.json is not valid JSON`.** Mend it first; the migration only ever merges into it.
+
+**It stopped half way** (the terminal closed, the machine slept). Run `lane migrate` again: each step is recorded,
+and it continues where it stopped.
+
+**You want the clone back.** `lane migrate --undo <backup>` with the backup path it printed
+(`~/.local/share/lane/backups/<folder>-<time>.tar.gz`) restores the clone install; what was written in the
+workspace since is kept aside.
+
+### Upgrade friction: if the clone's own `lane upgrade` refuses
+
+Moving over starts with `lane upgrade` inside the clone, and that is the clone's own upgrader, which only
+fast-forwards. It refuses when tracked files outside `registry/`, `memory/`, `knowledge/`, `CLAUDE.md` and
+`.claude/settings*.json` are dirty, and when the clone has commits of its own (a fast-forward is then impossible).
+Its recipe:
 
 ```
-git checkout --theirs .claude/settings.json
-git add .claude/settings.json
-git commit
-lane doctor
+git add registry knowledge memory CLAUDE.md && git commit -m "my control plane"   # keep your state
+git pull                                                                          # a real merge
 ```
 
-Then put whatever you had added back into `.claude/settings.local.json`, which is gitignored and so
-will never conflict again. Doing that once is what stops this recurring on every upgrade.
+The usual conflict is `.claude/settings.json`. Take upstream's version (`git checkout --theirs .claude/settings.json`,
+`git add .claude/settings.json`, `git commit`), then `lane doctor`. `git merge --abort` returns you to where you were;
+none of this touches `lanes/` or `repos/`. If the refusal names `.claude/settings.json` as modified by `lane init`,
+run `git checkout -- .claude/settings.json`, then `lane upgrade`, then `lane init --yes`.
 
-If the merge has gone badly enough that you would rather not think about it:
-
-```
-git merge --abort
-```
-
-That returns you to exactly where you were, upgraded or not, and your lanes are untouched throughout
-— none of this touches `lanes/` or `repos/`.
-
-### Your first upgrade from an install made before 0.9.0
-
-The `lane upgrade` that runs is the one already in your checkout, so an install made before 0.9.0
-still has the older check. It refuses because `lane init` modified `.claude/settings.json`:
-
-```
-lane upgrade: uncommitted changes in tracked files outside the expected-dirty paths:
-   M .claude/settings.json
-```
-
-Do this once:
-
-```
-git checkout -- .claude/settings.json   # drops the edit lane init made; lane init writes it again below
-lane upgrade
-lane init --yes                         # re-applies your statusLine and the hook wiring
-```
-
-If you edited `.claude/settings.json` yourself, copy it aside first. Once you are on 0.9.0,
-`lane upgrade` accepts that file as modified and this step is not needed again.
-
-### After any upgrade
-
-```
-lane doctor
-bash scripts/hooks/test-guard.sh
-```
-
-The first says the rules are in force on your machine; the second says they are the rules they are
-supposed to be. If `guard.py` changed upstream and a lane's generated settings did not, `lane doctor`
-is what tells you, and `lane resume <id>` is the fix.
+Once the clone is up to date, continue with `pipx install repolane` and `lane migrate`.
 
 ---
 
@@ -505,38 +525,30 @@ $ lane env
 ```
 
 Env files are gitignored, so a fresh worktree has none; `lane start` and `lane resume` symlink them
-in from the mirror. A worktree created *before* you added a `.env` to `repos/<repo>` will not have
+in from the mirror. A worktree created *before* you added a `.env` to `.repolane/repos/<repo>` will not have
 the link — `lane resume <id>` adds it.
 
-**Nothing works before `lane init`.** Any command other than `init` and `help` stops with:
+**Nothing works outside a workspace.** Any command other than `init` and `help`, run in a folder
+that is not inside a workspace, stops with:
 
 ```
 lane: this control plane is not set up yet
   run:  lane init
 ```
 
-`lane init` is safe to re-run at any time.
+`lane` looks for `.repolane/` in the current folder and every folder above it. `cd` into your workspace (or set
+`LANE_WORKSPACE`), or run `lane init` to make this folder one. `lane init` is safe to re-run at any time.
 
 **Commands the docs mention are "command not found".** The guard's messages and the agent prompts
-use the long-form names — `lane-start`, `lane-run`, `lane-memory`. They only exist on your PATH if
-`lane install` has linked them. Re-run it; it is idempotent, and it also removes a `bin/README.md`
-link that versions before 0.1.0 put on your PATH:
+use the long-form names — `lane-start`, `lane-run`, `lane-memory`. The package installs them next to `lane`, so
+if `lane` works and they do not, an old install is in the way: `pipx reinstall repolane`. If `lane` is not found
+either, see [the hooks fail because `lane` is not on PATH](#the-hooks-fail-because-lane-is-not-on-path).
 
-```
-lane install
-```
-
-Re-running it on the same checkout is always friction-free, on any machine, no matter how many
-other repolane checkouts are also registered there — `~/.local/bin/lane` is a small, stable,
-generic dispatcher (never a symlink at one specific checkout) that routes to whichever registered
-control plane applies, via `~/.local/share/lane/planes.json`; see
-["The clone is the control plane"](concepts.md#the-clone-is-the-control-plane) for the model and
-`lane use` in [`docs/commands.md`](commands.md) for switching which one is `active`. Running
-`lane install` from a second (or third) project just registers it alongside the others — it never
-silently takes over `active` from whatever you were already using, unless you pass
-`--make-active`. An old, pre-registry install (`dest/lane` still a plain symlink at one checkout)
-is detected and migrated automatically the next time `lane install` runs anywhere: the checkout it
-pointed at is registered under its directory name, and nothing needs cleaning up by hand.
+**A lane session cannot save its Goal or a memory.** Inside a lane, Claude Code refuses Edit and Write on any path
+outside the lane folder ("This session is isolated in the worktree"), and the lane file and the memory folders are
+outside it. That refusal is Claude Code's own and no setting turns it off. The session should run
+`lane-memory goal "<text>"` and `lane-memory draft <slug> "<text>"` instead; `LANE.md` tells it so. If it keeps
+trying Edit, check that the import line is in `CLAUDE.md` (above).
 
 **`!! oversized guard files (rules are repeating)`** in `lane status` means a generated
 `settings.local.json` has grown past 20 KB because deny rules accumulated instead of being replaced.
@@ -544,8 +556,8 @@ pointed at is registered under its directory name, and nothing needs cleaning up
 
 **`!! worktree outside lanes/`** in `lane status` means a worktree of one of your mirrors exists
 somewhere this tool does not manage. It is not dangerous, but it is invisible to every lane command,
-and it is usually a checkout that predates the control plane. Either move the work into a lane, or
-remove it with `git -C repos/<repo> worktree remove <path>`.
+and it is usually a checkout that predates the workspace. Either move the work into a lane, or
+remove it with `git -C .repolane/repos/<repo> worktree remove <path>`.
 
 **A mirror is dirty or off its default branch.** `lane status` flags both:
 
@@ -557,8 +569,8 @@ Every worktree shares the mirror's object store, so the mirror is not a place to
 changes into a lane, then put the mirror back:
 
 ```
-git -C repos/api stash
-git -C repos/api checkout main
+git -C .repolane/repos/api stash
+git -C .repolane/repos/api checkout main
 ```
 
 ---

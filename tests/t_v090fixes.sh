@@ -14,6 +14,7 @@ unset PLANE_DIR_NAME
 echo "-- lane doctor -v keeps the suite's exit status"
 new_sandbox
 HK="$T/p/scripts/hooks"; mkdir -p "$HK"; cp "$PRODUCT"/scripts/hooks/guard.py "$PRODUCT"/scripts/hooks/guard-check "$HK/"
+cp "$PRODUCT"/scripts/roots.sh "$PRODUCT"/scripts/roots.py "$T/p/scripts/"   # where both find the workspace
 printf '#!/usr/bin/env bash\necho "  FAIL  stub case"\nexit 3\n' > "$HK/test-guard.sh"
 OUT=$(cd "$T" && bash "$HK/guard-check" -v 2>&1); RC=$?
 assert_contains "the suite's output is shown" "$OUT" "FAIL  stub case"

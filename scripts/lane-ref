@@ -5,14 +5,14 @@
 # Refs live in the lane frontmatter (refs:), appear as symlinks under lanes/<id>/refs/<name>, and are
 # granted read access by the guard + additionalDirectories. --rw allows edits there too.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
-source "$AD/scripts/gitstate.sh"
+source "$PRODUCT/scripts/gitstate.sh"
 id="${1:-}"; cmd="${2:-list}"; f=$(lane_file "$id"); [ -f "$f" ] || die "no lane '$id'"
 case "$cmd" in
   add)
     src="${3:-}"; [ -n "$src" ] || die "usage: lane-ref <id> add <path> [note] [--rw]"
     src=$(python3 -c 'import os,sys;print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$src")
     [ -e "$src" ] || die "no such path: $src"
-    case "$src" in "$LANES"/*|"$REPOS"/*) die "that is already part of the control plane; use lane-add (new repo) or lane-with (existing lane) for repos";; esac
+    case "$src" in "$LANES"/*|"$REPOS"/*) die "that is already part of the $PLANE_WORD; use lane-add (new repo) or lane-with (existing lane) for repos";; esac
     mode=read; note=""; shift 3
     for a in "$@"; do [ "$a" = "--rw" ] && mode=rw || note="$a"; done
     name=$(basename "$src"); mkdir -p "$LANES/$id/refs"
@@ -74,5 +74,5 @@ for path,body in blocks:
 PY
     ;;
 esac
-"$AD/scripts/lib.sh" >/dev/null 2>&1 || true
-bash -c "source '$AD/scripts/lib.sh' && refresh_guards"
+"$PRODUCT/scripts/lib.sh" >/dev/null 2>&1 || true
+bash -c "source '$PRODUCT/scripts/lib.sh' && refresh_guards"

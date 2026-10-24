@@ -14,8 +14,27 @@ while [ -L "$_self" ]; do
   _l=$(readlink "$_self")
   case "$_l" in /*) _self="$_l" ;; *) _self="$(dirname "$_self")/$_l" ;; esac
 done
-AD="$(cd "$(dirname "$_self")" && pwd)"
-S="$AD/scripts"
+# PRODUCT is where Repolane's own files are (this file, scripts/, VERSION); AD is the workspace with the user's
+# data. One folder in a clone; LANE_PRODUCT / LANE_WORKSPACE split them, and an installed product finds its workspace
+# from the current folder (scripts/roots.sh decides all of it, for every script).
+PRODUCT="${LANE_PRODUCT:-$(cd "$(dirname "$_self")" && pwd)}"
+S="$PRODUCT/scripts"
+# what the caller named, before the resolver below exports the workspace it found (`lane init` needs to tell them apart)
+_ws_named="${LANE_WORKSPACE:-}"
+source "$S/roots.sh"
+# A hook runs in the session's current folder, which a cd can move; the folder the session was started in is the one
+# that says which workspace it belongs to.
+if { [ "${1:-}" = hook ] || [ "${1:-}" = statusline ]; } && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then lane_resolve_roots "$CLAUDE_PROJECT_DIR"
+else lane_resolve_roots; fi
+# a workspace takes the installed version's rule files (and data migrations) on the first run after an upgrade; not
+# for `lane doctor`, which reports a stale workspace (and repairs it with --fix) rather than hide it, nor for the
+# doctor's own probe of the hook path
+# nor for `lane upgrade`, which refreshes every registered workspace itself and reports what it did
+case "${1:-} ${2:-}" in "doctor "*|"upgrade "*|"hook ping") : ;; *) lane_refresh_workspace ;; esac
+
+# the installed package (LANE_PRODUCT set by its launcher, and no git checkout of its own) as opposed to a clone: a few
+# commands only make sense for one of the two
+PKG=""; [ -n "${LANE_PRODUCT:-}" ] && [ ! -e "$PRODUCT/.git" ] && PKG=1
 
 # command → implementation, and the one line shown in `lane help`
 map(){ case "$1" in
@@ -45,7 +64,7 @@ map(){ case "$1" in
   sync)        echo "$S/lane-sync|check a repo's real GitHub branch protection: lane sync [repo]" ;;
   doctor)      echo "$S/hooks/guard-check|check the safety rules are working" ;;
   rules)       echo "$S/lane-rules|shared, git-backed rules: lane rules pull|status" ;;
-  upgrade)     echo "$S/lane-upgrade|take an update from upstream: lane upgrade" ;;
+  upgrade)     echo "$S/lane-upgrade|upgrade Repolane: lane upgrade" ;;
   import)      echo "$S/lane-import|bring past Claude conversations in (optional)" ;;
   nested)      echo "$S/lane-nested|find and repair nested worktrees" ;;
   menu)        echo "$S/menu|the long-form menu (needs bin/ on your PATH)" ;;
@@ -60,13 +79,19 @@ usage(){
   for c in $ORDER; do
     line=$(map "$c"); printf "    \e[1m%-10s\e[0m %s\n" "$c" "${line#*|}"
   done
-  printf '\n    %-10s %s\n' "install" "put lane on your PATH so it works from anywhere"
-  printf '    %-10s %s\n\n' "use" "switch which registered plane is active; lane use --remove <name> forgets one (stable ~/.local/bin/lane dispatcher)"
+  if [ -n "$PKG" ]; then
+    # the package is on PATH already and finds the workspace from the folder: install and use are a clone's
+    printf '\n    %-10s %s\n\n' "migrate" "turn a git-clone install into a workspace: lane migrate [folder]"
+  else
+    printf '\n    %-10s %s\n' "install" "put lane on your PATH so it works from anywhere"
+    printf '    %-10s %s\n' "migrate" "turn a git-clone install into a workspace (from the installed package): lane migrate [folder]"
+    printf '    %-10s %s\n\n' "use" "switch which registered plane is active; lane use --remove <name> forgets one (stable ~/.local/bin/lane dispatcher)"
+  fi
   # scripts/local/<name> (docs/extending.md): any executable there is a `lane <name>` too. Listed
   # separately, after the built-ins, so a shadowed name is never confused for one of them.
-  if [ -d "$AD/scripts/local" ]; then
+  if [ -d "$DATA/scripts/local" ]; then
     locals=""
-    for f in "$AD/scripts/local"/*; do
+    for f in "$DATA/scripts/local"/*; do
       [ -x "$f" ] && [ ! -d "$f" ] || continue
       locals="$locals $f"
     done
@@ -92,6 +117,38 @@ usage(){
 
 cmd="${1:-}"
 
+# An installed product (LANE_PRODUCT, set by the package's launcher) makes a workspace: in the folder given, or the
+# current one (scripts/workspace.py). LANE_WORKSPACE naming a folder without .repolane/ keeps the clone layout there,
+# and a clone running its own files keeps its own init: both are scripts/init, unchanged.
+if [ "$cmd" = init ] && [ -n "${LANE_PRODUCT:-}" ] && { [ -z "$_ws_named" ] || [ -d "$_ws_named/.repolane" ]; }; then
+  shift
+  exec python3 -B "$S/workspace.py" init "$@"
+fi
+
+# `lane upgrade` from an installed package upgrades the package (pipx / uv tool) and refreshes every registered workspace
+# (scripts/upgrade.py); a clone's is scripts/lane-upgrade, a fast-forward of the clone.
+if [ "$cmd" = upgrade ] && [ -n "${LANE_PRODUCT:-}" ] && [ ! -e "$PRODUCT/.git" ]; then
+  shift
+  exec python3 -B "$S/upgrade.py" "$@"
+fi
+
+# `lane migrate` turns a git-clone install into a workspace (scripts/migrate.py). It runs from the installed package, never
+# from the clone it is about to take apart.
+if [ "$cmd" = migrate ]; then
+  shift
+  [ -n "${LANE_PRODUCT:-}" ] && exec python3 -B "$S/migrate.py" "$@"
+  cat >&2 <<EOT
+lane migrate turns this clone into a workspace, and runs from the installed package, not from the clone itself:
+
+  pipx install repolane        (or: uv tool install repolane)
+  lane migrate $(printf %q "$AD")
+
+If \`lane\` on your PATH is still the old router \`lane install\` wrote (~/.local/bin/lane), run the installed one by its
+full path. lane migrate shows everything it would change and asks before changing anything.
+EOT
+  exit 2
+fi
+
 # `lane <command> --help` used to reach the script, which read it as a lane id and answered
 # with something misleading ("no lane '--help'"). Answer it here instead, from the same one
 # line `lane help` shows, plus the script's own usage comment.
@@ -104,22 +161,57 @@ if [ $# -ge 2 ] && { [ "$2" = "--help" ] || [ "$2" = "-h" ]; } && entry=$(map "$
   exit 0
 fi
 
+# `lane install` and `lane use` belong to a git clone: install writes the router into ~/.local/bin that picks a clone,
+# use switches between clones. The installed package is on PATH already and finds the workspace from the current folder.
+if [ -n "$PKG" ] && { [ "$cmd" = install ] || [ "$cmd" = use ]; }; then
+  if [ "$cmd" = install ]; then
+    echo "lane install is for a git clone of Repolane (it writes a router into ~/.local/bin). The installed package already" >&2
+    echo "put lane on your PATH, so there is nothing to install." >&2
+  else
+    echo "lane use switched between git-clone installs. The installed package acts on the workspace you are in: it looks up" >&2
+    echo "from the current folder for one with a .repolane/ folder (or LANE_WORKSPACE names it)." >&2
+  fi
+  echo "  make a workspace:            lane init [folder]" >&2
+  echo "  move a clone install over:   lane migrate <clone-folder>" >&2
+  exit 2
+fi
+
 case "$cmd" in
   -h|--help|help) usage; exit 0 ;;
+  hook)
+    # `lane hook <event>`: what a workspace's .claude/settings.json runs, so no hook names a file in the product. The
+    # hook's JSON passes through on stdin to the same implementations a clone's settings name by path.
+    ev="${2:-}"
+    case "$ev" in
+      session-start) exec "$S/session-start" ;;
+      # `lane doctor` runs this exactly the way a hook runs, to see which product and workspace a hook would reach
+      ping) v=$( (tr -d '[:space:]' < "$PRODUCT/VERSION") 2>/dev/null ); printf 'lane-hook %s %s %s\n' "${v:-unknown}" "$LANE_MODE" "$AD"; exit 0 ;;
+      pre-tool-use|post-tool-use|user-prompt-submit|pre-compact|session-end|worktree-create|worktree-remove)
+        # -B: the product is never written to, not even a __pycache__ for the modules the guard imports
+        exec python3 -B "$S/hooks/guard.py" ;;
+      *) echo "lane hook: unknown event '$ev' (session-start, pre-tool-use, post-tool-use, user-prompt-submit, pre-compact, session-end, worktree-create, worktree-remove)" >&2
+         exit 1 ;;
+    esac ;;
+  statusline)
+    # what a workspace's statusLine runs (the status line's JSON on stdin), so it names no file in the product either
+    exec "$S/statusline.sh" ;;
   --version|version)
     # VERSION is the one place the number is written down, so a tarball with no .git still knows
     # what it is. The release tag is always v<VERSION>; git is asked only for the detail a file
     # cannot carry — how far past that tag this checkout has drifted.
     # the redirection itself is what fails when VERSION is absent, so the subshell, not tr, is
     # what has to be silenced
-    v=$( (tr -d '[:space:]' < "$AD/VERSION") 2>/dev/null ); [ -n "$v" ] || v=unknown
+    v=$( (tr -d '[:space:]' < "$PRODUCT/VERSION") 2>/dev/null ); [ -n "$v" ] || v=unknown
     extra=""
-    if g=$(cd "$AD" && git describe --tags --long --dirty --match 'v[0-9]*' 2>/dev/null); then
+    # Only a checkout of its own has a git answer: an installed package (or a tarball) unpacked somewhere inside an
+    # unrelated repo would otherwise report that repo's commits as its own.
+    if [ ! -e "$PRODUCT/.git" ]; then :
+    elif g=$(cd "$PRODUCT" && git describe --tags --long --dirty --match 'v[0-9]*' 2>/dev/null); then
       # v0.1.0-3-gabc1234[-dirty]: the middle field is the commit count since the tag
       n=${g#v*-}; n=${n%%-*}
       case "$g" in *-dirty) d=", uncommitted changes" ;; *) d="" ;; esac
       if [ "$n" = 0 ]; then extra="$d"; else extra=" (+$n commits$d)"; fi
-    elif h=$(cd "$AD" && git rev-parse --short HEAD 2>/dev/null); then
+    elif h=$(cd "$PRODUCT" && git rev-parse --short HEAD 2>/dev/null); then
       # a checkout with no release tag in its history: before the first tag, or a shallow clone
       extra=" (untagged, $h)"
     fi
@@ -138,6 +230,19 @@ case "$cmd" in
       esac
       i=$((i+1))
     done
+    # The `lane` already there may be the installed package's (pipx, uv tool and pip all write a small Python launcher,
+    # pipx and uv as a link into their venv). It is not a clone and not the router: writing the router over it would take
+    # the package's `lane` away, and registering it would make its venv's bin/ a "plane". Refuse, and say what to do.
+    if [ -e "$dest/lane" ]; then
+      _l=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$dest/lane" 2>/dev/null)
+      if [ -f "$_l" ] && head -c 4096 "$_l" 2>/dev/null | grep -qE 'repolane\.cli|from repolane'; then
+        echo "lane install: $dest/lane is the installed Repolane package's lane (pipx, uv tool or pip), not a clone's router." >&2
+        echo "  Writing the router there would replace it, so nothing was changed. The package works on workspaces:" >&2
+        echo "    move this clone over:            lane migrate $(printf %q "$AD")" >&2
+        echo "    or keep the clone's own router:  ./lane install <another-folder-on-PATH>" >&2
+        exit 2
+      fi
+    fi
     mkdir -p "$dest" || exit 1
     SHARE="$HOME/.local/share/lane"; mkdir -p "$SHARE" || exit 1
     PY="$SHARE/planes.py"
@@ -157,6 +262,11 @@ case "$cmd" in
       old_real="$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$dest/lane" 2>/dev/null)"
       if [ -n "$old_real" ] && [ -x "$old_real" ]; then
         migrated_from="$(cd "$(dirname "$old_real")" && pwd)"
+        # only a git clone of Repolane is a plane: a link to anything else is not registered
+        if [ ! -f "$migrated_from/lane" ] || [ ! -f "$migrated_from/scripts/lib.sh" ]; then
+          echo "not registering $migrated_from (the old $dest/lane pointed there): it is not a git clone of Repolane" >&2
+          migrated_from=""
+        fi
       fi
     fi
 
@@ -166,9 +276,9 @@ case "$cmd" in
     # just the link; removing the link first guarantees each write below lands on a fresh regular
     # file at `dest/…`, never back into any checkout.
     rm -f "$dest/lane"
-    cp "$AD/scripts/lane-stable-dispatcher" "$dest/lane" && chmod +x "$dest/lane"
+    cp "$S/lane-stable-dispatcher" "$dest/lane" && chmod +x "$dest/lane"
     rm -f "$PY"
-    cp "$AD/scripts/lane-planes.py" "$PY"
+    cp "$S/lane-planes.py" "$PY"
     echo "installed the stable dispatcher: $dest/lane (routes by plane — see: lane use)"
 
     if [ -n "$migrated_from" ] && [ "$migrated_from" != "$AD" ]; then
@@ -281,8 +391,12 @@ if entry=$(map "$cmd"); then
   # or Python errors. Say the one thing that helps.
   case "$cmd" in
     init|help) : ;;
-    *) [ -f "$AD/registry/repos.yaml" ] || {
-         printf '\e[31mlane: this control plane is not set up yet\e[0m\n' >&2
+    *) [ -f "$REGISTRY/repos.yaml" ] || {
+         if [ "$LANE_MODE" = clone ] && [ -n "${LANE_PRODUCT:-}" ]; then
+           printf '\e[31mlane: this folder is not a workspace yet\e[0m\n' >&2
+         else
+           printf '\e[31mlane: this %s is not set up yet\e[0m\n' "$PLANE_WORD" >&2
+         fi
          echo "  run:  lane init" >&2
          exit 2
        } ;;
@@ -299,9 +413,9 @@ fi
 # A separate variable, not $cmd itself, so a rejected name still shows correctly in the "no
 # command named" error below rather than printing blank.
 local_cmd="$cmd"; case "$local_cmd" in */*) local_cmd="" ;; esac
-if [ -n "$local_cmd" ] && [ -x "$AD/scripts/local/$local_cmd" ] && [ ! -d "$AD/scripts/local/$local_cmd" ]; then
+if [ -n "$local_cmd" ] && [ -x "$DATA/scripts/local/$local_cmd" ] && [ ! -d "$DATA/scripts/local/$local_cmd" ]; then
   shift 2>/dev/null || true
-  exec "$AD/scripts/local/$local_cmd" "$@"
+  exec "$DATA/scripts/local/$local_cmd" "$@"
 fi
 
 # not a command — say so, and guess what was meant

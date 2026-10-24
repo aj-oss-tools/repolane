@@ -65,7 +65,7 @@ repos:
 
 ## Findings
 (things learned that matter only while this work is live; archived with it.
- Anything that stays true afterwards belongs in memory/<repo>/ instead — lane-memory file <slug> repo <repo>)
+ Anything that stays true afterwards belongs in ${MEMORY_DIR#"$AD"/}/<repo>/ instead — lane-memory file <slug> repo <repo>)
 
 ## Log
 - $(date +%F) started
@@ -100,5 +100,5 @@ done
 lane_anchor "$id"
 write_lane_claude "$id"
 refresh_guards
-"$AD/scripts/lane-workspace" >/dev/null
+"$PRODUCT/scripts/lane-workspace" >/dev/null
 echo; echo "next: cd $LANES/$id && claude"
