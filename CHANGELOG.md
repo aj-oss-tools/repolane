@@ -8,6 +8,10 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.10.0] — 2026-10-24
+
 ### Added
 
 - **Workspaces.** A folder with a `.repolane/` folder in it is a workspace: your own `CLAUDE.md`, `.claude/` and
@@ -797,7 +801,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/aj-oss-tools/repolane/compare/v0.8.1...v0.9.0
