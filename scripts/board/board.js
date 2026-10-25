@@ -4,8 +4,13 @@
 
 const T=window.__T;
 const THEMES=['system','light','dark'];
-function applyTheme(v){if(v==='light'||v==='dark')document.documentElement.dataset.theme=v;else delete document.documentElement.dataset.theme;
-  try{localStorage.setItem('lane-theme',v)}catch{}
+/* data-theme is always set, to light or dark: board.css defines dark once, on :root[data-theme="dark"].
+   On "system" it follows prefers-color-scheme, live. index.html sets it before first paint. */
+const DARKQ=matchMedia('(prefers-color-scheme: dark)');let THEME='system';
+function syncTheme(){document.documentElement.dataset.theme=THEME==='dark'||(THEME==='system'&&DARKQ.matches)?'dark':'light'}
+DARKQ.addEventListener('change',syncTheme);
+function applyTheme(v){THEME=THEMES.includes(v)?v:'system';syncTheme();
+  try{localStorage.setItem('lane-theme',THEME)}catch{}
   const b=document.getElementById('theme');if(b){b.textContent=v==='light'?'☀':v==='dark'?'☾':'◐';b.title='Theme: '+v+'. Click to cycle system → light → dark'}}
 {let th=new URLSearchParams(location.search).get('theme');if(!th){try{th=localStorage.getItem('lane-theme')}catch{}}applyTheme(THEMES.includes(th)?th:'system')}
 
@@ -14,17 +19,19 @@ const S={view:'home',board:null,lane:null,repo:null,sel:{},data:null,diff:null,d
   pal:{open:false,q:'',rows:[],i:0},
   // which registered control plane the board is scoped to right now. null (or 'home') means
   // whichever plane the server was started from/inside — the least-surprising default. Any
-  // other value is a name from /api/planes, threaded onto every request by api() below so no
-  // individual call site (board/repo/diff/stage/commit/…) has to know about plane switching.
+  // other value is a name from /api/planes: api() below prefixes every request with /api/w/<name>,
+  // and the page's own URL carries the same /w/<name> prefix, so no call site has to know about it.
   plane:null,planes:null};
 const $=s=>document.querySelector(s);
+/* API resources: the path names the thing, the query only how to show it */
+const E=encodeURIComponent;
+const laneApi=(id=S.lane)=>`/api/lanes/${E(id)}`;
+const repoApi=()=>`${laneApi()}/repos/${E(S.repo)}`;
+const post=(p,obj={})=>api(p,{method:'POST',body:JSON.stringify(obj)});
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const api=async(p,o={})=>{
-  let body=o.body;
-  if(S.plane&&S.plane!=='home'){
-    if(o.method==='POST'){let obj={};try{obj=JSON.parse(body||'{}')}catch{};obj.plane=S.plane;body=JSON.stringify(obj)}
-    else p+=(p.includes('?')?'&':'?')+'plane='+encodeURIComponent(S.plane);
-  }
+  const body=o.body;
+  if(S.plane&&S.plane!=='home'&&p!=='/api/planes')p='/api/w/'+encodeURIComponent(S.plane)+p.slice(4);
   const r=await fetch(p,{...o,body,headers:{'X-Token':T,'Content-Type':'application/json'}});let j={};try{j=await r.json()}catch{}
   if(r.status===403){toast('err','Server restarted — reload the page');throw new Error('restarted')}
   if(!r.ok)throw Object.assign(new Error(j.error||j.output||r.statusText),{output:j.output});return j};
@@ -47,15 +54,15 @@ async function loadPlanes(){
 async function switchPlane(name){
   // Not persisted across reloads on purpose: a fresh load always defaults back to the plane the
   // server was started from/inside, per docs/board.md — the least-surprising behavior.
-  S.plane=name;updateTitle();
+  S.plane=(S.planes?.planes||[]).find(p=>p.name===name)?.home?null:name;updateTitle();
   S.board=null;S.boardSig=null;S.lane=null;S.repo=null;S.data=null;
   await loadBoard();renderHome();renderCrumb();goHome();
 }
-/* where you were: a browser refresh should not cost you your place. Home stays the
-   fallback for a first visit or a lane that has since gone away. */
+/* localStorage holds conveniences only (theme, collapsed sections, the last repo per lane).
+   Where you are lives in the URL: see the router below. */
 const LSg=(k,d)=>{try{return localStorage.getItem(k)??d}catch{return d}};
 const LSs=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch{}};
-function rememberPlace(){LSs('lane-view',S.view);LSs('lane-last',S.lane||'');LSs('lane-lastrepo',S.repo||'')}
+function rememberPlace(){if(S.lane&&S.repo)LSs('lane-repo:'+S.lane,S.repo)}
 const ico=(n,c='')=>`<svg class="ic${c?' '+c:''}" viewBox="0 0 16 16"><use href="#g-${n}"/></svg>`;
 const plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
 
@@ -79,8 +86,10 @@ function plain(s){
     .replace(/\[([^\]]+)\]\([^)]*\)/g,'$1')
     .replace(/https?:\/\/\S+/g,'').replace(/\s+/g,' ').trim();
 }
+/* the lane template ships "(written by lane-park: ...)"-style placeholders; they are not content */
+const realText=s=>/^\s*\([^)]*\)\s*$/.test(String(s||''))?'':String(s||'');
 function firstSentence(s,max){
-  s=plain(s);if(!s)return'';
+  s=plain(realText(s));if(!s)return'';
   const m=/^(.{20,}?[.!?])(\s|$)/.exec(s);
   let out=m?m[1]:s;
   if(out.length>max)out=out.slice(0,max).replace(/\s+\S*$/,'')+'…';
@@ -121,21 +130,30 @@ function repoClass(repo){
 }
 
 /* ---------- toasts ---------- */
-function toast(kind,text,opts={}){const box=$('#toasts');if(opts.replace&&opts.replace.isConnected)opts.replace.remove();const t=document.createElement('div');t.className='toast '+(kind==='ok'?'ok':kind==='err'?'err':'');t.textContent=text;
-  if(kind==='err'){const r=document.createElement('div');r.className='tr';if(opts.fix){const b=document.createElement('button');b.textContent=opts.fix.label;b.onclick=()=>{t.remove();opts.fix.run()};r.appendChild(b)}const sp=document.createElement('span');sp.className='sp';r.appendChild(sp);const c=document.createElement('button');c.className='txt';c.textContent='Copy';c.onclick=()=>navigator.clipboard?.writeText(text);r.appendChild(c);const x=document.createElement('button');x.className='txt';x.textContent='✕';x.onclick=()=>t.remove();r.appendChild(x);t.appendChild(r)}
+function toast(kind,text,opts={}){const box=$('#toasts');if(opts.replace&&opts.replace.isConnected)opts.replace.remove();
+  const t=document.createElement('div');t.className='toast '+(kind==='ok'?'ok':kind==='err'?'err':'prog');
+  t.innerHTML=`<svg class="ic ti2" viewBox="0 0 16 16"><use href="#g-${kind==='ok'?'check':kind==='err'?'warn':'commit'}"/></svg>`;
+  const tx=document.createElement('div');tx.className='tx';tx.textContent=text;t.appendChild(tx);
+  if(kind==='err'){const r=document.createElement('div');r.className='tr';if(opts.fix){const b=document.createElement('button');b.className='sm';b.textContent=opts.fix.label;b.onclick=()=>{t.remove();opts.fix.run()};r.appendChild(b)}const sp=document.createElement('span');sp.className='sp';r.appendChild(sp);const c=document.createElement('button');c.className='txt';c.textContent='Copy';c.onclick=()=>navigator.clipboard?.writeText(text);r.appendChild(c);const x=document.createElement('button');x.className='txt';x.textContent='Dismiss';x.onclick=()=>t.remove();r.appendChild(x);t.appendChild(r)}
   box.appendChild(t);while(box.children.length>3)box.firstChild.remove();if(kind==='ok')setTimeout(()=>t.remove(),3000);return t}
 /* ---------- board ---------- */
-async function memAct(action,file,to,lane){try{const j=await api('/api/memory',{method:'POST',body:JSON.stringify({action,file,to,lane})});toast('ok',j.output||'done');S.mfile=null;await loadMemory()}catch(e){toast('err',e.message)}}
+async function memAct(verb,scope,file,to,lane){try{const j=await post(`/api/memory/${E(scope)}/${E(file)}/${verb}`,{to,lane});toast('ok',j.output||'done');S.mfile=null;await loadMemory()}catch(e){toast('err',e.message)}}
 function scopeOptions(){return (S.mem?.scopes||[]).filter(s=>!['drafts'].includes(s.id)).map(s=>`<option value="${esc(s.id)}">${esc(s.label)} — ${esc(s.hint)}</option>`).join('')}
-function memMoveDlg(file){const d=openDlg(`<h3>Move ${esc(file)}</h3><div class="hint">Scope is about lifetime: cross-repo stays true everywhere, a repo scope stays true for that repo after a ticket ships. The index lines are rewritten for you.</div><label>New scope</label><select id="sc" style="width:100%;padding:var(--s-2);border:1px solid var(--line);border-radius:var(--r);background:var(--surface);color:var(--text)">${scopeOptions()}</select>`,
-  async d=>memAct('move',file,d.querySelector('#sc').value));d.querySelector('#dok').textContent='Move'}
-function memFileDlg(file){const d=openDlg(`<h3>File ${esc(file)}</h3><div class="hint">Where does it belong? Ask yourself how long it stays true.</div><label>Scope</label><select id="sc" style="width:100%;padding:var(--s-2);border:1px solid var(--line);border-radius:var(--r);background:var(--surface);color:var(--text)">${scopeOptions()}${(S.board?.lanes||[]).filter(w=>w.status==='active').map(w=>`<option value="lane:${esc(w.id)}">lane ${esc(w.id)} — only while this work is live</option>`).join('')}</select>`,
-  async d=>{const v=d.querySelector('#sc').value;return v.startsWith('lane:')?memAct('file',file,'lane',v.slice(3)):memAct('file',file,v)});d.querySelector('#dok').textContent='File it'}
-function memRmDlg(file){openDlg(`<h3>Delete ${esc(file)}?</h3><div class="hint">The file and its index line are removed. This cannot be undone from here.</div>`,async()=>memAct('rm',file));$('#dok').textContent='Delete';$('#dok').className='danger'}
+const dlgHead=(title,sub,icon,tone='')=>`<h3><span class="hi ${tone}">${ico(icon)}</span><span>${title}${sub?`<small>${sub}</small>`:''}</span></h3>`;
+function memMoveDlg(file){const d=openDlg(dlgHead(`Move ${esc(file)}`,'Pick the scope by how long it stays true.','move')
+  +`<label>New scope</label><select id="sc">${scopeOptions()}</select>
+  <div class="infobox">${ico('info')}<span>Cross-repo stays true everywhere; a repo scope stays true for that repo after a ticket ships. The index lines are rewritten for you.</span></div>`,
+  async d=>memAct('move',S.mscope,file,d.querySelector('#sc').value));d.querySelector('#dok').textContent='Move'}
+function memFileDlg(file){const d=openDlg(dlgHead(`File ${esc(file)}`,'Where does it belong? Ask yourself how long it stays true.','inbox')
+  +`<label>Scope</label><select id="sc">${scopeOptions()}${(S.board?.lanes||[]).filter(w=>w.status==='active').map(w=>`<option value="lane:${esc(w.id)}">lane ${esc(w.id)} — only while this work is live</option>`).join('')}</select>
+  <div class="infobox">${ico('info')}<span>A lane scope lands in that lane's Findings and is archived with it; everything else becomes standing memory.</span></div>`,
+  async d=>{const v=d.querySelector('#sc').value;return v.startsWith('lane:')?memAct('file','drafts',file,'lane',v.slice(5)):memAct('file','drafts',file,v)});d.querySelector('#dok').textContent='File it'}
+function memRmDlg(file){openDlg(dlgHead(`Delete ${esc(file)}?`,'','trash','bad')+`<div class="warnbox bad"><b>This cannot be undone from here.</b> The file and its index line are removed.</div>`,async()=>memAct('delete',S.mscope,file));$('#dok').textContent='Delete';$('#dok').className='danger'}
+function memDropDlg(file){openDlg(dlgHead(`Discard draft ${esc(file)}?`,'','trash','bad')+`<div class="warnbox bad"><b>The draft is thrown away.</b> Nothing was filed from it yet, so nothing else changes.</div>`,async()=>memAct('discard','drafts',file));$('#dok').textContent='Discard';$('#dok').className='danger'}
 /* ---------- selection memory ---------- */
 async function loadRepo(silent){const r=curRepo();const w=cur();if(!w){goHome();return}
   if(!r||!r.exists){S.data=null;renderRepo();return}
-  try{const d=await api(`/api/repo?lane=${encodeURIComponent(S.lane)}&repo=${encodeURIComponent(S.repo)}`);const prev=S.data;
+  try{const d=await api(repoApi());const prev=S.data;
     const sig=dataSig(d);const same=silent&&sig===S.dataSig;S.dataSig=sig;S.data=d;
     if(!same)renderRepo();
     const rm=rmem();if(rm.file){const f=d.files.find(x=>x.file===rm.file&&(rm.staged?x.staged:x.unstaged));if(!f){rm.file=null;renderStage(true)}else{const key=JSON.stringify([S.lane,S.repo,rm.file,rm.staged,f.add,f.del,f.add_staged,f.del_staged,d.log[0]?.sha]);if(key!==S.diffKey||!prev)await loadDiff(key)}}
@@ -164,17 +182,16 @@ function md(src){const out=[];const lines=src.replace(/\r/g,'').split('\n');let 
 const PT={diff:'Diff',history:'History',notes:'Notes',refs:'Refs',spec:'Spec',sessions:'Sessions'};
 const PT_TIP={refs:'Outside folders or files attached to this lane for reference (per lane)',diff:'Changes in the selected file (per file)',history:'Recent commits on this branch (per repo)',notes:'Goal and resume note from the lane file (per lane)',spec:'The whole lane file: frontmatter, goal, note, log (per lane)',sessions:'Old Claude conversations for this repo (per repo)'};
 const srcLine=(what,scope)=>`<div class="src">${what}<span class="scope">${scope}</span></div>`;
-async function loadDiff(key){const rm=rmem();S.diffKey=key||S.diffKey;S.diffAll=false;try{S.diff=await api(`/api/diff?lane=${encodeURIComponent(S.lane)}&repo=${encodeURIComponent(S.repo)}&file=${encodeURIComponent(rm.file)}&staged=${rm.staged?1:0}`)}catch(e){S.diff={error:e.message}}if(feedOf()!=='history'&&rm.file){S.stageSig=null;renderStage(true)}}
-function renderDiff(){const rm=rmem(),d=S.data,body=$('#pbody');const f=d.files.find(x=>x.file===rm.file&&(rm.staged?x.staged:x.unstaged));if(!f){body.innerHTML='<div class="center">No changes in this file.</div>';return}
-  const a=rm.staged?f.add_staged:f.add,dl=rm.staged?f.del_staged:f.del;
-  const head=`<div class="dh"><span class="fn" title="${esc(f.file)}">${esc(f.file)}</span><span class="muted">${rm.staged?'staged':f.untracked?'untracked':'unstaged'}</span>${a!=null?`<span><span class="ok">+${a}</span> <span class="bad">-${dl}</span></span>`:''}<span class="sp"></span><button class="txt" onclick="stage(['${esc(f.file)}'],${!rm.staged})">${rm.staged?'Unstage':'Stage'}</button>${rm.staged?'':`<button class="txt" onclick="discardDlg(['${esc(f.file)}'])">Discard</button>`}</div>`;
-  const D=S.diff;if(!D){body.innerHTML=head+'<div class="center">Loading diff…</div>';return}
-  if(D.error){body.innerHTML=head+`<div class="center">Could not read the diff.<br><span class="mono">${esc(D.error)}</span><br><br><button onclick="loadDiff()">Retry</button></div>`;return}
-  if(D.secret){body.innerHTML=head+`<div class="center"><b>Secret file. The contents are never shown here.</b><br><br><span class="mono">Edit it in ${esc(D.mirror)}</span><br>You can still stage and commit it.</div>`;return}
-  if(D.binary){body.innerHTML=head+`<div class="center">Binary or very large file — ${(D.size/1048576).toFixed(1)} MB. Not shown.</div>`;return}
-  if(!D.diff.trim()){body.innerHTML=head+'<div class="center">No changes in this file.</div>';return}
+async function loadDiff(key){const rm=rmem();S.diffKey=key||S.diffKey;S.diffAll=false;try{S.diff=await api(`${repoApi()}/diff?file=${E(rm.file)}&staged=${rm.staged?1:0}`)}catch(e){S.diff={error:e.message}}if(feedOf()!=='history'&&rm.file){S.stageSig=null;renderStage(true)}}
+function renderDiff(){const rm=rmem(),d=S.data,body=$('#pbody');const f=d.files.find(x=>x.file===rm.file&&(rm.staged?x.staged:x.unstaged));
+  if(!f){body.innerHTML=`<div class="center">${ico('check','big')}No changes in this file.</div>`;return}
+  const D=S.diff;if(!D){body.innerHTML='<div class="center">Loading diff…</div>';return}
+  if(D.error){body.innerHTML=`<div class="center">${ico('warn','big')}Could not read the diff.<br><span class="mono sm">${esc(D.error)}</span><br><br><button onclick="loadDiff()">Retry</button></div>`;return}
+  if(D.secret){body.innerHTML=`<div class="center">${ico('warn','big')}<b>Secret file. The contents are never shown here.</b><br><span class="mono sm">Edit it in ${esc(D.mirror)}</span><br>It cannot be staged or committed from the board.</div>`;return}
+  if(D.binary){body.innerHTML=`<div class="center">${ico('file','big')}Binary or very large file — ${(D.size/1048576).toFixed(1)} MB. Not shown.</div>`;return}
+  if(!D.diff.trim()){body.innerHTML=`<div class="center">${ico('check','big')}No changes in this file.</div>`;return}
   const R=diffBody(D.diff,false,rm.file);
-  body.innerHTML=head+R.meta+`<div class="diff">${R.rows}</div>`+moreLine(D,'showAll()')}
+  body.innerHTML=R.meta+`<div class="diff">${R.rows}</div>`+moreLine(D,'showAll()')}
 
 /* ---------- syntax highlighting ----------
    Small on purpose: no library, works offline, and it hands back token ranges rather than
@@ -276,7 +293,7 @@ function diffBody(text,fileHeaders,file){
   const g=(a,b,s,cls,txt)=>`<div class="dl ${cls}"><span class="g">${a}</span><span class="g">${b}</span><span class="s">${s}</span><span class="t">${txt}</span></div>`;
   for(let k=0;k<lines.length;k++){const l=lines[k];
     if(l.startsWith('@@')){const m=/@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(l);o=m?+m[1]:0;n=m?+m[2]:0;rows.push(g('','','','h',esc(l.replace(/^(@@[^@]*@@)\s?/,'$1  '))));continue}
-    if(l.startsWith('diff ')){const m=/ b\/(.+)$/.exec(l);if(m)lang=langOf(m[1]);if(fileHeaders){rows.push(`<div class="dfile">${esc(m?m[1]:l)}</div>`)}continue}
+    if(l.startsWith('diff ')){const m=/ b\/(.+)$/.exec(l);if(m)lang=langOf(m[1]);if(fileHeaders){rows.push(`<div class="dfile">${ico('file','sm')}${esc(m?m[1]:l)}</div>`)}continue}
     if(l.startsWith('index ')||l.startsWith('+++')||l.startsWith('---')){continue}
     if(l.startsWith('new file')||l.startsWith('deleted file')||l.startsWith('similarity')||l.startsWith('rename')||l.startsWith('old mode')||l.startsWith('new mode')){meta.push(l);continue}
     if(l.startsWith('-')){let dels=[];while(k<lines.length&&lines[k].startsWith('-')&&!lines[k].startsWith('---'))dels.push(lines[k++].slice(1));let adds=[];while(k<lines.length&&lines[k].startsWith('+')&&!lines[k].startsWith('+++'))adds.push(lines[k++].slice(1));k--;
@@ -288,61 +305,67 @@ function diffBody(text,fileHeaders,file){
     if(l.startsWith('\\')){rows.push(g('','','','m',esc(l)));continue}
     if(l==='')continue;
     rows.push(g(o++,n++,'','',code(l.slice(1),lang,null)))}
-  return{rows:rows.join(''),meta:meta.length?`<div class="dfile">${esc(meta.join(' · '))}</div>`:''}}
+  return{rows:rows.join(''),meta:meta.length?`<div class="dfile meta">${esc(meta.join(' · '))}</div>`:''}}
 
 function moreLine(D,fn){return D.truncated?`<div class="center sm">Showing ${D.total_lines>2000?2000:D.total_lines} of ${D.total_lines} lines. <button class="txt" onclick="${fn}">Show all</button></div>`:''}
 
 // One commit, rendered with the same diff engine. Secret files are stripped server-side.
 async function showCommit(sha,all){
-  const body=$('#pbody');
+  const body=$('#pbody'),head=$('#stagehead');
   if(!all&&S.commitSha===sha&&body.dataset.sha===sha&&body.childElementCount)return;  // already showing it
   S.commitSha=sha;
   body.innerHTML='<div class="center">Loading commit…</div>';
-  let C;try{C=await api(`/api/show?lane=${encodeURIComponent(S.lane)}&repo=${encodeURIComponent(S.repo)}&sha=${encodeURIComponent(sha)}${all?'&all=1':''}`)}
-  catch(e){body.innerHTML=`<div class="center">Could not read that commit.<br><span class="mono">${esc(e.message)}</span></div>`;return}
+  let C;try{C=await api(`${repoApi()}/commits/${E(sha)}${all?'?all=1':''}`)}
+  catch(e){body.innerHTML=`<div class="center">${ico('warn','big')}Could not read that commit.<br><span class="mono sm">${esc(e.message)}</span></div>`;return}
   if(C.error){body.innerHTML=`<div class="center">${esc(C.error)}</div>`;return}
   const R=diffBody(C.diff,true);
-  const hidden=C.hidden?`<div class="dfile">${C.hidden} secret file${C.hidden===1?'':'s'} in this commit — contents never shown.</div>`:'';
-  body.innerHTML=`<div class="dh"><button class="txt" onclick="backToChanges()">‹ Back</button>
-      <span class="fn" title="${esc(C.subject)}">${esc(C.subject)}</span>
-      <span class="muted">${esc(C.short)}</span><span class="sp"></span>
-      <button class="txt" onclick="navigator.clipboard?.writeText('${esc(C.sha)}');toast('ok','Copied ${esc(C.short)}')">Copy hash</button></div>
-    <div class="cmeta">${esc(C.author)} · ${esc(C.date)} · ${C.files} file${C.files===1?'':'s'}</div>
-    ${C.body?`<pre class="raw">${esc(C.body)}</pre>`:''}
-    ${hidden}${R.meta}<div class="diff">${R.rows}</div>`+moreLine(C,`showCommit('${esc(sha)}',1)`);
+  head.innerHTML=`<button class="ghost sm" onclick="backToChanges()">${ico('back','sm')}Back to changes</button>
+    <span class="tagq">${esc(C.short)}</span><span class="faint">${C.files} file${C.files===1?'':'s'} changed</span><span class="sp"></span>
+    <button class="sm" onclick="navigator.clipboard?.writeText('${esc(C.sha)}');toast('ok','Copied ${esc(C.short)}')">${ico('copy','sm')}Copy hash</button>`;
+  const hidden=C.hidden?`<div class="hid">${ico('warn','sm')} ${C.hidden} secret file${C.hidden===1?'':'s'} in this commit — contents never shown.</div>`:'';
+  body.innerHTML=`<div class="chero"><h2>${esc(C.subject)}</h2>
+      ${C.body?`<pre class="body">${esc(C.body)}</pre>`:''}
+      <div class="meta"><b>${esc(C.author)}</b><span class="sep">·</span><span>${esc(C.date)}</span><span class="sep">·</span>
+        <span class="mono">${esc(C.sha.slice(0,12))}</span><span class="sep">·</span><span class="repotag ${repoClass(S.repo)}">${esc(shortOf(curRepo()||{repo:S.repo}))}</span></div>
+      ${hidden}</div>
+    ${R.meta}<div class="diff">${R.rows}</div>`+moreLine(C,`showCommit('${esc(sha)}',1)`);
   body.dataset.sha=sha;body.scrollTop=0;
 }
-async function showAll(){const rm=rmem();S.stageSig=null;S.diff=await api(`/api/diff?lane=${encodeURIComponent(S.lane)}&repo=${encodeURIComponent(S.repo)}&file=${encodeURIComponent(rm.file)}&staged=${rm.staged?1:0}&all=1`);renderDiff()}
-async function pickFile(file,staged){const rm=rmem();rm.file=file;rm.staged=staged;rm.sha=null;
+async function showAll(){const rm=rmem();S.stageSig=null;S.diff=await api(`${repoApi()}/diff?file=${E(rm.file)}&staged=${rm.staged?1:0}&all=1`);renderDiff()}
+async function pickFile(file,staged){const rm=rmem();rm.file=file;rm.staged=staged;rm.sha=null;nav(false);
   const f=S.data.files.find(x=>x.file===file);S.diff=null;renderFiles();renderStage(true);
   await loadDiff(JSON.stringify([S.lane,S.repo,file,staged,f?.add,f?.del,f?.add_staged,f?.del_staged,S.data.log[0]?.sha]))}
 /* ---------- actions ---------- */
 function setBusy(b){S.busy=b;$('#prog').classList.toggle('on',!!b);if(S.data)renderActbar();updateCommitBtn()}
-async function stage(files,on){try{await api('/api/stage',{method:'POST',body:JSON.stringify({lane:S.lane,repo:S.repo,files,stage:on})});await refreshRepo()}catch(e){toast('err',e.message)}}
-async function commit(){const msg=$('#msg').value;if(!msg.trim()||!S.data?.files.some(f=>f.staged))return;setBusy({id:'commit',label:'Committing…'});try{const j=await api('/api/commit',{method:'POST',body:JSON.stringify({lane:S.lane,repo:S.repo,message:msg})});$('#msg').value='';toast('ok','Committed '+j.output);}catch(e){toast('err','Commit failed\n'+(e.output||e.message))}setBusy(null);await refreshRepo()}
+async function stage(files,on){try{await post(`${repoApi()}/${on?'stage':'unstage'}`,{files});await refreshRepo()}catch(e){toast('err',e.message)}}
+async function commit(){const msg=$('#msg').value;if(!msg.trim()||!S.data?.files.some(f=>f.staged))return;setBusy({id:'commit',label:'Committing…'});try{const j=await post(`${repoApi()}/commit`,{message:msg});$('#msg').value='';toast('ok','Committed '+j.output);}catch(e){toast('err','Commit failed\n'+(e.output||e.message))}setBusy(null);await refreshRepo()}
 async function act(a){const st=S.data?.state||{};const label=a==='push'?'Pushing…':'Pulling…';setBusy({id:a==='push'&&!st.upstream?'publish':a,label});const t=toast('prog',a==='push'?`Pushing to origin/${st.branch}…`:'Pulling…');
-  try{const j=await api('/api/'+a,{method:'POST',body:JSON.stringify({lane:S.lane,repo:S.repo})});toast('ok',(j.output||'').split('\n').slice(-2).join('\n')||a+' done',{replace:t})}
+  try{const j=await post(`${repoApi()}/${a}`);toast('ok',(j.output||'').split('\n').slice(-2).join('\n')||a+' done',{replace:t})}
   catch(e){const out=e.output||e.message;t.remove();if(a==='push'&&/rejected|fetch first|non-fast-forward/i.test(out))toast('err','Push rejected — the remote has work you do not have.\n\n'+out,{fix:{label:`Pull ${st.behind||''}`.trim(),run:()=>act('pull')}});else if(a==='pull')toast('err','Pull needs a merge — fast-forward only. Sort it out in the terminal.\n\n'+out);else toast('err',out)}
   setBusy(null);await refreshRepo()}
-async function primary(){const na=S.data?.nextAction;if(!na)return;switch(na.id){case'pull':return act('pull');case'push':case'publish':return act('push');case'commit':$('#msg').focus();return;case'stage_all':return stage(S.data.files.filter(f=>f.unstaged).map(f=>f.file),true);case'create_pr':{try{const j=await api('/api/pr',{method:'POST',body:JSON.stringify({lane:S.lane,repo:S.repo})});window.open(j.url,'_blank')}catch(e){toast('err',e.message)}return}case'open_pr':if(na.url)window.open(na.url,'_blank');return;case'finish':return finishDlg();case'resume':return laneRun({action:'resume',id:S.lane})}}
+async function primary(){const na=S.data?.nextAction;if(!na)return;switch(na.id){case'pull':return act('pull');case'push':case'publish':return act('push');case'commit':$('#msg').focus();return;case'stage_all':return stage(S.data.files.filter(f=>f.unstaged).map(f=>f.file),true);case'create_pr':{try{const j=await post(`${repoApi()}/pr`);window.open(j.url,'_blank')}catch(e){toast('err',e.message)}return}case'open_pr':if(na.url)window.open(na.url,'_blank');return;case'finish':return finishDlg();case'resume':return laneRun({action:'resume',id:S.lane})}}
 async function laneRun(b){const labels={start:'Starting…',resume:'Resuming…',park:'Parking…',done:'Finishing…'};setBusy({id:b.action,label:labels[b.action]});const t=toast('prog',labels[b.action]);
-  try{const j=await api('/api/lane',{method:'POST',body:JSON.stringify(b)});toast('ok',(j.output||'ok').split('\n').slice(-3).join('\n'),{replace:t});setBusy(null);S.board=await api('/api/board');if(b.action==='start'){S.boardSig=null;await openWs(b.id)}else if(b.action==='done'){S.lane=null;S.repo=null;renderHome();renderCrumb();goHome()}else{renderHome();renderCrumb();renderRepos();await loadRepo(false)}}
+  try{const j=await post(`${laneApi(b.id)}/${b.action}`,{repos:b.repos,note:b.note});toast('ok',(j.output||'ok').split('\n').slice(-3).join('\n'),{replace:t});setBusy(null);S.board=await api('/api/board');if(b.action==='start'){S.boardSig=null;await openWs(b.id)}else if(b.action==='done'){S.lane=null;S.repo=null;renderHome();renderCrumb();goHome()}else{renderHome();renderCrumb();renderRepos();await loadRepo(false)}}
   catch(e){t.remove();toast('err',(b.action+' failed\n\n'+(e.output||e.message)));setBusy(null)}}
-async function refReveal(path){try{await api('/api/ref',{method:'POST',body:JSON.stringify({lane:S.lane,action:'reveal',path})})}catch(e){toast('err',e.message)}}
-async function refRm(name){openDlg(`<h3>Detach reference ${esc(name)}?</h3><div class="hint">Only the link under lanes/${esc(S.lane)}/refs/ and the registry line are removed. The folder or file itself is not touched.</div>`,async()=>{const j=await api('/api/ref',{method:'POST',body:JSON.stringify({lane:S.lane,action:'rm',name})});toast('ok',j.output);await refreshWs()});$('#dok').textContent='Detach'}
-function refAddDlg(){const d=openDlg(`<h3>Attach a reference to ${esc(S.lane)}</h3><label>Path</label><input id="rp" placeholder="~/Desktop/some-folder  or  ~/Downloads/spec.pdf" autocomplete="off"><div class="hint">A folder or file outside the repos. It will appear as lanes/${esc(S.lane)}/refs/&lt;name&gt;.</div><label>Note</label><input id="rn" placeholder="why it matters for this work" autocomplete="off"><label style="display:flex;gap:var(--s-3);align-items:center;margin-top:var(--s-5)"><input type="checkbox" id="rw" style="width:14px;height:14px;margin:0"> Allow Claude to edit it (default is read-only)</label>`,
-    async d=>{const j=await api('/api/ref',{method:'POST',body:JSON.stringify({lane:S.lane,action:'add',path:d.querySelector('#rp').value.trim(),note:d.querySelector('#rn').value.trim(),rw:d.querySelector('#rw').checked})});toast('ok',j.output.split('\n').filter(l=>l.startsWith('ref')).join('\n')||'attached');await refreshWs()},d=>d.querySelector('#rp').value.trim().length>0);d.querySelector('#dok').textContent='Attach';d.querySelector('#rp').focus()}
+async function refReveal(name){try{const j=await post(`${laneApi()}/refs/${E(name)}/reveal`);toast('ok',j.output||'revealed')}catch(e){toast('err',e.message)}}
+async function refRm(name){openDlg(dlgHead(`Detach reference ${esc(name)}?`,'','unlink','warn')+`<div class="infobox">${ico('info')}<span>Only the link under <span class="mono">lanes/${esc(S.lane)}/refs/</span> and the registry line are removed. The folder or file itself is not touched.</span></div>`,async()=>{const j=await post(`${laneApi()}/refs/${E(name)}/detach`);toast('ok',j.output);await refreshWs();if(!$('#sheetwrap').classList.contains('hidden'))renderSheet()});$('#dok').textContent='Detach'}
+function refAddDlg(){const d=openDlg(dlgHead('Attach a reference',`To ${esc(S.lane)} — outside code or docs Claude may read`,'folder')
+    +`<label>Path <span class="req">*</span></label><input id="rp" placeholder="~/Desktop/some-folder  or  ~/Downloads/spec.pdf" autocomplete="off">
+    <div class="hint">${ico('info','sm')}<span>A folder or file outside the repos. It will appear as <span class="mono">lanes/${esc(S.lane)}/refs/&lt;name&gt;</span>.</span></div>
+    <label>Note <span class="opt">(optional)</span></label><input id="rn" placeholder="why it matters for this work" autocomplete="off">
+    <label class="chk"><input type="checkbox" id="rw"> Allow Claude to edit it (default is read-only)</label>`,
+    async d=>{const j=await post(`${laneApi()}/refs/attach`,{path:d.querySelector('#rp').value.trim(),note:d.querySelector('#rn').value.trim(),rw:d.querySelector('#rw').checked});toast('ok',j.output.split('\n').filter(l=>l.startsWith('ref')).join('\n')||'attached');await refreshWs();if(!$('#sheetwrap').classList.contains('hidden'))renderSheet()},d=>d.querySelector('#rp').value.trim().length>0);d.querySelector('#dok').textContent='Attach';d.querySelector('#rp').focus()}
 function discardDlg(list){
   if(!list.length)return;
   const d=S.data;const info=list.map(f=>d.files.find(x=>x.file===f)).filter(Boolean);
   const gone=info.filter(f=>f.untracked),edited=info.filter(f=>!f.untracked);
-  openDlg(`<h3>Discard changes to ${list.length} file${list.length===1?'':'s'}?</h3>
+  openDlg(dlgHead(`Discard changes to ${list.length} file${list.length===1?'':'s'}?`,`In ${esc(S.repo)}`,'trash','bad')+`
     <div class="warnbox bad"><b>This cannot be undone.</b> Git keeps no copy of uncommitted work.
       <ul>${edited.length?`<li>${edited.length} file${edited.length===1?'':'s'} go back to the last commit</li>`:''}
          ${gone.length?`<li>${gone.length} new file${gone.length===1?'':'s'} are deleted from disk</li>`:''}</ul>
       <div class="mono sm">${info.slice(0,12).map(f=>esc(f.file)+(f.untracked?' (new)':'')).join('<br>')}
         ${info.length>12?`<br>…and ${info.length-12} more`:''}</div></div>`,
-    async()=>{try{const j=await api('/api/discard',{method:'POST',body:JSON.stringify({lane:S.lane,repo:S.repo,files:list})});
+    async()=>{try{const j=await post(`${repoApi()}/discard`,{files:list});
       toast('ok',j.output||'discarded');const rm=rmem();if(rm&&list.includes(rm.file))rm.file=null;await refreshRepo()}
       catch(e){toast('err',e.output||e.message)}});
   const ok=$('#dlg').querySelector('#dok');ok.textContent='Discard';ok.className='danger';
@@ -352,38 +375,64 @@ function amendDlg(){
   const d=S.data;if(!d)return;const last=d.log&&d.log[0];if(!last){toast('err','Nothing to amend yet.');return}
   const staged=d.files.filter(f=>f.staged).length;
   const typed=$('#msg').value.trim();
-  openDlg(`<h3>Amend the last commit?</h3>
+  openDlg(dlgHead('Amend the last commit?',`<span class="mono">${esc(last.sha)}</span> on ${esc(d.state?.branch||S.repo)}`,'commit','warn')+`
     <div class="warnbox"><b>Rewrites</b> “${esc(last.subject)}”.
       <ul><li>${staged?`${staged} staged file${staged===1?'':'s'} join that commit`:'No staged files — only the message changes'}</li>
           <li>Refused if it is already pushed</li></ul></div>
     <label>Message</label><textarea id="am" rows="3">${esc(typed||last.subject)}</textarea>
     <div class="hint">Leave as is to keep the message.</div>`,
-    async dd=>{try{const j=await api('/api/amend',{method:'POST',body:JSON.stringify({lane:S.lane,repo:S.repo,message:dd.querySelector('#am').value})});
+    async dd=>{try{const j=await post(`${repoApi()}/amend`,{message:dd.querySelector('#am').value});
       toast('ok',j.output||'amended');$('#msg').value='';await refreshRepo()}
       catch(e){toast('err',e.output||e.message)}});
   $('#dlg').querySelector('#dok').textContent='Amend';
 }
 /* ---------- dialogs ---------- */
-function openDlg(html,onOk,validate){const d=$('#dlg');S.dialog=true;d.innerHTML=html+`<div class="row"><button type="button" id="dcancel">Cancel</button><button type="button" class="pri" id="dok">OK</button></div>`;d.showModal();const ok=d.querySelector('#dok');d.querySelector('#dcancel').onclick=()=>d.close();
+function openDlg(html,onOk,validate){const d=$('#dlg');S.dialog=true;
+  d.innerHTML=`<div class="dbody">${html}</div><div class="row"><span class="keys"><kbd>&crarr;</kbd> to confirm <kbd>esc</kbd> to cancel</span><button type="button" id="dcancel">Cancel</button><button type="button" class="pri" id="dok">OK</button></div>`;d.showModal();const ok=d.querySelector('#dok');d.querySelector('#dcancel').onclick=()=>d.close();
   const check=()=>{ok.disabled=validate?!validate(d):false};d.oninput=check;check();ok.onclick=async()=>{if(ok.disabled)return;d.close();try{await onOk(d)}catch(e){toast('err',e.message)}};d.onclose=()=>{S.dialog=false};d.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.tagName!=='TEXTAREA'){e.preventDefault();ok.click()}};return d}
-function startDlg(){const repos=S.board?.repos||[];const d=openDlg(`<h3>Start a lane</h3><label>Id</label><input id="i" placeholder="ABC-123-short-name" autocomplete="off"><div class="hint" id="ih">Ticket key or a short slug.</div><label>Repos</label><input id="r" placeholder="api@develop web" autocomplete="off"><div class="hint">name[:branch][@base], space separated.</div><div class="chips">${repos.map(r=>`<span class="chip" data-r="${esc(r)}">${esc(r)}</span>`).join('')}</div>`,
-    d=>laneRun({action:'start',id:d.querySelector('#i').value.trim(),repos:d.querySelector('#r').value.trim()}),d=>{const id=d.querySelector('#i').value.trim();const okId=/^[A-Za-z0-9._-]+$/.test(id);d.querySelector('#ih').textContent=id&&!okId?'Letters, numbers, dot, dash, underscore.':'Ticket key or a short slug.';return okId&&d.querySelector('#r').value.trim().length>0});
-  d.querySelector('#dok').textContent='Start';d.querySelectorAll('.chip[data-r]').forEach(c=>c.onclick=()=>{const r=d.querySelector('#r');r.value=(r.value+' '+c.dataset.r).trim();d.oninput()});d.querySelector('#i').focus()}
+function startDlg(){const repos=S.board?.repos||[];
+  const d=openDlg(dlgHead('Start a lane','One piece of work across the repos it needs','branch')
+    +`<label>Lane id <span class="req">*</span><span class="opt">slug</span></label><div class="field"><span class="pre">#</span><input id="i" placeholder="ABC-123-short-name" autocomplete="off" spellcheck="false"></div>
+    <div class="hint" id="ih">${ico('info','sm')}<span>A ticket key or short slug, e.g. <span class="mono acc">ABC-123</span></span></div>
+    <label>Repos <span class="req">*</span><span class="opt" id="rsel"></span></label>
+    <div class="chips">${repos.map(r=>`<span class="chip" data-r="${esc(r)}">${ico('check','sm')}${esc(r)}</span>`).join('')||'<span class="faint">No repos registered yet — lane add one first.</span>'}</div>
+    <input id="r" class="specin" placeholder="api@develop web:my-branch" autocomplete="off" spellcheck="false">
+    <div class="hint">${ico('info','sm')}<span><span class="mono">name[:branch][@base]</span>, space separated. Click a repo to add or remove it.</span></div>
+    <div class="infobox">${ico('term')}<span>Creates a worktree per repo under <span class="mono">lanes/&lt;id&gt;/</span>, on a new branch from its default branch unless you name a base.</span></div>`,
+    d=>laneRun({action:'start',id:d.querySelector('#i').value.trim(),repos:d.querySelector('#r').value.trim()}),
+    d=>{const id=d.querySelector('#i').value.trim();const okId=/^[A-Za-z0-9._-]+$/.test(id);
+      d.querySelector('#ih span').innerHTML=id&&!okId?'<span class="bad">Letters, numbers, dot, dash, underscore.</span>':'A ticket key or short slug, e.g. <span class="mono acc">ABC-123</span>';
+      const names=d.querySelector('#r').value.trim().split(/\s+/).filter(Boolean).map(s=>s.split(/[:@]/)[0]);
+      d.querySelectorAll('.chip[data-r]').forEach(c=>c.classList.toggle('on',names.includes(c.dataset.r)));
+      d.querySelector('#rsel').textContent=names.length?`${names.length} selected`:'';
+      return okId&&names.length>0});
+  d.querySelector('#dok').innerHTML=`Start lane ${ico('arrow','sm')}`;
+  d.querySelectorAll('.chip[data-r]').forEach(c=>c.onclick=()=>{const r=d.querySelector('#r');
+    const parts=r.value.trim().split(/\s+/).filter(Boolean);const has=parts.findIndex(s=>s.split(/[:@]/)[0]===c.dataset.r);
+    if(has>=0)parts.splice(has,1);else parts.push(c.dataset.r);r.value=parts.join(' ');d.oninput()});
+  d.querySelector('#i').focus()}
 function parkDlg(){const w=cur();if(!w)return;const dirty=w.repos.filter(r=>r.exists&&(r.unstaged||r.staged));const unp=w.repos.filter(r=>r.exists&&r.ahead);
   const warn=`<div class="warnbox"><b>What parking does</b><ul>${dirty.length?dirty.map(r=>`<li>${esc(shortOf(r))}: ${(r.unstaged||0)+(r.staged||0)} uncommitted file(s) will be committed as <span class="mono">wip: park ${esc(w.id)}</span> on <span class="mono">${esc(r.branch)}</span></li>`).join(''):'<li>No uncommitted work — nothing will be committed.</li>'}${unp.length?`<li>${esc(unp.map(shortOf).join(', '))}: unpushed commits stay local until you push.</li>`:''}<li>Worktrees stay on disk. The lane leaves the active list; Resume brings it back.</li></ul></div>`;
-  const d=openDlg(`<h3>Park ${esc(w.id)}</h3>${warn}<label>Resume note</label><textarea id="n" rows="4" placeholder="where things stand, next step, blockers"></textarea><div class="hint">Required, at least 10 characters — you will read it in a week.</div>`,
-    d=>laneRun({action:'park',id:w.id,note:d.querySelector('#n').value.trim()}),d=>d.querySelector('#n').value.trim().length>=10);d.querySelector('#dok').textContent='Park';d.querySelector('#n').focus()}
-function finishDlg(){const w=cur();if(!w)return;const bad=w.repos.filter(r=>r.exists&&(r.unstaged||r.staged||r.ahead));const d=openDlg(`<h3>Finish ${esc(w.id)}?</h3><div class="warnbox ${bad.length?'bad':''}"><b>This removes the worktrees</b> under lanes/${esc(w.id)}/ and archives the lane file. Branches and commits stay in git. ${bad.length?'Refused right now:':'Nothing uncommitted or unpushed was found.'}</div><div class="mono" style="margin-top:var(--s-5)">${w.repos.map(r=>{const ok=!r.exists||!(r.unstaged||r.staged||r.ahead);return`<div class="${ok?'ok':'bad'}">${esc(shortOf(r))}  ${!r.exists?'no worktree':ok?'clean, pushed':`${(r.unstaged||0)+(r.staged||0)} uncommitted, ${r.ahead||0} unpushed`}</div>`}).join('')}</div>${bad.length?`<div class="hint bad">Commit and push ${esc(bad.map(shortOf).join(', '))} first.</div>`:''}`,
-    ()=>laneRun({action:'done',id:w.id}),()=>bad.length===0);const ok=d.querySelector('#dok');ok.textContent='Finish';ok.className='danger'}
+  const d=openDlg(dlgHead(`Park ${esc(w.id)}`,'Put this lane down with a note for the next time you pick it up','park')+`${warn}<label>Resume note <span class="req">*</span></label><textarea id="n" rows="4" placeholder="where things stand, next step, blockers"></textarea><div class="hint">${ico('info','sm')}<span>Required, at least 10 characters — you will read it in a week.</span></div>`,
+    d=>laneRun({action:'park',id:w.id,note:d.querySelector('#n').value.trim()}),d=>d.querySelector('#n').value.trim().length>=10);d.querySelector('#dok').textContent='Park lane';d.querySelector('#n').focus()}
+function finishDlg(){const w=cur();if(!w)return;const bad=w.repos.filter(r=>r.exists&&(r.unstaged||r.staged||r.ahead));
+  const rows=w.repos.map(r=>{const ok=!r.exists||!(r.unstaged||r.staged||r.ahead);
+    return`<div class="ck ${ok?'ok':'bad'}">${ico(ok?'check':'warn','sm')}<span class="repotag ${repoClass(r.repo)}">${esc(shortOf(r))}</span><span class="mono faint">${esc(r.branch||'')}</span>
+      <span class="why">${!r.exists?'no worktree':ok?'clean, pushed':`${(r.unstaged||0)+(r.staged||0)} uncommitted, ${r.ahead||0} unpushed`}</span></div>`}).join('');
+  const d=openDlg(dlgHead(`Finish ${esc(w.id)}?`,bad.length?'Not yet — something would be lost':'Everything is committed and pushed',bad.length?'warn':'flag',bad.length?'bad':'')
+    +`<div class="warnbox ${bad.length?'bad':''}"><b>This removes the worktrees</b> under <span class="mono">lanes/${esc(w.id)}/</span> and archives the lane file. Branches and commits stay in git. ${bad.length?'Refused right now:':'Nothing uncommitted or unpushed was found.'}</div>
+    <div class="checks">${rows}</div>${bad.length?`<div class="hint bad">${ico('warn','sm')}<span>Commit and push ${esc(bad.map(shortOf).join(', '))} first.</span></div>`:''}`,
+    ()=>laneRun({action:'done',id:w.id}),()=>bad.length===0);const ok=d.querySelector('#dok');ok.textContent='Finish lane';ok.className='danger'}
 /* ---------- events ---------- */
 /* ---------- screens ---------- */
-function setView(v){S.view=v;rememberPlace();
+function setView(v){S.view=v;rememberPlace();nav(true);
   $('#home').classList.toggle('hidden',v!=='home');
   $('#work').classList.toggle('hidden',v!=='work');
   $('#memory').classList.toggle('hidden',v!=='memory');
+  if(v!=='work')closeSheet();
   renderCrumb();
-  if(v==='home')renderHome();else if(v==='memory')loadMemory();}
-function goHome(){S.view='home';location.hash='';setView('home');$('#home').focus()}
+  if(v==='home'){renderHome();loadHomeExtras()}else if(v==='memory')loadMemory();}
+function goHome(){S.view='home';setView('home');$('#home').focus()}
 
 /* how long since this worktree last moved */
 /* Relative time, one unit, largest that still reads true: 5 min, 3 hours, 2 days, 3 weeks.
@@ -415,34 +464,40 @@ const laneChanged=w=>w.repos.reduce((n,r)=>n+changed(r),0);
 const laneAhead=w=>w.repos.reduce((n,r)=>n+(r.ahead||0),0);
 const laneDrift=w=>Math.max(0,...w.repos.map(r=>r.base_behind||0));
 
-/* a repo's state as one chip: the loudest true thing about it */
-function repoChip(r){
-  const s=esc(shortOf(r));
-  if(!r.exists)return`<span class="rchip" title="${s}: no worktree (parked)"><b class="${repoClass(r.repo)}">${s}</b>no worktree</span>`;
-  const ch=changed(r);
-  if(r.pr_failing)return`<span class="rchip beh" title="${s}: PR checks failing"><b class="${repoClass(r.repo)}">${s}</b>${ico('warn','sm')}checks failing</span>`;
-  if(ch)return`<span class="rchip att" title="${s}: ${ch} uncommitted file(s)"><b class="${repoClass(r.repo)}">${s}</b>${ico('diff','sm')}${ch} changed</span>`;
-  if(r.base_behind>2)return`<span class="rchip drift" title="${s}: ${r.base_behind} commit(s) behind ${esc(r.base_branch||'its base')}${r.base_from_pr?' \u2014 the branch its PR merges into':''}. Not a failure; it just gets harder to merge the longer it sits."><b class="${repoClass(r.repo)}">${s}</b>${ico('pull','sm')}${r.base_behind} behind ${esc(r.base_branch||'')}</span>`;
-  if(r.ahead)return`<span class="rchip acc" title="${s}: ${r.ahead} commit(s) to push"><b class="${repoClass(r.repo)}">${s}</b>${ico('push','sm')}${r.ahead} to push</span>`;
-  return`<span class="rchip" title="${s}: clean and in sync"><b class="${repoClass(r.repo)}">${s}</b>${ico('check','sm')}</span>`;
+/* a repo's state as chips: every true thing about it, loudest first */
+function repoChips(r){
+  if(!r.exists)return[`<span class="chip" title="no worktree on disk">no worktree</span>`];
+  const out=[],ch=changed(r);
+  if(r.pr_failing)out.push(`<span class="chip bad" title="the open PR has failing checks">${ico('warn','sm')}PR checks failing</span>`);
+  if(ch)out.push(`<span class="chip att" title="${ch} uncommitted file(s)"><span class="dotc"></span>${ch} uncommitted</span>`);
+  if(r.behind)out.push(`<span class="chip att" title="origin has ${r.behind} commit(s) this branch does not">${ico('pull','sm')}${r.behind} to pull</span>`);
+  if(r.ahead)out.push(`<span class="chip acc" title="${r.ahead} commit(s) no origin branch has">${ico('push','sm')}${r.ahead} to push</span>`);
+  if(r.base_behind>2)out.push(`<span class="chip drift" title="${r.base_behind} commit(s) behind ${esc(r.base_branch||'its base')}${r.base_from_pr?' — the branch its PR merges into':''}. Not a failure; it just gets harder to merge the longer it sits.">${ico('pull','sm')}${r.base_behind} behind ${esc(r.base_branch||'base')}</span>`);
+  if(!out.length)out.push(`<span class="chip ok" title="clean and in sync">${ico('check','sm')}clean and in sync</span>`);
+  return out;
 }
+const laneTone=w=>w.repos.some(r=>r.pr_failing)?'bad':laneChanged(w)?'att':laneAhead(w)?'acc':'';
+/* One next action per lane card: the first repo that needs something, and what. It opens the
+   lane on that repo, where the real button is — the card never commits or pushes by itself. */
+function laneNext(w){
+  if(w.status!=='active')return{label:'Resume lane',icon:'play',run:{action:'resume'}};
+  const ex=w.repos.filter(r=>r.exists);
+  const pick=(f)=>ex.find(f);
+  let r;
+  if((r=pick(x=>x.pr_failing)))return{label:`Fix checks in ${shortOf(r)}`,icon:'warn',tone:'bad',repo:r.repo};
+  if((r=[...ex].filter(x=>changed(x)).sort((a,b)=>changed(b)-changed(a))[0]))return{label:`Review ${plural(changed(r),'change')} in ${shortOf(r)}`,icon:'diff',repo:r.repo};
+  if((r=pick(x=>x.behind)))return{label:`Pull ${r.behind} in ${shortOf(r)}`,icon:'pull',repo:r.repo};
+  if((r=pick(x=>x.ahead)))return{label:`Push ${r.ahead} in ${shortOf(r)}`,icon:'push',repo:r.repo};
+  if(ex.length&&ex.every(x=>x.pr_state==='MERGED'))return{label:'Finish lane',icon:'flag',finish:true};
+  if((r=pick(x=>x.base_behind>2)))return{label:`Catch ${shortOf(r)} up with ${r.base_branch||'its base'}`,icon:'pull',repo:r.repo};
+  return{label:'Open lane',icon:'arrow',repo:null};
+}
+function runNext(id){const w=S.board?.lanes.find(x=>x.id===id);if(!w)return;const n=laneNext(w);
+  if(n.run)return laneRun({...n.run,id});
+  if(n.finish){S.lane=id;return finishDlg()}
+  return openWs(id,n.repo||undefined)}
 
 /* ---------- home: a reading of the situation, not a list ---------- */
-function homeLede(b){
-  const act=b.lanes.filter(w=>w.status==='active');
-  const dirty=act.filter(w=>laneChanged(w)),ahead=act.filter(w=>laneAhead(w));
-  const failing=act.filter(w=>w.repos.some(r=>r.pr_failing));
-  const drift=act.map(w=>[w,laneDrift(w)]).filter(([,d])=>d>2).sort((a,b2)=>b2[1]-a[1])[0];
-  const bits=[];
-  if(dirty.length)bits.push(`${dirty.length===1?'One lane has':plural(dirty.length,'lane')+' have'} <span class="att">uncommitted work</span>`);
-  else bits.push('Nothing is uncommitted');
-  const ac=ahead.reduce((n,w)=>n+laneAhead(w),0);
-  if(ac)bits.push(`${plural(ac,'commit')} <span class="cool">waiting to push</span>`);
-  bits.push(failing.length?`<span class="att">${plural(failing.length,'PR')} failing</span>`:'nothing is failing');
-  let s=bits.join(', ').replace(/,([^,]*)$/,', and$1')+'.';
-  if(drift)s+=` The one that has drifted is <b>${esc(drift[0].id)}</b> — ${plural(drift[1],'commit')} behind its base branch.`;
-  return s;
-}
 function todoList(b){
   const out=[],act=b.lanes.filter(w=>w.status==='active');
   const drift=act.map(w=>{const r=w.repos.filter(x=>x.exists).sort((a,c)=>(c.base_behind||0)-(a.base_behind||0))[0];return[w,r]})
@@ -457,7 +512,7 @@ function todoList(b){
       act:`Review ${esc(shortOf(r))} in ${esc(w.id)}`,go:[w.id,r.repo]});}
   const push=act.filter(w=>laneAhead(w)&&!laneChanged(w));
   if(push.length){const n=push.reduce((x,w)=>x+laneAhead(w),0);
-    out.push({tone:'calm',ic:'push',html:`${plural(n,'branch')==='1 branchs'?'One branch is':plural(push.length,'lane')+' are'} ahead of origin with nothing uncommitted — safe to push.`,
+    out.push({tone:'calm',ic:'push',html:`${push.length===1?'One lane is':plural(push.length,'lane')+' are'} ahead of origin with nothing uncommitted — safe to push.`,
       act:`Open ${esc(push[0].id)}`,go:[push[0].id,push[0].repos.find(r=>r.ahead)?.repo]});}
   if(!out.length)out.push({tone:'calm',ic:'check',html:'Everything is committed, pushed and passing. Nothing wants a decision.',act:'',go:null});
   return out;
@@ -484,52 +539,111 @@ function ticketChip(w,cls='tk'){
   return `<a class="${cls} ticket link" href="${esc(t.url)}" target="_blank" rel="noopener"
     title="Open ${esc(t.key)} in Jira" onclick="event.stopPropagation()">${esc(t.key)}${ico('ext','sm')}</a>`;
 }
-function homeCard(w,park){
-  const ch=laneChanged(w),ahead=laneAhead(w),drift=laneDrift(w),fail=w.repos.some(r=>r.pr_failing);
-  const now=!park&&(ch||fail||drift>2);
-  const goal=firstSentence(w.goal,200),note=firstSentence(w.note,150);
-  return`<div class="card ${now?'now':''} ${park?'park':''}" data-open="${esc(w.id)}" tabindex="0">
-    <div class="ch"><span class="nm">${esc(w.id)}</span>${ticketChip(w)}
-      <span class="tk state ${park?'parked':'active'}">${park?'parked':'active'}</span>
-      <span class="when" title="${esc(park?'parked, lane file updated '+w.updated:exact(laneTouched(w))||w.updated)}">${esc(park?'parked '+agoDate(w.updated):ago(laneTouched(w))||agoDate(w.updated))}</span></div>
-    ${goal?`<p class="goal">${esc(goal)}</p>`:''}
-    ${note&&!park?`<div class="say"><b>Last note:</b> ${esc(note)}</div>`:''}
-    <div class="repos">${w.repos.map(repoChip).join('')}
-      <button class="txt" style="margin-left:auto;font-size:11px" data-about="${esc(w.id)}">about this work \u2192</button></div></div>`;
+function laneTitle(w){const[n]=prettyName(w.id,w.ticket);return n||w.id}
+/* Home, after the Stitch "Dense list rows" screen: every active lane is one block in a single list.
+   Header (ticket, title, status, age; the next action and About on the right), one Goal / Resume line,
+   then one aligned row per repo with its full-word chips and when it last moved. */
+const aboutBtn=w=>`<button class="sm ghost-b" data-about="${esc(w.id)}" title="About this lane — lanes/${esc(w.id)} (i)">${ico('info','sm')}About this lane</button>`;
+function repoLine(w,r){
+  const when=r.exists&&r.last?ago(r.last):'';
+  return`<a class="rl2" href="${esc(href(`/lanes/${E(w.id)}/${E(r.repo)}`))}" title="Open ${esc(r.repo)} in this lane">
+    ${ico('folder','sm')}<span class="rnm">${esc(r.repo)}</span><span class="branch">${esc(r.branch||'')}</span>
+    <span class="sp"></span>${repoChips(r).join('')}${when?`<span class="age" title="${esc(exact(r.last))}">${esc(when)}</span>`:''}</a>`;
+}
+function homeCard(w){
+  const ch=laneChanged(w),drift=laneDrift(w),fail=w.repos.some(r=>r.pr_failing);
+  const tone=fail?'fail':(ch||drift>2)?'now':laneAhead(w)?'calm':'';
+  const goal=plain(realText(w.goal)),note=plain(realText(w.note)),n=laneNext(w);
+  const full=`Goal: ${goal||'none written yet'}${note?` — Resume: ${note}`:''}`;
+  return`<div class="lblock ${tone}" data-open="${esc(w.id)}" tabindex="0">
+    <div class="lh">${ticketChip(w)}<a class="ttl" href="${esc(href('/lanes/'+E(w.id)))}" title="${esc(w.id)}">${esc(laneTitle(w))}</a><span class="tk state active">active</span>
+      <span class="dot">·</span><span class="when" title="${esc(exact(laneTouched(w))||w.updated)}">${esc(ago(laneTouched(w))||agoDate(w.updated))}</span>
+      <span class="sp"></span><button class="pri sm ${n.tone||''}" data-next="${esc(w.id)}">${ico(n.icon,'sm')}${esc(n.label)}</button>${aboutBtn(w)}</div>
+    <div class="lg" title="${esc(full)}"><b>Goal:</b><span class="g">${goal?esc(goal):'none written yet'}</span>${note?`<span class="dash">—</span><i>Resume: ${esc(note)}</i>`:''}</div>
+    <div class="rlist">${w.repos.map(r=>repoLine(w,r)).join('')}</div></div>`;
+}
+function parkedCard(w){
+  const m=/^(\d{4}-\d{2}-\d{2})\s+—\s+([\s\S]*)$/.exec(plain(w.note||'').trim()||'');
+  const nd=m?m[1]:w.updated,nt=m?m[2]:plain(realText(w.note));
+  const when=nd?new Date(nd+'T00:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'';
+  return`<div class="prow2" data-open="${esc(w.id)}" tabindex="0" title="${esc(w.id)}${nt?' — Resume on: '+esc(nt):''}">
+    ${ico('park','sm')}${ticketChip(w)}<a class="ttl" href="${esc(href('/lanes/'+E(w.id)))}">${esc(laneTitle(w))}</a>
+    <span class="rs"><b>Resume on:</b> ${nt?esc(nt):'no note'}</span>
+    <span class="when" title="parked; lane file updated ${esc(w.updated||'')}">${esc(when)}</span>
+    <button class="sm" data-next="${esc(w.id)}">${ico('play','sm')}Resume</button></div>`;
+}
+const parkedOpen=()=>LSg('lane-parked-collapsed','0')!=='1';
+function toggleParked(){LSs('lane-parked-collapsed',parkedOpen()?'1':'0');renderHome()}
+/* Home's right column reads two things the board did not show before: drafts waiting for a
+   scope (/api/memory) and recent conversations (/api/sessions). Both are fetched lazily. */
+async function loadHomeExtras(force){
+  const now=Date.now();if(!force&&S.extrasAt&&now-S.extrasAt<20000)return;S.extrasAt=now;
+  try{S.mem=await api('/api/memory')}catch{}
+  try{S.sessAll=(await api('/api/sessions')).sessions||{}}catch{S.sessAll=S.sessAll||{}}
+  renderRail();if(S.view==='home')renderHome();
+}
+const draftsOf=()=>(S.mem?.scopes||[]).find(s=>s.id==='drafts')?.files||[];
+function recentSessions(n){
+  const rows=[];for(const[repo,txt]of Object.entries(S.sessAll||{}))for(const s of parseSessions(txt))rows.push({...s,repo});
+  const seen=new Set();return rows.sort((a,b)=>b.when.localeCompare(a.when)).filter(s=>!seen.has(s.id)&&seen.add(s.id)).slice(0,n);
 }
 function renderHome(){
   const b=S.board,el=$('#home');
-  if(!b||!b.lanes){el.innerHTML='<div class="hmain"><div class="none">Loading…</div></div>';return}
+  if(!b||!b.lanes){el.innerHTML='<div class="hmain"><div class="center">Loading…</div></div>';return}
   const act=b.lanes.filter(w=>w.status==='active'),park=b.lanes.filter(w=>w.status!=='active');
   const wants=act.filter(w=>laneChanged(w)||laneDrift(w)>2||w.repos.some(r=>r.pr_failing));
-  const rest=act.filter(w=>!wants.includes(w));
-  const now=new Date();
-  const date=now.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})+' · '+
-             now.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+  const ordered=[...wants,...act.filter(w=>!wants.includes(w))];
   const todos=todoList(b);
-  const tally=[['branch','active',act.length],['branch','parked',park.length],
-    ['diff','files changed',act.reduce((n,w)=>n+laneChanged(w),0)],
-    ['push','commits to push',act.reduce((n,w)=>n+laneAhead(w),0)],
-    ['pull','behind base',Math.max(0,...act.map(laneDrift))],
-    ['warn','checks failing',act.reduce((n,w)=>n+w.repos.filter(r=>r.pr_failing).length,0)]];
+  const tally=[['active',act.length],['parked',park.length],
+    ['files changed',act.reduce((n,w)=>n+laneChanged(w),0)],['commits to push',act.reduce((n,w)=>n+laneAhead(w),0)],
+    ['behind base',Math.max(0,...act.map(laneDrift))],['checks failing',act.reduce((n,w)=>n+w.repos.filter(r=>r.pr_failing).length,0)]];
+  const drafts=draftsOf(),sessAll=recentSessions(50),sess=sessAll.slice(0,6),open=parkedOpen();
   el.innerHTML=`<div class="hmain">
-    <div class="date">${esc(date)}</div>
-    <p class="lede">${homeLede(b)}</p>
-    ${wants.length?`<div class="hgrp">Wants a decision</div>${wants.map(w=>homeCard(w,false)).join('')}`:''}
-    ${rest.length?`<div class="hgrp">${wants.length?'The rest':'Active'}</div>${rest.map(w=>homeCard(w,false)).join('')}`:''}
-    ${park.length?`<div class="hgrp">Parked · no worktree</div><div class="parked">${park.map(w=>`<span class="pk" data-open="${esc(w.id)}" tabindex="0">${ico('branch','sm')}${esc(w.id)}</span>`).join('')}</div>`:''}
-    ${!b.lanes.length?'<div class="none">No lanes yet.</div>':''}
+    <div class="hhead"><h1>Active Lanes</h1><span class="count">${act.length} active</span><span class="sub">needing a decision first, then by name</span></div>
+    ${ordered.length?`<div class="llist">${ordered.map(homeCard).join('')}</div>`:''}
+    ${!act.length&&b.lanes.length?'<div class="nolanes"><h3>Nothing in flight</h3><p>Every lane is parked. Resume one below, or start something new.</p><button class="pri" onclick="startDlg()">'+ico('plus','sm')+'Start a lane</button></div>':''}
+    ${!b.lanes.length?`<div class="nolanes"><h3>No lanes yet</h3><p>A lane is one piece of work across the repos it needs: a branch and a worktree in each.</p><button class="pri" onclick="startDlg()">${ico('plus','sm')}Start a lane</button></div>`:''}
+    ${park.length?`<div class="pbox" id="parkedHead">
+      <button class="phead" onclick="toggleParked()" aria-expanded="${open}"><span class="chev ${open?'open':''}">${ico('arrow','sm')}</span>Parked Lanes<span class="count">${park.length} parked</span>
+        <span class="sp"></span><span class="sub">worktrees kept on disk; Resume brings a lane back</span></button>
+      ${open?park.map(parkedCard).join(''):''}</div>`:''}
   </div>
-  <div class="hside">
-    <h5>What to do about it</h5>
-    <div class="todo">${todos.map((t,i)=>`<div class="ti ${t.tone}">${ico(t.ic)}<span class="tx">${t.html}
-      ${t.act?`<button class="do" data-todo="${i}">${t.act} →</button>`:''}</span></div>`).join('')}</div>
-    <h5>Everything at a glance</h5>
-    <div class="tally">${tally.map(([i,l,n])=>`<div class="tl">${ico(i,'sm')}${l}<span class="n">${n}</span></div>`).join('')}</div>
-    <div style="margin-top:var(--s6)"><button class="pri" onclick="startDlg()" style="width:100%">${ico('plus','sm')}Start a lane</button></div>
-  </div>`;
+  <aside class="hside">
+    <section class="rsec"><h4>${ico('flag','sm')}What to do about it</h4>
+      <div class="todo">${todos.map((t,i)=>`<div class="ti ${t.tone}">${ico(t.ic,'sm')}<span class="tx">${t.html}
+        ${t.act?` <button class="link do" data-todo="${i}">${t.act} →</button>`:''}</span></div>`).join('')}</div></section>
+    <section class="rsec"><h4>${ico('book','sm')}Context memory</h4>
+      <div class="mbox ${drafts.length?'hot':''}"><div class="mt">${drafts.length?`<span class="dotc"></span>${plural(drafts.length,'draft')} waiting`:'No drafts waiting'}</div>
+        <div class="msub">${drafts.length?'Things Claude learned, waiting for you to pick how long they stay true.':'Claude drafts a memory when it learns something; you pick where it goes.'}</div>
+        ${drafts.slice(0,4).map(f=>`<div class="d1"><div class="dn" title="${esc(f.description||f.name||f.file)}"><button class="link" data-mopen="${esc(f.file)}">${esc(f.name||f.file)}</button><span>${esc(daysAgo(f.modified))}</span></div>
+          <div class="da"><button class="pri sm" data-mfileit="${esc(f.file)}">${ico('inbox','sm')}File it</button><button class="sm" data-mdrop="${esc(f.file)}">Discard</button></div></div>`).join('')}
+        ${drafts.length>4?`<button class="link" data-rail="memory">${drafts.length-4} more in Memory →</button>`:''}</div></section>
+    <section class="rsec"><h4>${ico('term','sm')}Recent sessions${sessAll.length?`<span class="hx">history (${sessAll.length})</span>`:''}</h4>
+      ${sess.map(s=>`<button class="s1" data-resume="${esc(s.id)}" title="Click to copy: claude --resume ${esc(s.id)}">
+        <span class="st">${esc(s.first)}</span><span class="sw">${esc(s.when.slice(5))}</span>
+        <span class="sr"><span class="repotag ${repoClass(s.repo)}">${esc(s.repo)}</span> ${s.turns} turns · ${esc(s.id.slice(0,8))}</span></button>`).join('')
+        ||'<div class="pempty">None recorded yet.</div>'}</section>
+    <section class="rsec"><h4>${ico('lanes','sm')}At a glance</h4>
+      <div class="tally">${tally.map(([l,n])=>`<div class="tl">${l}<span class="n">${n}</span></div>`).join('')}</div></section>
+  </aside>`;
   el.querySelectorAll('[data-todo]').forEach(btn=>{const t=todos[+btn.dataset.todo];
-    btn.onclick=()=>{if(t.go)openWs(t.go[0],t.go[1])}});
+    btn.onclick=e=>{e.stopPropagation();if(t.go)openWs(t.go[0],t.go[1])}});
+  renderRail();
+}
+
+/* ---------- the rail: the board's places, then the lanes in flight ---------- */
+function renderRail(){
+  $('#railActive').setAttribute('href',href('/'));$('#memBtn').setAttribute('href',href('/memory'));$('#homeBtn').setAttribute('href',href('/'));
+  const b=S.board;if(!b)return;
+  const act=b.lanes.filter(w=>w.status==='active'),park=b.lanes.filter(w=>w.status!=='active');
+  $('#nActive').textContent=act.length||'';$('#nParked').textContent=park.length||'';
+  const nd=draftsOf().length,dn=$('#nDrafts');dn.textContent=nd?`${nd} draft${nd===1?'':'s'}`:'';dn.classList.toggle('hot',nd>0);
+  $('#railActive').classList.toggle('on',S.view==='home');
+  $('#memBtn').classList.toggle('on',S.view==='memory');
+  $('#raillanes').innerHTML=act.map(w=>{const tone=laneTone(w),ch=laneChanged(w);
+    return`<a class="rl ${S.view==='work'&&S.lane===w.id?'on':''}" href="${esc(href('/lanes/'+E(w.id)))}" title="${esc(w.id)}">
+      <span class="dot ${tone}"></span><span class="nm">${esc(laneTitle(w))}</span>${ch?`<span class="c">${ch}</span>`:''}</a>`}).join('')
+    ||'<div class="none">No active lanes.</div>';
 }
 
 /* ---------- command bar ---------- */
@@ -537,81 +651,88 @@ function renderCrumb(){
   const w=cur();
   const c=$('#crumb');
   if(S.view==='home'){c.innerHTML=S.board?`<b>Home</b><span class="sep">·</span><span>${S.board.lanes.filter(x=>x.status==='active').length} active, ${S.board.lanes.filter(x=>x.status!=='active').length} parked</span>`:'<b>Home</b>';}
-  else if(S.view==='memory'){c.innerHTML='<b>Memory</b><span class="sep">/</span><span>'+esc(S.mscope)+'</span>';}
-  else if(w){const r=curRepo();c.innerHTML=`<b class="link" title="About this lane (i)">${esc(w.id)}</b>${r?`<span class="sep">/</span><b>${esc(shortOf(r))}</b>`:''}`;
-    c.innerHTML+=ticketChip(w)+`<span class="tk state ${esc(w.status)}">${esc(w.status)}</span>`;}
+  else if(S.view==='memory'){const sc=mscope();c.innerHTML='<b>Memory</b><span class="sep">/</span><span>'+esc((sc?.label||S.mscope).replace(/^repo:/,''))+'</span>';}
+  else if(w){const r=curRepo();c.innerHTML=`<span>Lanes</span><span class="sep">/</span><b class="link" title="About this lane (i)">${esc(w.id)}</b>${r?`<span class="sep">/</span><b>${esc(shortOf(r))}</b>`:''}`;}
   else c.innerHTML='';
   let chips='';
   if(S.view==='work'&&w){
     const ch=laneChanged(w),ah=laneAhead(w),fail=w.repos.filter(r=>r.pr_failing).length;
-    if(ch)chips+=`<span class="chip att">${ico('diff','sm')} ${ch} changed</span>`;
-    if(ah)chips+=`<span class="chip acc">${ico('push','sm')} ${ah}</span>`;
-    if(fail)chips+=`<span class="chip bad">${ico('warn','sm')} ${fail} failing</span>`;
+    if(ch)chips+=`<span class="chip att"><span class="dotc"></span>${ch} uncommitted</span>`;
+    if(ah)chips+=`<span class="chip acc">${ico('push','sm')}${ah} to push</span>`;
+    if(fail)chips+=`<span class="chip bad">${ico('warn','sm')}${fail} failing</span>`;
     const dr=w.repos.filter(r=>r.base_behind>2).sort((a,b)=>b.base_behind-a.base_behind)[0];
-    if(dr)chips+=`<span class="chip drift" title="behind ${esc(dr.base_branch||'base')} \u2014 drift, not a failure">${ico('pull','sm')} ${dr.base_behind} behind ${esc(dr.base_branch||'')}</span>`;
-    if(!ch&&!ah&&!fail)chips+=`<span class="chip ok">${ico('check','sm')} clean</span>`;
+    if(dr)chips+=`<span class="chip drift" title="behind ${esc(dr.base_branch||'base')} — drift, not a failure">${ico('pull','sm')}${dr.base_behind} behind ${esc(dr.base_branch||'')}</span>`;
+    if(!ch&&!ah&&!fail)chips+=`<span class="chip ok">${ico('check','sm')}clean</span>`;
   }else if(S.board){
     const a=S.board.lanes.filter(x=>x.status==='active');
     const ch=a.reduce((n,x)=>n+laneChanged(x),0),ah=a.reduce((n,x)=>n+laneAhead(x),0);
-    if(ch)chips+=`<span class="chip att">${ico('diff','sm')} ${ch} changed</span>`;
-    if(ah)chips+=`<span class="chip">${ico('push','sm')} ${ah} to push</span>`;
+    if(ch)chips+=`<span class="chip att"><span class="dotc"></span>${ch} uncommitted</span>`;
+    if(ah)chips+=`<span class="chip acc">${ico('push','sm')}${ah} to push</span>`;
   }
   $('#chips').innerHTML=chips;
   let act='';
   if(S.view==='work'&&w){
     if(w.status!=='active')act=`<button class="pri" onclick="laneRun({action:'resume',id:'${esc(w.id)}'})">${ico('play','sm')}Resume</button>`;
     else{const allDone=w.repos.every(r=>r.exists&&!r.unstaged&&!r.staged&&!r.ahead&&(r.pr_state==='MERGED'||r.pr_state==null));
-      act=(allDone?`<button class="pri" onclick="finishDlg()">${ico('flag','sm')}Finish</button>`:'')
-        +`<button onclick="parkDlg()" title="Write a resume note and put this lane down">${ico('park','sm')}Park</button>`;}
+      act=`<button onclick="parkDlg()" title="Write a resume note and put this lane down">${ico('park','sm')}Park</button>`
+        +(allDone?`<button class="pri" onclick="finishDlg()">${ico('flag','sm')}Finish</button>`:'');}
+    const fnd=((w.findings||'').match(/^- /gm)||[]).length;
+    $('#lanetitle').innerHTML=`<a class="up" href="${esc(href('/'))}" title="Home">Lanes</a><span class="sep">/</span>
+      <h1 title="${esc(w.id)}">${esc(laneTitle(w))}</h1><span class="lid">${esc(w.id)}</span>${ticketChip(w)}<span class="tk state ${esc(w.status)}">${esc(w.status)}</span>`;
+    $('#goalstrip').innerHTML=`<div class="gi g">${ico('target','sm')}<b>Goal</b><span>${esc(firstSentence(w.goal,180)||'none written yet')}</span></div>
+      <div class="gi r">${ico('note','sm')}<b>Resume</b><span>${esc(firstSentence(w.note,160)||'no note')}</span></div>
+      <div class="gi f">${ico('bulb','sm')}<b>Findings</b><span>${fnd?plural(fnd,'finding'):'none yet'}</span></div>`;
   }
   $('#cmdact').innerHTML=act;
   $('#aboutBtn').classList.toggle('hidden',!(S.view==='work'&&w));
-  $('#memBtn').classList.toggle('on',S.view==='memory');
   $('#memBtn').title=S.view==='memory'?'Back to your work (m)':'Memory: preferences, facts, per-repo notes (m)';
+  renderRail();
 }
 
 /* ---------- work: repos, files, diff, one action bar ---------- */
 function repoTab(r,i){
-  const s=esc(shortOf(r)),ch=changed(r);
-  let badge='';
-  if(!r.exists)badge='<span class="faint">no worktree</span>';
-  else if(r.pr_failing)badge=`<span class="bad stat">${ico('warn','sm')}failing</span>`;
-  else if(ch)badge=`<span class="warn stat">${ico('diff','sm')}${ch}</span>`;
-  else if(r.ahead)badge=`<span class="acc stat">${ico('push','sm')}${r.ahead}</span>`;
-  else badge=`<span class="faint stat">${ico('check','sm')}</span>`;
-  const drift=r.exists&&r.base_behind>2?`<span class="drift stat" title="${r.base_behind} commit(s) behind ${esc(r.base_branch||'its base')}${r.base_from_pr?' (the PR\u2019s base branch)':''} \u2014 drift, not a failure">${ico('pull','sm')}${r.base_behind} behind ${esc(r.base_branch||'')}</span>`:'';
-  return`<button class="r ${r.repo===S.repo?'sel':''} ${r.exists?'':'nowt'}" data-repo="${esc(r.repo)}"
-    title="${esc(r.repo)} · branch ${esc(r.branch)}${r.base?' from '+esc(r.base):''} · press ${i+1}"><span class="repotag ${repoClass(r.repo)}">${s}</span>${badge}${drift}</button>`;
+  const s=esc(shortOf(r));
+  const dot=!r.exists?'none':r.pr_failing?'bad':changed(r)?'att':r.ahead?'acc':'';
+  const chips=repoChips(r);
+  return`<button class="r ${r.repo===S.repo?'sel':''} ${r.exists?'':'nowt'} ${repoClass(r.repo)}" data-repo="${esc(r.repo)}"
+    title="${esc(r.repo)} · branch ${esc(r.branch)}${r.base?' from '+esc(r.base):''} · press ${i+1}">
+    <span class="rname">${ico('repo','sm')}<span class="repotag ${repoClass(r.repo)}">${s}</span>${s!==esc(r.repo)?`<span class="full faint">${esc(r.repo)}</span>`:''}</span>
+    <span class="rdot ${dot}"></span>
+    <span class="rbr"><span class="branch">${ico('branch','sm')}${esc(r.branch||'')}</span></span>
+    <span class="rst">${chips.slice(0,2).join('')}</span></button>`;
 }
 function renderRepos(){
-  const w=cur();if(!w){$('#repos').innerHTML='';return}
+  const w=cur();if(!w){$('#repos').innerHTML='';$('#repometa').innerHTML='';return}
   const d=S.data,st=d?.state,pr=d?.pr;
+  $('#nrepos').textContent=`(${w.repos.length})`;
+  $('#repos').innerHTML=w.repos.map(repoTab).join('');
   let meta='';
-  if(st)meta=`<span class="meta">${ico('branch','sm')} ${esc(st.branch)} ${st.upstream?`<span class="faint">→ ${esc(st.upstream)}</span>`:'<span class="warn">not published</span>'}
-    ${pr&&!pr.error?`<a class="chip ${pr.state==='MERGED'?'ok':pr.checks?.failing?'bad':pr.isDraft?'':'ok'}" href="${esc(pr.url)}" target="_blank">${ico('pr','sm')} #${pr.number} ${pr.state==='MERGED'?'merged':pr.checks?.failing?pr.checks.failing+' failing':pr.checks?.pending?'running':pr.isDraft?'draft':'passing'}</a>`:''}</span>`;
-  $('#repos').innerHTML=w.repos.map(repoTab).join('')+meta;
+  if(st)meta=`<span class="branch" title="${esc(st.branch)}">${ico('branch','sm')}${esc(st.branch)}</span>${st.upstream?`<span class="up2" title="tracks ${esc(st.upstream)}">→ ${esc(st.upstream)}</span>`:'<span class="chip att">not published</span>'}
+    ${pr&&!pr.error?`<a class="chip ${pr.state==='MERGED'?'ok':pr.checks?.failing?'bad':pr.isDraft?'':'ok'}" href="${esc(pr.url)}" target="_blank" rel="noopener">${ico('pr','sm')} #${pr.number} ${pr.state==='MERGED'?'merged':pr.checks?.failing?pr.checks.failing+' failing':pr.checks?.pending?'running':pr.isDraft?'draft':'passing'}</a>`:''}`;
+  $('#repometa').innerHTML=meta;
 }
 function renderRepo(){
   const w=cur(),r=curRepo();if(!w){goHome();return}
   renderRepos();renderCrumb();
   if(!r||!r.exists){
-    $('#files').innerHTML=`<div class="empty">${w.status!=='active'?'Worktrees are removed while parked.':'No worktree for this repo yet.'}</div>`;
+    $('#files').innerHTML=`<div class="empty big">${w.status!=='active'?'Worktrees are removed while parked.':'No worktree for this repo yet.'}</div>`;
     $('#commit').classList.add('hidden');$('#stagehead').innerHTML='';
-    $('#pbody').innerHTML=`<div class="center">No worktree here.<br><br><button class="pri" onclick="openSheet()">About this lane</button></div>`;
+    $('#pbody').innerHTML=`<div class="center">${ico('repo','big')}No worktree here.<br><br><button class="pri" onclick="openSheet()">About this lane</button></div>`;
     renderActbar();return}
   $('#commit').classList.remove('hidden');
+  $('#commitTo').textContent=S.data?.state?.branch||r.branch||'';
   renderFiles();renderStage();renderActbar();updateCommitBtn();
 }
 /* the action bar says what happens next in words, then offers it */
 function renderActbar(){
   const d=S.data,w=cur();
-  if(!d){$('#actwhy').innerHTML='';$('#actbtns').innerHTML=w&&w.status!=='active'?`<button class="pri" onclick="laneRun({action:'resume',id:'${esc(w.id)}'})">Resume this lane</button>`:'';return}
+  if(!d){$('#actwhy').innerHTML='';$('#actbtns').innerHTML=w&&w.status!=='active'?`<button class="pri" onclick="laneRun({action:'resume',id:'${esc(w.id)}'})">${ico('play','sm')}Resume this lane</button>`:'';return}
   const st=d.state,na=d.nextAction||{id:'none',label:'Nothing to do'};
   const staged=d.files.filter(f=>f.staged).length,unst=d.files.filter(f=>f.unstaged).length;
   const r=curRepo();
   let why='';
   if(staged&&unst)why=`<b>${plural(staged,'file')}</b> staged, ${unst} still open — commit what is ready, or press <b>a</b> to stage the rest.`;
-  else if(staged)why=`<b>${plural(staged,'file')}</b> staged and nothing left open.`;
+  else if(staged)why=`<b>${plural(staged,'file')}</b> staged and nothing left open. Write a message and commit.`;
   else if(unst)why=`<b>${plural(unst,'file')}</b> changed, none staged yet — tick the ones that belong together, or press <b>a</b> for all.`;
   else if(st.ahead)why=`Working tree clean. <b>${plural(st.ahead,'commit')}</b> waiting to go to ${esc(st.upstream||'origin')}.`;
   else if(st.behind)why=`Working tree clean. <b>${plural(st.behind,'commit')}</b> to pull.`;
@@ -620,12 +741,10 @@ function renderActbar(){
   $('#actwhy').innerHTML=why;
   const busy=S.busy;const primLabel=busy&&busy.id===na.id?busy.label:na.label;
   const btns=[];
-  if(unst)btns.push(`<button onclick="stage(${esc(JSON.stringify(d.files.filter(f=>f.unstaged).map(f=>f.file)))},true)" ${busy?'disabled':''}>${ico('diff','sm')}Stage all</button>`);
-  if(staged)btns.push(`<button class="txt" onclick="stage(${esc(JSON.stringify(d.files.filter(f=>f.staged).map(f=>f.file)))},false)">Unstage all</button>`);
   if(st.upstream&&st.behind&&na.id!=='pull')btns.push(`<button onclick="act('pull')" ${busy?'disabled':''}>${ico('pull','sm')}Pull ${st.behind}</button>`);
-  if(staged)btns.push(`<button class="pri" id="commitBtn" onclick="commit()">${ico('commit','sm')}Commit</button>`);
-  else{const pi={pull:'pull',push:'push',publish:'push',commit:'commit',stage_all:'diff',create_pr:'pr',open_pr:'pr',finish:'flag',resume:'play'}[na.id];
-    btns.push(`<button class="pri ${na.tone||''}" id="primary" onclick="primary()" ${na.id==='none'||busy?'disabled':''}>${pi?ico(pi,'sm'):''}${esc(primLabel)}</button>`);}
+  // with files staged the commit box below the list is the primary action; everything else lands here
+  if(!staged){const pi={pull:'pull',push:'push',publish:'push',commit:'commit',stage_all:'diff',create_pr:'pr',open_pr:'pr',finish:'flag',resume:'play'}[na.id];
+    btns.push(`<button class="pri ${na.tone||''}" id="primary" onclick="primary()" title="⌘P" ${na.id==='none'||busy?'disabled':''}>${pi?ico(pi,'sm'):''}${esc(primLabel)}</button>`);}
   $('#actbtns').innerHTML=btns.join('');
   updateCommitBtn();
 }
@@ -635,77 +754,60 @@ function backToChanges(){const rm=rmem();if(rm){rm.sha=null}setFeed('changes')}
    Goal, resume note, findings, references and past conversations: everything that is about
    the work rather than the code. Reachable any time with i, from the lane name in the
    bar, and from a Home card - visible on demand, never in the way of a diff. */
-function openSheet(id){if(id&&id!==S.lane){S.lane=id}
+function openSheet(id){if(id&&id!==S.lane){S.lane=id;S.sheetRaw=null}
   if(!cur())return;$('#sheetwrap').classList.remove('hidden');renderSheet();$('#sheetClose').focus()}
 function closeSheet(){$('#sheetwrap').classList.add('hidden')}
 function toggleSheet(){$('#sheetwrap').classList.contains('hidden')?openSheet():closeSheet()}
-function setSTab(k){S.stab=k;renderSheet()}
-const SHEET_TABS=[['work','Goal & notes'],['refs','References'],['sess','Conversations'],['raw','The file']];
 function parseSessions(txt){
   return (txt||'').trim().split('\n').slice(1).map(l=>{
     const m=/^\s*(\S+ \S+)\s+(\S{8,})\s+(\d+) turns\s+(.*)$/.exec(l);
     return m?{when:m[1],id:m[2],turns:+m[3],first:m[4]}:null}).filter(Boolean);
 }
-async function renderSheet(){
+async function loadSheetRaw(){const w=cur();if(!w)return;S.sheetRaw={id:w.id,html:'<pre class="raw muted">Reading the lane file…</pre>'};renderSheet();
+  try{const j=await api(`${laneApi(w.id)}/spec`);S.sheetRaw={id:w.id,html:j.spec?md(j.spec):'<p>No file.</p>'}}
+  catch(e){S.sheetRaw={id:w.id,html:`<pre class="raw bad">${esc(e.message)}</pre>`}}
+  renderSheet()}
+/* Goal, resume note, findings, references, conversations and the lane file, top to bottom:
+   everything that is about the work rather than the code. Reachable any time with i, from the
+   lane name in the bar, from the goal strip and from a Home card. */
+function renderSheet(){
   const w=cur();if(!w)return;
-  if(!S.stab)S.stab='work';
-  $('#sheetname').innerHTML=`<span class="nm">${ico('branch')} ${esc(w.id)}</span>
-    ${ticketChip(w)}<span class="tk state ${esc(w.status)}">${esc(w.status)}</span>`;
+  $('#sheetname').innerHTML=`<span class="tk state ${esc(w.status)}">${esc(w.status)}</span>${ticketChip(w)}`;
+  $('#sheetsub').innerHTML=`${ico('branch','sm')}<span>${esc(w.id)}</span><span class="faint">· ${esc(laneTitle(w))}</span>`;
   const refs=w.refs||[];
-  const sessions=parseSessions(S.data?.sessions);
-  const counts={refs:refs.length,sess:sessions.length};
-  $('#stabs').innerHTML=SHEET_TABS.map(([k,label])=>`<span class="st ${S.stab===k?'sel':''}" data-stab="${k}">${esc(label)}
-    ${counts[k]?`<span class="n">${counts[k]}</span>`:''}</span>`).join('');
-  const body=$('#sheetbody');
-  if(S.stab==='raw'){
-    body.innerHTML='<pre class="raw muted">Reading the lane file\u2026</pre>';
-    try{const j=await api(`/api/spec?lane=${encodeURIComponent(w.id)}`);
-      body.innerHTML=`<div class="wrapw"><div class="kv"><b>file</b><span>registry/lanes/${esc(w.id)}.md</span></div>`
-        +(j.spec?md(j.spec):'<p>No file.</p>')+'</div>';
-    }catch(e){body.innerHTML=`<pre class="raw bad">${esc(e.message)}</pre>`}
-    return;
-  }
-  if(S.stab==='refs'){
-    body.innerHTML=`<div class="wrapw">
-      <p class="big">Outside code and docs attached to this work.</p>
-      <div class="kv"><b>they appear at</b><span>lanes/${esc(w.id)}/refs/&lt;name&gt;</span>
-        <b>read-only unless</b><span>attached with --rw</span></div>
-      ${refs.length?`<div class="reflist">${refs.map(r=>`<div class="ref">${ico('folder','sm')}
-          <span>${esc(r.name||r.path.split('/').pop())}</span>
-          <span class="faint" style="overflow:hidden;text-overflow:ellipsis">${esc(r.note||r.path)}</span>
-          <span class="mode">${esc(r.mode||'read')}</span></div>`).join('')}</div>`
-        :'<p>Nothing attached to this lane.</p>'}
-      <p style="margin-top:16px"><button onclick="refAddDlg()">+ Attach a reference</button></p></div>`;
-    return;
-  }
-  if(S.stab==='sess'){
-    const byTurns=[...sessions].sort((a,b)=>b.turns-a.turns);
-    const deep=byTurns.filter(s=>s.turns>=10),quick=byTurns.filter(s=>s.turns<10);
-    const row=s=>`<div class="sessrow" data-resume="${esc(s.id)}" title="Click to copy: claude --resume ${esc(s.id)}">
-      <span class="faint">${esc(s.when.slice(5,10))}</span><span class="tx">${esc(s.first)}</span>
-      <span class="turns">${s.turns} turns</span><span class="cp">copy resume \u2318</span></div>`;
-    body.innerHTML=`<div class="wrapw">
-      <p class="big">Past Claude conversations recorded for ${esc(S.repo||'this repo')}.</p>
-      <div class="kv"><b>scope</b><span>this repo, every lane, all time</span>
-        <b>to continue one</b><span>claude --resume &lt;id&gt;</span></div>
-      ${deep.length?`<div class="sgrp">Substantial <span class="q">\u00b7 ten turns or more</span></div><div class="sess">${deep.map(row).join('')}</div>`:''}
-      ${quick.length?`<div class="sgrp">Quick lookups</div><div class="sess">${quick.map(row).join('')}</div>`:''}
-      ${!sessions.length?'<p>None recorded for this repo.</p>':''}</div>`;
-    return;
-  }
+  // on the lane's own screen, the repo in front of you; from Home, every repo of the lane
+  const inWork=S.view==='work'&&S.data;
+  const sessions=inWork?parseSessions(S.data.sessions):w.repos.flatMap(r=>parseSessions(S.sessAll?.[r.repo]));
   const fnd=(w.findings||'').replace(/^\(things learned[\s\S]*?\)$/m,'').trim();
-  body.innerHTML=`<div class="wrapw">
-    <div class="sgrp">Goal</div>${w.goal?md(w.goal):'<p>No goal written yet.</p>'}
-    <div class="sgrp">Resume note</div>${w.note?`<div class="note">${md(w.note)}</div>`:'<p>No resume note.</p>'}
-    ${fnd?`<div class="sgrp">Findings <span class="q">\u00b7 kept only while this work is live</span></div>${md(fnd)}`:''}
-    ${(w.links||[]).length?`<div class="sgrp">Links <span class="q">\u00b7 hand-written in the lane file</span></div>
-      <div class="reflist">${w.links.map(l=>`<div class="ref">${ico('folder','sm')}<span>${esc(l.label)}</span>
-        <a class="faint" href="${esc(l.url)}" target="_blank" rel="noreferrer" style="overflow:hidden;text-overflow:ellipsis">${esc(l.url)}</a></div>`).join('')}</div>`:''}
-    <div class="sgrp">Repos</div>
-    <div class="reflist">${w.repos.map(r=>`<div class="ref">${ico('repo','sm')}<span>${esc(r.repo)}</span>
-      <span class="faint">${esc(r.branch)}${r.base?' from '+esc(r.base):''}</span>
-      <span class="mode">${r.exists?(changed(r)?plural(changed(r),'file')+' open':'clean'):'no worktree'}</span></div>`).join('')}</div>
-  </div>`;
+  const items=fnd.split('\n').filter(l=>/^\s*[-*]\s+/.test(l)).map(l=>l.replace(/^\s*[-*]\s+/,''));
+  const sess=[...sessions].sort((a,b)=>b.when.localeCompare(a.when));
+  const raw=S.sheetRaw&&S.sheetRaw.id===w.id?S.sheetRaw.html:null;
+  $('#sheetbody').innerHTML=`
+    <div class="ssec"><h5>${ico('target','sm')}Goal</h5>${realText(w.goal)?`<div class="sbox">${md(w.goal)}</div>`:'<div class="sbox dim">No goal written yet. It lives in the lane file’s ## Goal section.</div>'}</div>
+    <div class="ssec"><h5>${ico('note','sm')}Resume note</h5>${realText(w.note)?`<div class="sbox note">${md(w.note)}</div>`:'<div class="sbox dim">No resume note. Parking asks for one.</div>'}</div>
+    <div class="ssec"><h5>${ico('bulb','sm')}Findings <span class="q">· kept only while this work is live</span>${items.length?`<span class="pill">${items.length}</span>`:''}</h5>
+      ${items.length?items.map(x=>`<div class="fitem">${inline(x)}</div>`).join(''):fnd?`<div class="sbox">${md(fnd)}</div>`:'<div class="sbox dim">Nothing learned yet. Drafts filed to this lane land here.</div>'}</div>
+    ${(w.links||[]).length?`<div class="ssec"><h5>${ico('ext','sm')}Links <span class="q">· hand-written in the lane file</span></h5>
+      ${w.links.map(l=>`<div class="srow">${ico('ext','sm')}<span>${esc(l.label)}</span><a href="${esc(l.url)}" target="_blank" rel="noreferrer" class="sx">${esc(l.url)}</a></div>`).join('')}</div>`:''}
+    <div class="ssec"><h5>${ico('repo','sm')}Repos</h5>
+      ${w.repos.map(r=>`<div class="srow"><span class="repotag ${repoClass(r.repo)}">${esc(shortOf(r))}</span><span>${esc(r.repo)}</span>
+        <span class="branch">${ico('branch','sm')}${esc(r.branch||'')}</span><span class="sx">${r.base?'from '+esc(r.base)+' · ':''}${r.exists?(changed(r)?plural(changed(r),'file')+' open':'clean'):'no worktree'}</span></div>`).join('')}</div>
+    <div class="ssec"><h5>${ico('folder','sm')}References <button class="link" onclick="refAddDlg()">${ico('plus','sm')}Attach a reference</button></h5>
+      ${refs.length?refs.map(r=>{const nm=r.name||r.path.split('/').pop();return`<div class="refc"><div class="rh">${ico('folder','sm')}<span>${esc(nm)}</span><span class="mode">${esc(r.mode||'read-only')}</span></div>
+          <div class="rpath" title="${esc(r.path)}">${esc(r.path)}</div>${r.note?`<div class="rnote">${esc(r.note)}</div>`:''}
+          <div class="ra"><button class="txt" data-reveal="${esc(nm)}">${ico('eye','sm')} Reveal</button><button class="txt" data-detach="${esc(nm)}">${ico('unlink','sm')} Detach</button></div></div>`}).join('')
+        :`<div class="sbox dim">Nothing attached. A reference shows up as <span class="mono">lanes/${esc(w.id)}/refs/&lt;name&gt;</span>, read-only unless attached with --rw.</div>`}</div>
+    <div class="ssec"><h5>${ico('term','sm')}Sessions <span class="q">· past Claude conversations in ${esc(inWork?S.repo:w.repos.map(r=>r.repo).join(', '))}</span></h5>
+      ${sess.length?sess.map(s=>`<div class="sessc"><div class="top"><span>${esc(s.when)}</span><span class="tn">${s.turns} turns</span></div>
+          <div class="tx">${esc(s.first)}</div>
+          <button class="cmdline" data-resume="${esc(s.id)}" title="Copy: claude --resume ${esc(s.id)}"><span>claude --resume ${esc(s.id)}</span>${ico('copy','sm')}</button></div>`).join('')
+        :'<div class="sbox dim">None recorded for this repo.</div>'}</div>
+    <div class="ssec"><h5>${ico('file','sm')}The lane file <span class="q">· registry/lanes/${esc(w.id)}.md</span>
+      ${raw?'':`<button class="link" onclick="loadSheetRaw()">Show it</button>`}</h5>${raw?`<div class="sbox">${raw}</div>`:''}</div>`;
+  let foot='';
+  if(w.status!=='active')foot=`<span class="sp"></span><button class="pri" onclick="closeSheet();laneRun({action:'resume',id:'${esc(w.id)}'})">${ico('play','sm')}Resume lane</button>`;
+  else foot=`<button onclick="closeSheet();parkDlg()">${ico('park','sm')}Park lane</button><span class="sp"></span><button class="pri" onclick="closeSheet();finishDlg()">${ico('flag','sm')}Finish lane</button>`;
+  $('#sheetfoot').innerHTML=foot;
 }
 /* ---------- the left column is a source picker; the pane is one stage ----------
    Changes feeds it file diffs, History feeds it commit diffs. History answers the
@@ -719,12 +821,12 @@ const hscopeOf=()=>{const m=mem();return m?(m.hscope||'repo'):'repo'};
 const hrangeOf=()=>{const m=mem();if(!m)return'work';
   if(hscopeOf()==='lane')return'work';          // the lane view is this work, by definition
   return m.hrange||'work'};
-function setHRange(r){const m=mem();if(!m)return;m.hrange=r;
+function setHRange(r){const m=mem();if(!m)return;m.hrange=r;nav(false);
   if(hscopeOf()==='lane')loadWsLog();renderFeedBar();renderFiles();renderStage(true)}
-function setFeed(f){const m=mem();if(!m)return;m.feed=f;
+function setFeed(f){const m=mem();if(!m)return;m.feed=f;nav(true);
   if(f==='history'&&hscopeOf()==='lane')loadWsLog();
   renderFeedBar();renderFiles();renderStage(true)}
-function setHScope(sc){const m=mem();if(!m)return;m.hscope=sc;
+function setHScope(sc){const m=mem();if(!m)return;m.hscope=sc;nav(false);
   if(sc==='lane')loadWsLog();renderFeedBar();renderFiles();renderStage(true)}
 function renderFeedBar(){
   const feed=feedOf(),hs=hscopeOf(),d=S.data;
@@ -739,16 +841,16 @@ function renderFeedBar(){
 async function loadWsLog(){
   const whole=hrangeOf()==='all';const key=`${S.lane}|${whole?'all':'work'}`;
   if(S.wslogKey===key&&S.wslog)return;
-  try{const j=await api(`/api/lanelog?lane=${encodeURIComponent(S.lane)}${whole?'&all=1':''}`);
+  try{const j=await api(`${laneApi()}/log${whole?'?all=1':''}`);
     S.wslog=j.log;S.wslogKey=key;
     if(feedOf()==='history')renderFiles()}catch(e){toast('err',e.message)}}
 function crow(c,withRepo){
   const rm=rmem();const sel=rm&&rm.sha===c.sha;
   const refs=(c.refs||'').split(',').map(x=>x.trim().replace(/^HEAD -> /,'')).filter(x=>x&&x!=='HEAD').slice(0,1);
   return`<div class="crow ${sel?'sel':''}" data-sha="${esc(c.sha)}" data-repo="${esc(c.repo||'')}" tabindex="0" title="${esc(c.date||'')}">
-    <span class="sha">${esc(c.sha)}</span><span class="sub">${esc(c.subject)}</span>
-    <span class="meta">${withRepo&&c.short?`<span class="rp ${repoClass(c.repo)}">${esc(c.short)}</span>`:''}${esc(c.author.split(' ')[0])} · ${esc(c.when)}
-      ${refs.length?`<span class="ref">${esc(refs[0])}</span>`:''}</span></div>`;
+    <span class="sha">${esc(c.sha)}</span>${withRepo&&c.short?`<span class="rp ${repoClass(c.repo)}">${esc(c.short)}</span>`:'<span></span>'}
+    ${refs.length?`<span class="ref">${esc(refs[0])}</span>`:'<span></span>'}<span class="when">${esc(c.when)}</span>
+    <span class="sub">${esc(c.subject)}</span><span class="who">${esc(c.author)}</span></div>`;
 }
 function folderOf(f){const i=f.lastIndexOf('/');return i<0?'(root)':f.slice(0,i)}
 function renderFiles(){
@@ -774,16 +876,25 @@ function renderFiles(){
   }
   const list=d.files.filter(f=>f.file.toLowerCase().includes(flt));
   const focus=document.activeElement?.closest?.('.frow')?.dataset;
-  const groups=new Map();
-  for(const f of list){const k=folderOf(f.file);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(f)}
-  let html='';
-  for(const[dir,fs]of groups){
-    const all=fs.map(f=>f.file),anyUn=fs.some(f=>f.unstaged);
-    html+=`<div class="fold">${ico('folder','sm')}<span>${esc(dir)}</span><span class="c">${fs.length}</span>
-      ${anyUn?`<button class="txt" onclick="event.stopPropagation();stage(${esc(JSON.stringify(all))},true)">stage</button>`:''}</div>`;
-    html+=fs.map(f=>frow(f,!!f.staged)).join('');
-  }
-  el.innerHTML=html||'<div class="empty">Working tree clean.</div>';
+  // a partly staged file shows in both sections: its staged half and its open half
+  const st=list.filter(f=>f.staged),un=list.filter(f=>f.unstaged);
+  const section=(title,fs,staged)=>{
+    if(!fs.length)return'';
+    const all=JSON.stringify(fs.map(f=>f.file));
+    let h=`<div class="fsec">${title}<span class="n">(${fs.length})</span><button class="txt" onclick="event.stopPropagation();stage(${esc(all)},${!staged})">${staged?'Unstage all':'Stage all'}</button></div>`;
+    const groups=new Map();
+    for(const f of fs){const k=folderOf(f.file);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(f)}
+    const many=groups.size>1||!groups.has('(root)');
+    for(const[dir,g]of groups){
+      if(many)h+=`<div class="fold">${ico('folder','sm')}<span>${esc(dir)}</span><span class="c">${g.length}</span>
+        ${!staged&&g.length>1?`<button class="txt" onclick="event.stopPropagation();stage(${esc(JSON.stringify(g.map(f=>f.file)))},true)">stage folder</button>`:''}</div>`;
+      h+=g.map(f=>frow(f,staged)).join('');
+    }
+    return h;
+  };
+  const html=section('Staged changes',st,true)+section('Unstaged changes',un,false);
+  el.innerHTML=html?html+`<div class="legend"><span><b class="warn">M</b> modified</span><span><b class="ok">A</b> added</span><span><b class="bad">D</b> deleted</span><span><b class="faint">?</b> untracked</span></div>`
+    :(S.filter?'<div class="empty">No files match that filter.</div>':`<div class="empty big">${ico('check')}Working tree clean.</div>`);
   const tot=d.files.length;
   $('#fcount').textContent=S.filter?`${list.length} of ${tot}`:(tot?plural(tot,'file'):'');
   document.querySelectorAll('.frow input[data-ind]').forEach(i=>i.indeterminate=true);
@@ -806,18 +917,22 @@ function renderStage(force){
   if(feedOf()==='history'){
     if(rm&&rm.sha){showCommit(rm.sha);return}
     head.innerHTML=`${ico('commit','sm')}<span class="dim">Pick a commit to read it</span>`;
-    $('#pbody').innerHTML='<div class="center">Commits on '+esc(hscopeOf()==='lane'?'every repo of this lane':d.state.branch)+'.<br><br>Click one to see exactly what it changed.</div>';
+    $('#pbody').innerHTML=`<div class="center">${ico('commit','big')}Commits on <b>${esc(hscopeOf()==='lane'?'every repo of this lane':d.state.branch)}</b>.<br>Click one to see exactly what it changed.</div>`;
     return;
   }
   if(!rm||!rm.file){
     head.innerHTML=`${ico('diff','sm')}<span class="dim">${d.files.length?'Pick a file to read its diff':'Working tree clean'}</span>`;
-    $('#pbody').innerHTML=`<div class="center">${d.files.length?'Select a file on the left.':`<b>Working tree clean.</b><br><br>Last commit ${esc(d.log[0]?.when||'')}: \u201c${esc(d.log[0]?.subject||'')}\u201d`}</div>`;
+    $('#pbody').innerHTML=`<div class="center">${d.files.length?`${ico('diff','big')}Select a file on the left to read its diff.`:`${ico('check','big')}<b>Working tree clean.</b><br>Last commit ${esc(d.log[0]?.when||'')}: “${esc(d.log[0]?.subject||'')}”`}</div>`;
     return;
   }
-  const f=d.files.find(x=>x.file===rm.file);
-  head.innerHTML=`${ico('diff','sm')}<b title="${esc(rm.file)}">${esc(rm.file)}</b>
-    <span class="faint">${rm.staged?'staged':f&&f.untracked?'untracked':'unstaged'}</span><span class="sp"></span>
-    ${f&&f.add!=null?`<span class="ok">+${rm.staged?f.add_staged:f.add}</span> <span class="bad">\u2212${rm.staged?f.del_staged:f.del}</span>`:''}`;
+  const f=d.files.find(x=>x.file===rm.file&&(rm.staged?x.staged:x.unstaged))||d.files.find(x=>x.file===rm.file);
+  const a=f?(rm.staged?f.add_staged:f.add):null,dl=f?(rm.staged?f.del_staged:f.del):null;
+  const fl=JSON.stringify([rm.file]);
+  head.innerHTML=`${ico('file','sm')}<b title="${esc(rm.file)}">${esc(rm.file)}</b>
+    <span class="tagq">${rm.staged?'staged':f&&f.untracked?'untracked':'unstaged'}</span>
+    ${a!=null?`<span class="counts"><span class="ok">+${a}</span> <span class="bad">−${dl}</span></span>`:''}<span class="sp"></span>
+    ${f?`<button class="sm" onclick="stage(${esc(fl)},${!rm.staged})">${rm.staged?'Unstage':'Stage'}</button>
+    ${rm.staged?'':`<button class="sm ghost" onclick="discardDlg(${esc(fl)})" title="Throw away these changes">${ico('trash','sm')}Discard</button>`}`:''}`;
   renderDiff();
 }
 function updateCommitBtn(){
@@ -825,9 +940,9 @@ function updateCommitBtn(){
   const first=msg.split('\n')[0];const mc=$('#mcount');mc.textContent=first.length;mc.className=first.length>72?'warn':'';
   const b=$('#commitBtn');if(!b)return;
   const busy=S.busy?.id==='commit';
-  b.textContent=busy?'Committing…':`Commit ${plural(n,'file')}`;
+  b.innerHTML=busy?'Committing…':`${ico('check','sm')}Commit ${n?plural(n,'file'):''}`.trim();
   b.disabled=busy||!n||!msg.trim();
-  b.title=!n?'Tick a file first':!msg.trim()?'Write a message first':'';
+  b.title=!n?'Tick a file first':!msg.trim()?'Write a message first':'⌘⏎';
 }
 
 /* ---------- selection ---------- */
@@ -835,14 +950,67 @@ async function openWs(id,repo){
   S.lane=id;const w=cur();if(!w)return goHome();
   const m=mem();
   S.repo=repo&&w.repos.find(r=>r.repo===repo)?repo:
-    (m.repo&&w.repos.find(r=>r.repo===m.repo)?m.repo:
+    ((m.repo||LSg('lane-repo:'+id,''))&&w.repos.find(r=>r.repo===(m.repo||LSg('lane-repo:'+id,'')))?(m.repo||LSg('lane-repo:'+id,'')):
      (w.repos.filter(r=>r.exists).sort((a,b)=>(changed(b)?1:0)-(changed(a)?1:0)||(b.ahead||0)-(a.ahead||0))[0]||w.repos[0])?.repo||null);
   m.repo=S.repo;rememberPlace();
-  location.hash=`lane=${encodeURIComponent(id)}${S.repo?`&repo=${encodeURIComponent(S.repo)}`:''}`;
   setView('work');await loadRepo(false);
 }
-async function pickRepo(repo){S.repo=repo;mem().repo=repo;rememberPlace();
-  location.hash=`lane=${encodeURIComponent(S.lane)}&repo=${encodeURIComponent(repo)}`;renderRepos();await loadRepo(false)}
+async function pickRepo(repo){S.repo=repo;mem().repo=repo;rememberPlace();nav(true);renderRepos();await loadRepo(false)}
+
+/* ---------- URLs: the path names the place, the query only how it is shown ----------
+   /  /memory[/<scope>][?file=]  /lanes/<lane>[/<repo>][?file=&staged=1]
+   /lanes/<lane>/<repo>/history[?repos=all&range=all]  /lanes/<lane>/<repo>/commits/<sha>
+   Another workspace: the same under /w/<name>. ?theme= rides along on any page.
+   Moving somewhere pushes a history entry; changing how it is shown (file, staged, history
+   scope) replaces it, so Back does not step through every click. */
+const planePrefix=()=>S.plane&&S.plane!=='home'?`/w/${E(S.plane)}`:'';
+const href=p=>(planePrefix()+(p==='/'&&planePrefix()?'':p))||'/';
+function currentUrl(){
+  let p='/';const q=new URLSearchParams();
+  if(S.view==='memory'){p='/memory'+(S.mscope?`/${E(S.mscope)}`:'');if(S.mfile)q.set('file',S.mfile)}
+  else if(S.view==='work'&&S.lane){
+    p=`/lanes/${E(S.lane)}`;
+    if(S.repo){p+=`/${E(S.repo)}`;const m=mem(),rm=rmem();
+      if(feedOf()==='history'){p+=rm?.sha?`/commits/${E(rm.sha)}`:'/history';
+        if(hscopeOf()==='lane')q.set('repos','all');if(m?.hrange==='all')q.set('range','all')}
+      else if(rm?.file){q.set('file',rm.file);if(rm.staged)q.set('staged','1')}}}
+  const th=new URLSearchParams(location.search).get('theme');if(th)q.set('theme',th);
+  const qs=q.toString();return href(p)+(qs?'?'+qs:'');
+}
+function nav(push){
+  if(S.routing)return;
+  const u=currentUrl();if(u===location.pathname+location.search)return;
+  try{history[push?'pushState':'replaceState'](null,'',u)}catch{}
+}
+/* read the URL and put the board there: first load, Back/Forward, and internal links */
+async function applyRoute(){
+  S.routing=true;
+  try{
+    let segs=location.pathname.split('/').filter(Boolean).map(s=>{try{return decodeURIComponent(s)}catch{return''}});
+    const q=new URLSearchParams(location.search);
+    let plane=null;if(segs[0]==='w'&&segs[1]){plane=segs[1];segs=segs.slice(2)}
+    const curPlane=S.plane&&S.plane!=='home'?S.plane:null;
+    if(plane!==curPlane||!S.board){S.plane=plane;S.board=null;S.boardSig=null;S.lane=null;S.repo=null;S.data=null;
+      updateTitle();const sel=$('#planeSel');if(sel&&S.planes)sel.value=plane||(S.planes.planes||[]).find(p=>p.home)?.name||'';
+      await loadBoard()}
+    if(segs[0]==='memory'){S.mscope=segs[1]||null;S.mfile=q.get('file')||null;setView('memory');return}
+    if(segs[0]==='lanes'&&segs[1]){
+      const w=S.board?.lanes.find(x=>x.id===segs[1]);
+      if(!w){setView('home');toast('err',`No lane ${segs[1]} in this workspace.`);return}
+      await openWs(w.id,segs[2]||null);
+      const m=mem(),rm=rmem();if(!m||!rm)return;
+      if(segs[3]==='history'||segs[3]==='commits'){
+        m.feed='history';m.hscope=q.get('repos')==='all'?'lane':'repo';m.hrange=q.get('range')==='all'?'all':'work';
+        rm.sha=segs[3]==='commits'?(segs[4]||null):null;rm.file=null;
+        if(m.hscope==='lane')loadWsLog();renderFeedBar();renderFiles();renderStage(true)}
+      else{m.feed='changes';rm.sha=null;const f=q.get('file');
+        if(f&&S.data){await pickFile(f,q.get('staged')==='1')}else{rm.file=null;renderFeedBar();renderFiles();renderStage(true)}}
+      return}
+    setView('home');
+  }finally{S.routing=false;nav(false)}
+}
+async function go(url){try{history.pushState(null,'',url)}catch{}closePal();await applyRoute()}
+window.addEventListener('popstate',()=>applyRoute());
 
 /* ---------- board polling ---------- */
 /* Signatures: what the screen draws, with the per-poll timestamps left out. */
@@ -862,40 +1030,64 @@ async function loadBoard(){
     if(S.startedAt&&b.serverStartedAt!==S.startedAt){toast('err','Server restarted — reload the page');return}
     S.startedAt=b.serverStartedAt;S.fails=0;
     const sig=boardSig(b);const changedNow=sig!==S.boardSig;S.boardSig=sig;S.board=b;
-    $('#clock').textContent=b.generated;$('#clock').classList.remove('warn');
-    if(changedNow){renderCrumb();
+    $('#clock').textContent='Updated '+b.generated;$('#clock').parentElement.classList.remove('warn');
+    if(S.view==='home')loadHomeExtras();
+    if(changedNow){renderCrumb();if(!$('#sheetwrap').classList.contains('hidden'))renderSheet();
       if(S.view==='home')renderHome();
       else if(S.view==='work'){if(S.lane&&S.repo&&cur()?.repos.find(r=>r.repo===S.repo)?.exists)await loadRepo(true);else renderRepo()}}
-  }catch(e){if(e.message==='restarted')return;S.fails++;const c=$('#clock');c.classList.add('warn');
+  }catch(e){if(e.message==='restarted')return;S.fails++;const c=$('#clock');c.parentElement.classList.add('warn');
     c.textContent=S.fails>=3?'offline — server stopped?':'stale · retrying'}}
 async function refreshRepo(){S.board=await api('/api/board');renderCrumb();await loadRepo(true)}
 async function refreshWs(){S.board=await api('/api/board');renderCrumb();renderRepos();await loadRepo(true)}
 
 /* ---------- memory screen ---------- */
-async function loadMemory(){try{S.mem=await api('/api/memory');renderMemory()}catch(e){$('#mbody').innerHTML=`<div class="center">${esc(e.message)}</div>`}}
+async function loadMemory(){try{S.mem=await api('/api/memory');renderMemory();renderRail();if(S.view==='home')renderHome()}catch(e){$('#mbody').innerHTML=`<div class="center">${esc(e.message)}</div>`}}
 function mscope(){return S.mem?.scopes.find(s=>s.id===S.mscope)||S.mem?.scopes[0]}
+const scopeLabel=sc=>(sc.label||sc.id).replace(/^repo:/,'');
 function renderMemory(){
   const m=S.mem;if(!m)return;
   const s=mscope();if(s)S.mscope=s.id;
-  $('#mscopes').innerHTML=m.scopes.map(sc=>{
-    const repoish=!['cross','pref','drafts'].includes(sc.id);
-    return`<div class="scope ${sc.id===S.mscope?'sel':''}" data-scope="${esc(sc.id)}">${ico(repoish?'repo':'dot')}${esc((sc.label||sc.id).replace(/^repo:/,''))}<span class="c">${sc.files.length}</span></div>`}).join('');
+  const row=sc=>{const repoish=!['cross','pref','drafts'].includes(sc.id);const n=sc.files.length;
+    const icon=sc.id==='drafts'?'inbox':sc.id==='pref'?'key':sc.id==='cross'?'book':'repo';
+    return`<div class="scope ${sc.id===S.mscope?'sel':''}" data-scope="${esc(sc.id)}" tabindex="0">${ico(icon)}<span>${esc(scopeLabel(sc))}</span>
+      <span class="c ${sc.id==='drafts'&&n?'hot':''}">${sc.id==='drafts'&&n?n+' waiting':n}</span>${!repoish&&sc.hint?`<span class="h">${esc(sc.hint)}</span>`:''}</div>`};
+  const by=id=>m.scopes.filter(sc=>sc.id===id);
+  const repos=m.scopes.filter(sc=>!['cross','pref','drafts'].includes(sc.id));
+  $('#mscopes').innerHTML=`<div class="grp">Inbox</div>${by('drafts').map(row).join('')}
+    <div class="grp">Everywhere</div>${[...by('pref'),...by('cross')].map(row).join('')}
+    <div class="grp">Repository scopes</div><div class="gsub">True for that repo after tickets ship</div>
+    ${repos.map(row).join('')||'<div class="empty">No repo memory yet.</div>'}`;
   const files=s?.files||[];
   if(!files.find(f=>f.file===S.mfile))S.mfile=files[0]?.file||null;
-  $('#mfiles').innerHTML=files.map(f=>`<div class="mrow ${f.file===S.mfile?'sel':''}" data-mfile="${esc(f.file)}">
-    <div class="t">${esc(f.name||f.file.replace(/\.md$/,''))}</div><div class="d">${esc(f.description||'')}</div></div>`).join('')
-    ||'<div class="empty">Nothing in this scope yet.</div>';
+  const drafts=s?.id==='drafts';
+  $('#mfiles').innerHTML=`<div class="mhead"><b>${esc(s?scopeLabel(s):'')}<span class="n">${files.length}</span></b><span>${esc(drafts?'Waiting for you to pick a scope':s?.hint||'')}</span></div>
+    <div class="mlist">${files.map(f=>`<div class="mrow ${f.file===S.mfile?'sel':''}" data-mfile="${esc(f.file)}" tabindex="0">
+      <div class="t">${drafts?'<span class="dotc"></span>':''}${esc(f.name||f.file.replace(/\.md$/,''))}</div>
+      ${f.description?`<div class="d">${esc(f.description)}</div>`:''}
+      <div class="m">${f.type?`<span class="ty">${esc(f.type)}</span>`:''}<span>${esc(daysAgo(f.modified)||f.modified||'')}</span><span class="sp"></span><span>${esc(f.file)}</span></div></div>`).join('')
+    ||`<div class="empty big">${drafts?`${ico('check')}No drafts waiting. Claude drafts a memory when it learns something; you pick where it goes.`:'Nothing in this scope yet.'}</div>`}</div>`;
   renderMemBody();
   renderCrumb();
+  if(S.view==='memory')nav(false);
 }
 async function renderMemBody(){
   const s=mscope();const f=s?.files.find(x=>x.file===S.mfile);const b=$('#mbody');
-  if(!f){b.innerHTML='<div class="center">Pick a memory on the left.</div>';return}
+  if(!f){b.innerHTML=`<div class="center">${ico('book','big')}Pick a memory on the left.</div>`;return}
+  const key=S.mscope+'/'+S.mfile;b.dataset.key=key;
   b.innerHTML='<div class="center">Reading…</div>';
-  try{const j=await api(`/api/memfile?scope=${encodeURIComponent(S.mscope)}&file=${encodeURIComponent(S.mfile)}`);
-    b.innerHTML=`<div class="src">${esc(j.path)}<span class="scope">${esc(S.mscope)}</span></div>`+md(j.content||'_Empty._')
-      +`<div class="md" style="padding-top:0"><button class="txt" onclick="memMoveDlg('${esc(S.mfile)}')">Move scope</button>
-        &nbsp;&nbsp;<button class="txt" onclick="memRmDlg('${esc(S.mfile)}')">Delete</button></div>`;
+  try{const j=await api(`/api/memory/${E(S.mscope)}/${E(S.mfile)}`);
+    if(b.dataset.key!==key)return;   // a newer pick won
+    const drafts=S.mscope==='drafts',pref=S.mscope==='pref';
+    const fq=esc(JSON.stringify(S.mfile));
+    const acts=drafts?`<button class="pri" onclick='memFileDlg(${fq})'>${ico('inbox','sm')}File it</button><button onclick='memDropDlg(${fq})'>${ico('trash','sm')}Discard</button>`
+      :pref?'':`<button onclick='memMoveDlg(${fq})'>${ico('move','sm')}Move scope</button><button class="ghost" onclick='memRmDlg(${fq})'>${ico('trash','sm')}Delete</button>`;
+    const body=String(j.content||'').replace(/^---\n[\s\S]*?\n---\n?/,'');
+    b.innerHTML=`<div class="mview"><div class="mvh"><span class="eyebrow">Memory / ${esc(scopeLabel(s))}</span><h2>${esc(f.name||f.file)}</h2>
+      <div class="meta">${f.type?`<span class="tk">type: ${esc(f.type)}</span>`:''}<span>modified ${esc(f.modified||'')}</span><span>·</span><span>${esc(j.path)}</span></div>
+      ${f.description?`<div class="muted">${esc(f.description)}</div>`:''}
+      ${acts?`<div class="acts">${acts}</div>`:''}</div>
+      ${md(body||'_Empty._')}
+      ${drafts?`<div class="mcta">${ico('info')}<span><b>Where does it belong?</b> Filing it to a repo or cross-repo scope makes it standing memory for every future session there.</span><button class="pri sm" onclick='memFileDlg(${fq})'>File it ${ico('arrow','sm')}</button></div>`:''}</div>`;
   }catch(e){b.innerHTML=`<div class="center">${esc(e.message)}</div>`}
 }
 
@@ -938,14 +1130,16 @@ function renderPal(){
     let state='';
     if(r.kind==='repo'&&r.r){const ch=changed(r.r);
       if(ch)state=`<span class="warn stat">${ico('diff','sm')}${ch}</span>`;
-      else if(r.r.ahead)state=`<span class="acc stat">${ico('push','sm')}${r.r.ahead}</span>`;}
+      else if(r.r.ahead)state=`<span class="topush stat">${ico('push','sm')}${r.r.ahead}</span>`;}
     if(r.kind==='lane'&&r.w){const ch=laneChanged(r.w);if(ch)state=`<span class="warn stat">${ico('diff','sm')}${ch}</span>`}
-    html+=`<div class="prow ${i===S.pal.i?'on':''}" data-i="${i}">${ico(icon)}
-      <span class="nm">${markMatch(r.name,q)}</span><span class="sub">${esc(r.sub||'')}</span>
-      <span class="c">${state}${i===S.pal.i?'<span class="acc">open ⏎</span>':''}</span></div>`;
+    const pill=r.kind==='lane'&&r.w?`<span class="tk state ${esc(r.w.status)}">${esc(r.w.status)}</span>`:'';
+    const to=r.kind==='home'?'/':r.kind==='mem'?'/memory':r.kind==='repo'?`/lanes/${E(r.lane)}/${E(r.repo)}`:`/lanes/${E(r.lane)}`;
+    html+=`<a class="prow ${i===S.pal.i?'on':''}" data-i="${i}" href="${esc(href(to))}">${ico(icon)}
+      <span class="nm">${markMatch(r.name,q)}</span>${pill}<span class="sub">${esc(r.sub||'')}</span>
+      <span class="c">${state}${i===S.pal.i?'<kbd>&crarr;</kbd>':''}</span></a>`;
   });
-  $('#pallist').innerHTML=html||'<div class="empty">Nothing matches.</div>';
-  $('#palcount').textContent=rows.length?`${rows.length} match${rows.length===1?'':'es'}`:'';
+  $('#pallist').innerHTML=html||`<div class="empty big">Nothing matches “${esc(q)}”.</div>`;
+  $('#palcount').textContent=rows.length?`${rows.length} found`:'';
   $('#pallist').querySelector('.prow.on')?.scrollIntoView({block:'nearest'});
 }
 function openPal(){S.pal={open:true,q:'',rows:palRows(''),i:0};$('#palwrap').classList.remove('hidden');
@@ -961,33 +1155,48 @@ function palGo(){
 
 /* ---------- wiring ---------- */
 document.addEventListener('click',e=>{
+  const a=e.target.closest('a[href^="/"]');
+  if(a&&!a.target&&e.button===0&&!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey&&!e.target.closest('button')){
+    e.preventDefault();go(a.getAttribute('href'));return}
+  const nx=e.target.closest('[data-next]');if(nx){e.stopPropagation();runNext(nx.dataset.next);return}
+  const orp=e.target.closest('[data-open-repo]');if(orp){openWs(orp.dataset.openRepo,orp.dataset.repo);return}
+  const rl=e.target.closest('[data-rail]');if(rl){const k=rl.dataset.rail;
+    if(k==='memory'){setView(S.view==='memory'&&S.lane?'work':'memory');return}
+    if(S.view!=='home')goHome();
+    if(k==='parked'){if(!parkedOpen()){LSs('lane-parked-collapsed','0');renderHome()}const h=$('#parkedHead');if(h)h.scrollIntoView({behavior:'smooth',block:'start'});else toast('ok','No parked lanes.')}
+    else $('#home .hmain')?.scrollTo({top:0,behavior:'smooth'});return}
+  const mfi=e.target.closest('[data-mfileit]');if(mfi){e.stopPropagation();memFileDlg(mfi.dataset.mfileit);return}
+  const mdr=e.target.closest('[data-mdrop]');if(mdr){e.stopPropagation();memDropDlg(mdr.dataset.mdrop);return}
+  const mop=e.target.closest('[data-mopen]');if(mop){S.mscope='drafts';S.mfile=mop.dataset.mopen;setView('memory');return}
+  const rv=e.target.closest('[data-reveal]');if(rv){refReveal(rv.dataset.reveal);return}
+  const dt=e.target.closest('[data-detach]');if(dt){refRm(dt.dataset.detach);return}
+  if(e.target.closest('[data-home]')){goHome();return}
+  if(e.target.closest('#goalstrip')){openSheet();return}
   const ab=e.target.closest('[data-about]');if(ab){e.stopPropagation();S.lane=ab.dataset.about;openSheet(ab.dataset.about);return}
   const open=e.target.closest('[data-open]');if(open){openWs(open.dataset.open);return}
   const r=e.target.closest('#repos .r');if(r){pickRepo(r.dataset.repo);return}
   const fd=e.target.closest('#feeds .feed');if(fd){setFeed(fd.dataset.feed);return}
   const sc2=e.target.closest('#scopebar .sc');if(sc2){setHScope(sc2.dataset.scope);return}
   const cr=e.target.closest('.crow');if(cr){const rm=rmem();if(rm){rm.sha=cr.dataset.sha;rm.file=null}
-    if(cr.dataset.repo&&cr.dataset.repo!==S.repo){pickRepo(cr.dataset.repo).then(()=>{const r2=rmem();if(r2)r2.sha=cr.dataset.sha;renderFiles();renderStage(true)})}
-    else{renderFiles();renderStage(true)}return}
+    if(cr.dataset.repo&&cr.dataset.repo!==S.repo){pickRepo(cr.dataset.repo).then(()=>{const r2=rmem();if(r2)r2.sha=cr.dataset.sha;nav(true);renderFiles();renderStage(true)})}
+    else{nav(true);renderFiles();renderStage(true)}return}
   const sn=e.target.closest('#crumb b.link');if(sn){openSheet();return}
-  const stb=e.target.closest('#stabs .st');if(stb){setSTab(stb.dataset.stab);return}
   const rs=e.target.closest('[data-resume]');if(rs){const cmd='claude --resume '+rs.dataset.resume;
-    navigator.clipboard?.writeText(cmd);toast('ok','Copied: '+cmd.slice(0,34)+'\u2026');return}
+    navigator.clipboard?.writeText(cmd);toast('ok','Copied: '+cmd);return}
   if(e.target.id==='sheetwrap'){closeSheet();return}
   const f=e.target.closest('.frow');if(f){
     if(e.target.type==='checkbox'){stage([f.dataset.file],e.target.checked);return}
     pickFile(f.dataset.file,f.dataset.staged==='1');return}
-  const sc=e.target.closest('#mscopes .scope');if(sc){S.mscope=sc.dataset.scope;S.mfile=null;renderMemory();return}
-  const mf=e.target.closest('[data-mfile]');if(mf){S.mfile=mf.dataset.mfile;renderMemory();return}
-  const pr=e.target.closest('#pal .prow');if(pr){S.pal.i=+pr.dataset.i;palGo();return}
+  const sc=e.target.closest('#mscopes .scope');if(sc){S.mscope=sc.dataset.scope;S.mfile=null;nav(true);renderMemory();return}
+  const mf=e.target.closest('[data-mfile]');if(mf){S.mfile=mf.dataset.mfile;nav(false);renderMemory();return}
   if(e.target.id==='palwrap'){closePal();return}
   const h=e.target.closest('.hrow');if(h){showCommit(h.dataset.sha);return}
 });
-$('#homeBtn').onclick=goHome;
 $('#planeSel').onchange=e=>switchPlane(e.target.value);
 $('#sheetClose').onclick=closeSheet;
 $('#aboutBtn').onclick=()=>{if(cur())openSheet()};
-$('#memBtn').onclick=()=>setView(S.view==='memory'?(S.lane?'work':'home'):'memory');
+$('#newBtn').onclick=()=>startDlg();
+$('#helpBtn').onclick=()=>helpDlg();
 $('#switchBtn').onclick=openPal;
 $('#theme').onclick=()=>{const cur=(()=>{try{return localStorage.getItem('lane-theme')||'system'}catch{return'system'}})();
   applyTheme(THEMES[(THEMES.indexOf(cur)+1)%3])};
@@ -1014,6 +1223,7 @@ document.addEventListener('keydown',e=>{
     const t=$('#toasts').lastChild;if(t){t.remove();return}
     if(S.view!=='home')goHome();return}
   if(inField||S.dialog)return;
+  if(e.key==='Enter'&&e.target.matches?.('[data-open]')){e.preventDefault();openWs(e.target.dataset.open);return}
   if(e.key==='i'){if(cur())toggleSheet();return}
   if(e.key==='?')return helpDlg();
   if(e.key==='r')return S.view==='memory'?loadMemory():loadBoard();
@@ -1039,33 +1249,29 @@ document.addEventListener('keydown',e=>{
     nx.focus();nx.scrollIntoView({block:'nearest'})}
 });
 
-function helpDlg(){openDlg(`<h3>Keys</h3><div class="hint">Navigation is the palette; everything else is one letter.</div>
-<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 18px;font-size:12px">
-<kbd>⌘K</kbd><span>jump to a lane or repo</span>
-<kbd>esc</kbd><span>back out to Home</span>
-<kbd>g</kbd><span>Home</span><kbd>m</kbd><span>Memory</span>
-<kbd>1</kbd>–<kbd>9</kbd><span>repo</span><kbd>[</kbd> <kbd>]</kbd><span>previous / next repo</span>
-<kbd>j</kbd> <kbd>k</kbd><span>move in the file list</span><kbd>space</kbd><span>stage / unstage</span>
-<kbd>a</kbd><span>stage everything</span><kbd>/</kbd><span>filter files</span>
-<kbd>c</kbd><span>commit message</span><kbd>⌘⏎</kbd><span>commit</span><kbd>⌘P</kbd><span>the primary action</span>
-<kbd>d h n e s v</kbd><span>Diff · History · Notes · rEfs · Spec · Sessions</span>
-<kbd>r</kbd><span>refresh</span><kbd>?</kbd><span>this list</span></div>`,()=>{});
-  $('#dok').textContent='Close'}
+function helpDlg(){const k=(...a)=>`<span class="k">${a.map(x=>`<kbd>${x}</kbd>`).join('')}</span>`;
+  openDlg(dlgHead('Keyboard shortcuts','Navigation is the palette; everything else is one letter.','key')+`<div class="keys2">
+${k('⌘','K')}<span>jump to a lane or repo</span>${k('esc')}<span>back out to Home</span>
+${k('g')}<span>Home</span>${k('m')}<span>Memory</span>
+${k('i')}<span>about this lane</span>${k('r')}<span>refresh</span>
+${k('1','–','9')}<span>pick a repo</span>${k('[',']')}<span>previous / next repo</span>
+${k('j','k')}<span>move in the file list</span>${k('space')}<span>stage / unstage the file</span>
+${k('a')}<span>stage everything</span>${k('/')}<span>filter files</span>
+${k('d')}<span>Changes</span>${k('h')}<span>History</span>
+${k('c')}<span>commit message</span>${k('⌘','⏎')}<span>commit</span>
+${k('⌘','P')}<span>the primary action</span>${k('?')}<span>this list</span></div>`,()=>{});
+  $('#dok').textContent='Close';$('#dcancel').classList.add('hidden')}
 
-/* ---------- boot: always on Home ---------- */
+/* ---------- boot: the URL says where; a bare / is Home ---------- */
 (async function boot(){
   applyTheme((()=>{try{return localStorage.getItem('lane-theme')||'system'}catch{return'system'}})());
   $('#home').classList.remove('hidden');
   updateTitle();
-  await loadPlanes();
-  await loadBoard();
+  // links from before the board had real URLs: /#lane=X&repo=Y
   const h=new URLSearchParams(location.hash.replace(/^#/,''));
-  const wantWs=h.get('lane')||LSg('lane-last','');
-  const wantRepo=h.get('repo')||LSg('lane-lastrepo','');
-  const wantView=location.hash?'work':LSg('lane-view','home');
-  const known=wantWs&&S.board?.lanes.some(w=>w.id===wantWs);
-  if(wantView==='work'&&known)await openWs(wantWs,wantRepo||null);
-  else if(wantView==='memory')setView('memory');
-  else{setView('home');renderHome()}
+  if(h.get('lane')){try{history.replaceState(null,'',`/lanes/${E(h.get('lane'))}${h.get('repo')?'/'+E(h.get('repo')):''}${location.search}`)}catch{}}
+  await loadPlanes();
+  await applyRoute();
+  loadHomeExtras(true);
   setInterval(loadBoard,4000);
 })();

@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """lane-board: local web UI for lanes. Binds 127.0.0.1 only. Plain stdlib.
 
-GET  /                      page (token injected)
-GET  /api/board             lanes + per-repo state
-GET  /api/repo              ?lane=&repo=   files, log, branch, pr, sessions
-GET  /api/diff              ?lane=&repo=&file=&staged=0|1
-GET  /api/show              ?lane=&repo=&sha=   one commit
-GET  /api/spec              ?lane=         lane markdown
-GET  /api/brief             ?lane=         lane-brief output
-POST /api/stage             {lane,repo,files:[..],stage:bool}
-POST /api/discard           {lane,repo,files:[..]}   throws away uncommitted changes
-POST /api/amend             {lane,repo,message}      rewrites the last commit, refused once pushed
-POST /api/commit            {lane,repo,message}
-POST /api/push | /api/pull  {lane,repo}
-POST /api/lane                {action:start|resume|park|done, id, repos?, note?}
+GET  /  /memory[/<scope>]  /lanes/<lane>[/<repo>[/history|/commits/<sha>]]   the page (token injected);
+     the same under /w/<workspace>/... for another registered workspace. Any other shape is a 404.
+GET  /api/board | /api/planes | /api/sessions | /api/memory | /api/memory/<scope>/<file>
+GET  /api/lanes/<lane>/spec | /log[?all=1] | /brief
+GET  /api/lanes/<lane>/repos/<repo>            files, log, branch, pr, sessions
+GET  /api/lanes/<lane>/repos/<repo>/diff       ?file=&staged=0|1&all=1
+GET  /api/lanes/<lane>/repos/<repo>/commits/<sha>[?all=1]
+POST /api/lanes/<lane>/{start|resume|park|done}              {repos?|note?}
+POST /api/lanes/<lane>/refs/attach {path,note,rw} · /refs/<name>/{detach|reveal}
+POST /api/lanes/<lane>/repos/<repo>/{stage|unstage|discard} {files}   {commit|amend} {message}   {push|pull|pr}
+POST /api/memory/drafts/<file>/{file|discard} {to?,lane?} · /api/memory/<scope>/<file>/{move|delete} {to?}
+Another registered workspace: the same paths under /api/w/<name>/...; the default workspace has no prefix.
 Every /api call needs header X-Token (embedded in the page served at /; never printed).
 Every request, including GET / and the static files, must carry a Host (and Origin, if sent) of
 127.0.0.1 or localhost on this server's own port, so a DNS-rebound page cannot read the token.
@@ -82,15 +81,21 @@ SAFE_SUFFIX = re.compile(r"\.(example|sample|template|dist)$", re.I | re.M)
 # re.M so a name with an embedded newline ("é\n.env") is still matched line by line; the pattern TEXT
 # above is the guard's and gitstate.sh's, byte for byte (tests/t_secretnames.sh), only the flags differ.
 SLUG = re.compile(r"[A-Za-z0-9._-]+")
+SCOPE = re.compile(r"cross|pref|drafts|repo:[A-Za-z0-9._-]+")     # memory scopes, as the page names them
+SHA = re.compile(r"[0-9a-fA-F]{4,40}")
+BAD_SEG = re.compile(r"[/\\\x00-\x1f\x7f]")                       # no slash, backslash or control char in a path segment
+class BadPath(ValueError): pass
 
 def lane_ok(s):
     """A lane id is a file name under registry/lanes and a folder under lanes/: never a path."""
-    return isinstance(s, str) and re.fullmatch(r"[A-Za-z0-9._-]+", s, re.A) is not None and s not in (".", "..")
+    return isinstance(s, str) and re.fullmatch(r"[A-Za-z0-9._-]+", s, re.A) is not None and s not in (".", "..") and not s.startswith("-")
 PR_CACHE = {}
 DEFAULTS = {}
 STARTED = time.strftime("%Y-%m-%dT%H:%M:%S")
 DIFF_LIMIT = 2000
 STATIC = {"/board.css": "text/css", "/board.js": "text/javascript"}
+# the board's own typefaces (same files as repolane.dev, SIL OFL; see fonts/OFL.txt): served from here, never fetched
+FONTS = {f"/fonts/{n}": n for n in ("inter-var.woff2", "jetbrains-mono-var.woff2", "instrument-serif.woff2", "instrument-serif-italic.woff2")}
 
 def sh(args, cwd=None, timeout=60, inp=None, env=None):
     try:
@@ -762,7 +767,7 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else (json.dumps(body) if ctype.startswith("application/json") else body).encode()
-        self.send_response(code); self.send_header("Content-Type", ctype + "; charset=utf-8")
+        self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith("font/") else ctype + "; charset=utf-8")
         self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(data)
     def auth(self):
         if self.headers.get("X-Token") != TOKEN: self.send(403, {"error": "bad token"}); return False
@@ -776,39 +781,93 @@ class H(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if host in ok and (origin is None or origin.lower() in {f"http://{h}" for h in ok}): return True
         self.send(403, {"error": "host not allowed"}); return False
-    def q(self):
-        return {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).items()}
+    # ------------------------------------------------------------ routing
+    # The path names the resource, the query only says how to show it. Segments are percent-decoded
+    # exactly once and then judged like the old query values were: no '/', '\\', '..', '.', empty or
+    # control characters in any segment, lane and repo ids through lane_ok(), shas through show().
+    def segs(self, path):
+        raw = path.strip("/")
+        out = []
+        for s in (raw.split("/") if raw else []):
+            d = urllib.parse.unquote(s, errors="strict")
+            if d in ("", ".", "..") or BAD_SEG.search(d): raise BadPath("bad path segment")
+            out.append(d)
+        return out
+
+    def plane_of(self, s):
+        """Strip a /w/<name> workspace prefix: (plane name or None, the rest)."""
+        if len(s) >= 2 and s[0] == "w":
+            if not lane_ok(s[1]): raise BadPath("bad workspace name")
+            return s[1], s[2:]
+        return None, s
+
+    def ui_route(self, s):
+        """The page's own URL shapes (see docs/board.md); anything else is a 404."""
+        _, s = self.plane_of(s)
+        if not s: return True
+        if s[0] == "memory": return len(s) == 1 or (len(s) == 2 and bool(SCOPE.fullmatch(s[1])))
+        if s[0] != "lanes" or len(s) < 2 or not lane_ok(s[1]): return False
+        if len(s) == 2: return True
+        if not lane_ok(s[2]): return False
+        if len(s) == 3: return True
+        if len(s) == 4: return s[3] == "history"
+        return len(s) == 5 and s[3] == "commits" and bool(SHA.fullmatch(s[4]))
+
     def do_GET(self):
         if not self.local_only(): return
-        route = urllib.parse.urlparse(self.path).path
-        if route == "/":
-            html = open(f"{HERE}/index.html").read().replace("__TOKEN__", TOKEN); return self.send(200, html, "text/html")
+        u = urllib.parse.urlparse(self.path); route = u.path
         if route in STATIC:
             return self.send(200, open(f"{HERE}/{route.lstrip('/')}").read(), STATIC[route])
-        if not route.startswith("/api/"): return self.send(404, {"error": "not found"})
-        if not self.auth(): return
-        q = self.q()
+        if route in FONTS:
+            with open(f"{HERE}/fonts/{FONTS[route]}", "rb") as fh: return self.send(200, fh.read(), "font/woff2")
+        if route == "/api" or route.startswith("/api/"):
+            if not self.auth(): return
+            try: s = self.segs(route)
+            except (BadPath, UnicodeDecodeError): return self.send(400, {"error": "bad path segment"})
+        else:
+            try: s = self.segs(route)
+            except (BadPath, UnicodeDecodeError): s = None
+        if not s or s[0] != "api":
+            if s is not None and self.ui_route(s):   # a deep link: the page itself, which reads its URL
+                html = open(f"{HERE}/index.html").read().replace("__TOKEN__", TOKEN); return self.send(200, html, "text/html")
+            return self.send(404, {"error": "not found"})
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
         try:
-            if route == "/api/planes": return self.send(200, planes_list())
-            if "lane" in q and not lane_ok(q["lane"]): return self.send(400, {"error": "bad lane id"})
-            ad = resolve_ad(q.get("plane"))
-            if route == "/api/board":
-                return self.send(200, board_for(ad))
-            if route == "/api/repo": return self.send(200, repo_payload(ad, q["lane"], q["repo"]))
-            if route == "/api/show": return self.send(200, show(lane_path(ad, q["lane"], q["repo"]), q.get("sha", ""), q.get("all") == "1"))
-            if route == "/api/diff": return self.send(200, diff(lane_path(ad, q["lane"], q["repo"]), q["file"], q.get("staged") == "1", q.get("all") == "1"))
-            if route == "/api/memory": return self.send(200, memory_tree())
-            if route == "/api/memfile":
-                p = mem_path(q.get("scope", ""), q.get("file", ""))
+            plane, s = self.plane_of(s[1:])
+            ad = resolve_ad(plane)
+            if s == ["planes"]: return self.send(200, planes_list())
+            if s == ["board"]: return self.send(200, board_for(ad))
+            if s == ["sessions"]:
+                # what the sessions loop already cached, per repo (lane-sessions output); Home lists the newest.
+                # Only this server's own plane has the cache; another plane answers empty rather than shelling out.
+                return self.send(200, {"sessions": {k: v[1] for k, v in list(SESS.items()) if v[1]} if ad == AD else {}})
+            if s == ["memory"]: return self.send(200, memory_tree())
+            if len(s) == 3 and s[0] == "memory":
+                p = mem_path(s[1], s[2])
                 return self.send(200, {"content": open(p).read() if os.path.exists(p) else "", "path": os.path.relpath(p, AD)})
-            if route == "/api/spec":
-                f = f"{roots_of(ad).lanes_dir}/{q['lane']}.md"; return self.send(200, {"spec": open(f).read() if os.path.exists(f) else ""})
-            if route == "/api/lanelog":
-                whole = q.get("all") == "1"
-                return self.send(200, {"log": lane_log(ad, q["lane"], whole=whole), "whole": whole})
-            if route == "/api/brief": return self.send(200, {"brief": run_tool(ad, "lane-brief", q["lane"])[1]})
+            if len(s) >= 3 and s[0] == "lanes":
+                lane = s[1]
+                if not lane_ok(lane): return self.send(400, {"error": "bad lane id"})
+                if s[2:] == ["spec"]:
+                    f = f"{roots_of(ad).lanes_dir}/{lane}.md"; return self.send(200, {"spec": open(f).read() if os.path.exists(f) else ""})
+                if s[2:] == ["log"]:
+                    whole = q.get("all") == "1"
+                    return self.send(200, {"log": lane_log(ad, lane, whole=whole), "whole": whole})
+                if s[2:] == ["brief"]: return self.send(200, {"brief": run_tool(ad, "lane-brief", lane)[1]})
+                if len(s) >= 4 and s[2] == "repos":
+                    repo = s[3]
+                    if not lane_ok(repo): return self.send(400, {"error": "bad repo name"})
+                    rest = s[4:]
+                    if rest == []: return self.send(200, repo_payload(ad, lane, repo))
+                    if rest == ["diff"]:
+                        return self.send(200, diff(lane_path(ad, lane, repo), q.get("file", ""), q.get("staged") == "1", q.get("all") == "1"))
+                    if len(rest) == 2 and rest[0] == "commits":
+                        if not SHA.fullmatch(rest[1]): return self.send(400, {"error": "bad commit id"})
+                        return self.send(200, show(lane_path(ad, lane, repo), rest[1], q.get("all") == "1"))
             return self.send(404, {"error": "unknown api"})
+        except BadPath as e: return self.send(400, {"error": str(e)})
         except Exception as e: return self.send(400, {"error": str(e)})
+
     def do_POST(self):
         if not self.local_only(): return
         route = urllib.parse.urlparse(self.path).path
@@ -819,60 +878,77 @@ class H(BaseHTTPRequestHandler):
             if int(cl) > MAX_BODY: return self.send(413, {"error": "request body too large"})
             body = json.loads(self.rfile.read(int(cl)) or b"{}")
             if not isinstance(body, dict): return self.send(400, {"error": "body must be a JSON object"})
-            if "lane" in body and not lane_ok(body["lane"]): return self.send(400, {"error": "bad lane id"})
-            if route == "/api/memory":
-                act = body.get("action")
-                bad = bad_memory_args(body)
+            try: s = self.segs(route)
+            except UnicodeDecodeError: raise BadPath("bad path segment")
+            if not s or s[0] != "api": return self.send(404, {"error": "unknown api"})
+            plane, s = self.plane_of(s[1:])
+            # POST /api/memory/<scope>/<file>/<verb>: file|discard a draft, move|delete a filed memory
+            if len(s) == 4 and s[0] == "memory":
+                scope, fname, verb = s[1], s[2], s[3]
+                act = {"file": "file", "discard": "drop", "move": "move", "delete": "rm"}.get(verb)
+                if not act: return self.send(404, {"error": "unknown memory action"})
+                if (scope == "drafts") != (act in ("file", "drop")) or not SCOPE.fullmatch(scope) or scope == "pref":
+                    return self.send(400, {"error": f"cannot {verb} a memory in scope {scope}"})
+                mb = {"action": act, "file": fname, "to": body.get("to", ""), "lane": body.get("lane", "")}
+                bad = bad_memory_args(mb)
                 if bad: return self.send(400, {"error": bad})
+                to = mb["to"]
                 if act == "move":
-                    to = body.get("to", "")
-                    args = ["move", body.get("file", ""), "cross"] if to == "cross" else ["move", body.get("file", ""), "repo", to[5:] if to.startswith("repo:") else to]
-                elif act == "rm": args = ["rm", body.get("file", "")]
+                    args = ["move", fname, "cross"] if to == "cross" else ["move", fname, "repo", to[5:] if to.startswith("repo:") else to]
+                elif act == "rm": args = ["rm", fname]
                 elif act == "file":
-                    sc = body.get("to", ""); slug = (body.get("file", "") or "")[:-3]
-                    args = ["file", slug] + (["cross"] if sc == "cross" else ["pref"] if sc == "pref" else
-                            ["lane", body.get("lane", "")] if sc == "lane" else ["repo", sc[5:] if sc.startswith("repo:") else sc])
-                elif act == "drop": args = ["drop", (body.get("file", "") or "")[:-3]]
-                else: return self.send(400, {"error": "unknown memory action"})
+                    args = ["file", fname[:-3]] + (["cross"] if to == "cross" else ["pref"] if to == "pref" else
+                            ["lane", mb["lane"]] if to == "lane" else ["repo", to[5:] if to.startswith("repo:") else to])
+                else: args = ["drop", fname[:-3]]
                 code, out, err = run_tool(AD, "lane-memory", *args, timeout=60)
                 return self.send(200 if code == 0 else 400, {"ok": code == 0, "output": (out + err).strip()})
-            if route == "/api/ref":
-                ws_, act = body.get("lane", ""), body.get("action")
-                if not lane_ok(ws_): return self.send(400, {"error": "bad id"})
-                if act == "add":
+            if len(s) < 3 or s[0] != "lanes": return self.send(404, {"error": "unknown api"})
+            lane = s[1]
+            if not lane_ok(lane): return self.send(400, {"error": "bad lane id"})
+            # Every state-changing route resolves `ad` from the /w/<name> prefix, once, against the registry —
+            # never trusted beyond "is this a name actually in planes.json" — so a mutation always lands in the
+            # plane its URL names, never silently in whichever plane the server happens to have started in.
+            ad = resolve_ad(plane)
+            # POST /api/lanes/<lane>/{start|resume|park|done}
+            if len(s) == 3:
+                if s[2] not in ("start", "resume", "park", "done"): return self.send(404, {"error": "unknown lane action"})
+                code, out, err = run_ws(s[2], lane, body.get("repos"), body.get("note"), ad=ad)
+                if ad == AD and code == 0: refresh_all()
+                return self.send(200 if code == 0 else 400, {"ok": code == 0, "output": (out + err).strip()})
+            # POST /api/lanes/<lane>/refs/attach {path,note,rw} · /refs/<name>/detach · /refs/<name>/reveal
+            if s[2] == "refs":
+                if s[3:] == ["attach"]:
                     path = os.path.expanduser((body.get("path") or "").strip())
                     if not path: return self.send(400, {"error": "path required"})
-                    args = [ws_, "add", path] + ([body["note"]] if body.get("note") else []) + (["--rw"] if body.get("rw") else [])
-                elif act == "rm": args = [ws_, "rm", body.get("name") or body.get("path") or ""]
-                elif act == "reveal":
-                    target = os.path.realpath(os.path.expanduser(body.get("path") or ""))
-                    ok = any(target == os.path.realpath(r["path"]) for r in parse_ws(f"{LANES_DIR}/{ws_}.md")["refs"])
-                    if not ok: return self.send(400, {"error": "not a ref of this lane"})
-                    subprocess.Popen(["open", "-R", target]); return self.send(200, {"ok": True, "output": "revealed in Finder"})
-                else: return self.send(400, {"error": "unknown ref action"})
+                    args = [lane, "add", path] + ([body["note"]] if body.get("note") else []) + (["--rw"] if body.get("rw") else [])
+                elif len(s) == 5 and s[4] in ("detach", "reveal"):
+                    name = s[3]
+                    if name.startswith("-"): return self.send(400, {"error": "bad reference name"})
+                    if s[4] == "reveal":
+                        refs = parse_ws(f"{LANES_DIR}/{lane}.md")["refs"] if os.path.exists(f"{LANES_DIR}/{lane}.md") else []
+                        hit = next((r for r in refs if r.get("name") == name or os.path.basename(r["path"].rstrip("/")) == name), None)
+                        if not hit: return self.send(400, {"error": "not a ref of this lane"})
+                        subprocess.Popen(["open", "-R", os.path.realpath(os.path.expanduser(hit["path"]))])
+                        return self.send(200, {"ok": True, "output": "revealed in Finder"})
+                    args = [lane, "rm", name]
+                else: return self.send(404, {"error": "unknown ref action"})
                 code, out, err = run_tool(AD, "lane-ref", *args, timeout=60); refresh_all()
                 return self.send(200 if code == 0 else 400, {"ok": code == 0, "output": (out + err).strip()})
-            # Every state-changing route below resolves `ad` from `body["plane"]` here, once,
-            # against the registry — never trusted beyond "is this a name actually in
-            # planes.json" — so a mutation always lands in the plane it says it is scoped to,
-            # never silently in whichever plane the server happens to have started in.
-            ad = resolve_ad(body.get("plane"))
-            if route == "/api/lane":
-                code, out, err = run_ws(body.get("action"), body.get("id"), body.get("repos"), body.get("note"), ad=ad)
-                return self.send(200 if code == 0 else 400, {"ok": code == 0, "output": (out + err).strip()})
-            p = lane_path(ad, body["lane"], body["repo"])
-            if route == "/api/pr":
-                w = parse_ws(f"{roots_of(ad).lanes_dir}/{body['lane']}.md"); base = next((r.get("base") for r in w["repos"] if r["repo"] == body["repo"]), None)
+            # POST /api/lanes/<lane>/repos/<repo>/<verb>
+            if len(s) != 5 or s[2] != "repos": return self.send(404, {"error": "unknown api"})
+            repo, verb = s[3], s[4]
+            if not lane_ok(repo): return self.send(400, {"error": "bad repo name"})
+            if verb not in ("stage", "unstage", "discard", "commit", "amend", "push", "pull", "pr"): return self.send(404, {"error": "unknown repo action"})
+            p = lane_path(ad, lane, repo)
+            if verb == "pr":
+                w = parse_ws(f"{roots_of(ad).lanes_dir}/{lane}.md"); base = next((r.get("base") for r in w["repos"] if r["repo"] == repo), None)
                 url = compare_url(p, base); return self.send(200 if url else 400, {"ok": bool(url), "url": url, "output": "" if url else "origin is not a GitHub URL"})
-            if route == "/api/discard":
-                r = discard(p, body.get("files") or [])
+            code, out, err = 0, "", ""
+            if verb in ("discard", "amend"):
+                r = discard(p, body.get("files") or []) if verb == "discard" else amend(p, body.get("message") or "")
                 if "error" in r: return self.send(400, r)
-                return self.send(200, r)
-            if route == "/api/amend":
-                r = amend(p, body.get("message") or "")
-                if "error" in r: return self.send(400, r)
-                return self.send(200, r)
-            if route == "/api/stage":
+                out = r.get("output", "")
+            elif verb in ("stage", "unstage"):
                 want = body.get("files", [])
                 if not isinstance(want, list): return self.send(400, {"error": "no files"})
                 fl, err = expand_paths(p, [f for f in want if isinstance(f, str)])
@@ -880,14 +956,14 @@ class H(BaseHTTPRequestHandler):
                 if not fl: return self.send(400, {"error": "no files"})
                 # The diff of a secret file is withheld, so staging one would commit
                 # content nobody could review. Unstaging is always allowed.
-                if body.get("stage", True):
+                if verb == "stage":
                     known = {f["file"]: f for f in files(p)}
                     bad = [f for f in fl if is_secret(f) or known.get(f, {}).get("secret")]
                     if bad:
                         return self.send(400, {"error": "refusing to stage secret file(s): " + ", ".join(sorted(bad))
                                                         + ". Keep them out of git, or add them to .gitignore."})
-                code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "add", "--", *fl]) if body.get("stage", True) else sh(["git", "--literal-pathspecs", "-C", p, "restore", "--staged", "--", *fl])
-            elif route == "/api/commit":
+                code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "add", "--", *fl]) if verb == "stage" else sh(["git", "--literal-pathspecs", "-C", p, "restore", "--staged", "--", *fl])
+            elif verb == "commit":
                 msg = (body.get("message") or "").strip()
                 if not msg: return self.send(400, {"error": "commit message required"})
                 staged = git_names(p, "diff", "--cached", "--name-only")
@@ -901,17 +977,17 @@ class H(BaseHTTPRequestHandler):
                                                     + ". Unstage them first (git restore --staged)."})
                 code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "commit", "-F", "-"], inp=msg + "\n")
                 if code == 0: out = git(p, "log", "-1", "--format=%h %s")
-            elif route == "/api/push":
+            elif verb == "push":
                 br = git(p, "branch", "--show-current")
                 code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "push", "-u", "origin", br], timeout=180)
-            elif route == "/api/pull":
+            elif verb == "pull":
                 code, out, err = sh(["git", "--literal-pathspecs", "-C", p, "pull", "--ff-only"], timeout=180)
-            else: return self.send(404, {"error": "unknown api"})
             if ad == AD:
-                refresh_repo(body["lane"], body["repo"])
-                if route in ("/api/push", "/api/pull"): PR_CACHE.pop((p, git(p, "branch", "--show-current")), None)
+                refresh_repo(lane, repo)
+                if verb in ("push", "pull"): PR_CACHE.pop((p, git(p, "branch", "--show-current")), None)
                 with LOCK: BOARD["data"] = compute_board()
             return self.send(200 if code == 0 else 400, {"ok": code == 0, "output": (out + err).strip()})
+        except BadPath as e: return self.send(400, {"error": str(e)})
         except Exception as e: return self.send(400, {"error": str(e)})
 
 def main():

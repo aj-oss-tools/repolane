@@ -251,7 +251,7 @@ assert "the board serves a token" test -n "$TOK"
 b=$(curl -s -H "X-Token: $TOK" "${URL}api/board")
 assert_contains "the board lists L1" "$b" '"id": "L1"'
 assert_contains "the board lists the mirrors from .repolane/repos" "$b" '"api"'
-assert_contains "the board reads the Goal from .repolane/registry" "$(curl -s -H "X-Token: $TOK" "${URL}api/spec?lane=L1")" "compare the two repos"
+assert_contains "the board reads the Goal from .repolane/registry" "$(curl -s -H "X-Token: $TOK" "${URL}api/lanes/L1/spec")" "compare the two repos"
 assert_contains "the board's memory view reads .repolane/memory" "$(curl -s -H "X-Token: $TOK" "${URL}api/memory")" "ws-fact"
 { kill "$BP"; wait "$BP"; } 2>/dev/null
 
