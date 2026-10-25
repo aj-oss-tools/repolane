@@ -8,16 +8,27 @@ anywhere.
 
 ## Three places
 
-**Home** is what opens: the work you have in progress, what each piece touches, and what needs
-attention.
+A rail on the left holds them: Active lanes, Parked, Memory, and every lane in flight.
 
-**Work** is one piece of work. The repos it spans, the files you have changed, the diff of the one
-you picked, and a commit box. Side panels cover History, Notes, Refs, Spec and past Sessions.
+**Home** is what opens: a card per lane with its Goal, one row per repo with its branch and state
+(uncommitted, to push, to pull, behind its base, PR checks failing, clean), and the one thing to do
+next. Parked lanes sit below with their resume note. On the right: what wants a decision, memory
+drafts waiting for a scope, and recent Claude conversations with a `claude --resume` line to copy.
 
-**Memory** browses the four scopes and what is in each.
+**A lane** is one piece of work. The repos it spans, the files you have changed (staged and
+unstaged), the diff of the one you picked, and a commit box. History shows this repo's commits or
+every repo's at once. *About this lane* (press `i`) opens a side panel with the Goal, resume note,
+Findings, references, past conversations and the lane file.
+
+**Memory** browses the scopes and what is in each, and files or discards drafts.
 
 Press the jump control in the top bar, or Command-K, to move between pieces of work without going
-back Home.
+back Home. Press `?` for every shortcut.
+
+Every screen has its own address, so Back and Forward work, a reload keeps your place, and a link
+can be shared or bookmarked: `/lanes/<lane>/<repo>` for a lane's changes (`?file=` opens a diff),
+`/lanes/<lane>/<repo>/history` and `/lanes/<lane>/<repo>/commits/<sha>` for its history, `/memory`
+for memory. Another registered workspace adds `/w/<name>` in front.
 
 ## Which workspace it shows
 
@@ -33,7 +44,7 @@ plain text.
 
 Secret files are never shown: the server drops them by path before git is asked for any content.
 
-The page is plain HTML, CSS and JavaScript with no build step. It makes one outbound request —
-its typefaces come from Google Fonts. Delete the two `<link>` tags at the top of the installed
-package's `scripts/board/index.html` if you would rather it made none (an upgrade puts them back); the board falls
-back to your system font and nothing else changes.
+The page is plain HTML, CSS and JavaScript with no build step. It uses the same palette and typefaces as
+repolane.dev — the fonts ship with the board and are served by it — and makes no outbound requests. It
+follows your system's light or dark setting; the theme button in the top bar switches between system,
+light and dark.

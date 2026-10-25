@@ -38,20 +38,29 @@ get(){ curl -s -H "$H" "$URL$1"; }
 
 check "no token -> 403" test "$(curl -s -o /dev/null -w '%{http_code}' "${URL}api/board")" = 403
 check "/api/board lists the lane" bash -c "curl -s -H '$H' '${URL}api/board' | python3 -c \"import json,sys; d=json.load(sys.stdin); sys.exit(0 if any(w['id']=='SMOKE' for w in d['lanes']) else 1)\""
-get "api/repo?lane=SMOKE&repo=web" > "$tmp/repo.json"
-check "/api/repo returns the changed files" J "any(f['file']=='a.txt' for f in d['files'])" < "$tmp/repo.json"
-check "/api/repo marks .env secret" J "any(f['file']=='.env' and f['secret'] for f in d['files'])" < "$tmp/repo.json"
-get "api/diff?lane=SMOKE&repo=web&file=a.txt" > "$tmp/diff.json"
-check "/api/diff shows the change" J "'+changed' in d['diff']" < "$tmp/diff.json"
-get "api/diff?lane=SMOKE&repo=web&file=.env" > "$tmp/env.json"
+R="api/lanes/SMOKE/repos/web"
+get "$R" > "$tmp/repo.json"
+check "/api/lanes/SMOKE/repos/web returns the changed files" J "any(f['file']=='a.txt' for f in d['files'])" < "$tmp/repo.json"
+check "the repo resource marks .env secret" J "any(f['file']=='.env' and f['secret'] for f in d['files'])" < "$tmp/repo.json"
+get "$R/diff?file=a.txt" > "$tmp/diff.json"
+check "its diff shows the change" J "'+changed' in d['diff']" < "$tmp/diff.json"
+get "$R/diff?file=.env" > "$tmp/env.json"
 check "secret diff is withheld" J "d.get('secret') is True and d['diff']==''" < "$tmp/env.json"
 check "secret value never appears" bash -c "! grep -q SECRET '$tmp/env.json' '$tmp/repo.json'"
-check "/api/spec returns the lane" bash -c "curl -s -H '$H' '${URL}api/spec?lane=SMOKE' | python3 -c \"import json,sys; sys.exit(0 if 'smoke' in json.load(sys.stdin)['spec'] else 1)\""
-check "path-like lane id is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" "${URL}api/brief?lane=../../x")" = 400
-check "mirror path is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" "${URL}api/repo?lane=../repos&repo=web")" = 400
-check "commit with nothing staged is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -X POST -d '{"lane":"SMOKE","repo":"web","message":"x"}' "${URL}api/commit")" = 400
-check "unknown lane action is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -X POST -d '{"action":"nuke","id":"SMOKE"}' "${URL}api/lane")" = 400
-check "staging .env is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -X POST -d '{"lane":"SMOKE","repo":"web","files":[".env"]}' "${URL}api/stage")" = 400
+check "/api/lanes/SMOKE/spec returns the lane" bash -c "curl -s -H '$H' '${URL}api/lanes/SMOKE/spec' | python3 -c \"import json,sys; sys.exit(0 if 'smoke' in json.load(sys.stdin)['spec'] else 1)\""
+check "/api/sessions answers" J "isinstance(d.get('sessions'), dict)" < <(get "api/sessions")
+check "fonts are served from the board itself" test "$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "${URL}fonts/inter-var.woff2")" = "200 font/woff2"
+check "only the bundled fonts are served" test "$(curl -s -o /dev/null -w '%{http_code}' "${URL}fonts/OFL.txt")" = 404
+check "the page asks nothing of another host" bash -c "! curl -s '$URL' '${URL}board.css' | grep -Eq 'https?://[^\"]*(fonts\.|googleapis|gstatic|cdn)'"
+check "path-like lane id is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" "${URL}api/lanes/..%2F..%2Fx/brief")" = 400
+check "mirror path is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" "${URL}api/lanes/..%2Frepos/repos/web")" = 400
+check "commit with nothing staged is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -X POST -d '{"message":"x"}' "${URL}$R/commit")" = 400
+check "unknown lane action is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -X POST -d '{}' "${URL}api/lanes/SMOKE/nuke")" = 404
+check "staging .env is refused" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -X POST -d '{"files":[".env"]}' "${URL}$R/stage")" = 400
+check "a deep link serves the page" bash -c "curl -s '${URL}lanes/SMOKE/web/history?repos=all' | grep -q __T="
+check "a commit deep link serves the page" test "$(curl -s -o /dev/null -w '%{http_code}' "${URL}lanes/SMOKE/web/commits/abc1234")" = 200
+check "an unknown page is a 404" test "$(curl -s -o /dev/null -w '%{http_code}' "${URL}lanes/SMOKE/web/nope")" = 404
+check "the old query endpoints are gone" test "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" "${URL}api/repo?lane=SMOKE&repo=web")" = 404
 check "the server is still running" kill -0 "$BP"
 
 echo "--- regression suite (scratch plane, throwaway HOME) ---"
