@@ -10,3 +10,7 @@ Third-Party Dependencies & Attributions
 Repolane has no third-party dependencies. It is a folder of Bash scripts and
 Python using only the standard library — there is no package manifest, and
 nothing is installed to run it beyond git, python3 and bash themselves.
+
+Bundled fonts: the board (scripts/board/fonts/) ships Inter, JetBrains Mono and
+Instrument Serif, each under the SIL Open Font License, Version 1.1. Their
+copyright notices and the licence text are in scripts/board/fonts/OFL.txt.

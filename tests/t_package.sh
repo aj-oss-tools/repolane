@@ -31,6 +31,8 @@ for f in repolane/__init__.py repolane/cli.py $P/lane $P/VERSION $P/LICENSE $P/N
          $P/scripts/statusline.sh $P/scripts/lane-stable-dispatcher $P/scripts/lane-planes.py \
          $P/scripts/hooks/guard.py $P/scripts/hooks/guard-check $P/scripts/hooks/test-guard.sh \
          $P/scripts/board/server.py $P/scripts/board/index.html $P/scripts/board/board.js $P/scripts/board/board.css \
+         $P/scripts/board/fonts/inter-var.woff2 $P/scripts/board/fonts/jetbrains-mono-var.woff2 $P/scripts/board/fonts/instrument-serif.woff2 \
+         $P/scripts/board/fonts/instrument-serif-italic.woff2 $P/scripts/board/fonts/OFL.txt \
          $P/knowledge/preferences.md.example $P/.claude/settings.json $P/scripts/roots.sh $P/scripts/roots.py \
          $P/templates/REPOLANE.md $P/templates/LANE.md $P/templates/config.yml $P/templates/env.sh \
          $P/templates/claude/commands/status.md $P/templates/claude/commands/lane-start.md $P/templates/claude/agents/lane-manager.md; do

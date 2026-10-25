@@ -10,6 +10,31 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 Nothing yet.
 
+## [0.11.0] — 2026-10-25
+
+### Changed
+
+- **The board has a new look.** A left rail (Active lanes, Parked, Memory, and the lanes in flight). Home lists the
+  active lanes as dense rows: ticket, title, status and one next-action button; the Goal and resume note on one line;
+  one line per repo with its branch, status chips and last activity. Parked lanes are single lines in a section that
+  folds away. Home's right column has what to do next, memory drafts waiting for a scope (File it, Discard) and recent
+  Claude conversations (click to copy `claude --resume <id>`). A lane opens on its repos, the changes split into
+  staged and unstaged, the diff beside them and the commit box underneath; About this lane is one scrolling side
+  panel (Goal, resume note, Findings, repos, references with Reveal and Detach, sessions, the lane file). Dialogs,
+  the palette, toasts and dark mode follow the same design.
+- The board looks like repolane.dev: the same warm paper and amber palette (and its dark counterpart), Inter, JetBrains
+  Mono and Instrument Serif. The fonts ship in the package and are served by the board, so it makes no outbound
+  requests at all. It is also a little denser than before.
+- **Every board screen has a real address.** `/lanes/<lane>/<repo>` (with `?file=` for an open diff),
+  `/lanes/<lane>/<repo>/history`, `/lanes/<lane>/<repo>/commits/<sha>`, `/memory/<scope>`, and `/w/<name>/…` for
+  another workspace. Back and Forward step through screens, a reload or a pasted link lands on the same one, and an
+  old `/#lane=…` link still works. The board's API moved to the same shape (`/api/lanes/<lane>/repos/<repo>/stage`
+  and so on); its old query-string endpoints are gone. Nothing outside the board called them.
+
+### Added
+
+- `GET /api/sessions` on the board server: the recent conversations it already caches per repo, for Home.
+
 ## [0.10.0] — 2026-10-24
 
 ### Added
@@ -801,7 +826,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/aj-oss-tools/repolane/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/aj-oss-tools/repolane/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/aj-oss-tools/repolane/compare/v0.9.0...v0.9.1
