@@ -8,7 +8,14 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- `lane upgrade` takes the newest release for a uv tool install made with an exact pin (`uv tool install
+  repolane==X`). `uv tool upgrade` leaves such an install where it is, and `lane upgrade` used to report "already the
+  newest" and refresh the workspaces with the old version. It now checks the result against PyPI, reinstalls a pinned
+  uv install with `uv tool install repolane@latest` (which also drops the pin), and when the package still is not the
+  newest it says so, prints the command to run, and exits non-zero. "Already the newest" appears only when it is true;
+  when PyPI cannot be reached it says the newest is unknown. `lane upgrade --check` mentions a pinned uv install.
 
 ## [0.11.0] — 2026-10-25
 
