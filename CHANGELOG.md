@@ -16,6 +16,13 @@ written down. Inside a git checkout it also says how far past the release tag yo
   uv install with `uv tool install repolane@latest` (which also drops the pin), and when the package still is not the
   newest it says so, prints the command to run, and exits non-zero. "Already the newest" appears only when it is true;
   when PyPI cannot be reached it says the newest is unknown. `lane upgrade --check` mentions a pinned uv install.
+- Moving a memory to preferences works. The board's Move scope offered "preferences", but picking it made a repo scope
+  named `pref` (`memory/pref/`). `lane-memory move <name> pref` now appends the memory to `knowledge/preferences.md`
+  (the same entry `lane-memory file <slug> pref` writes) and removes the file and its index line, and the board uses
+  it. `lane-memory move <name> repo <repo>` refuses a repo that is not registered, and the board refuses a move to
+  anything other than cross-repo, preferences or a registered repo. A leftover memory folder that is not a registered
+  repo still shows on the Memory screen, marked as such, so you can move its notes out; it is no longer offered as a
+  target.
 
 ## [0.11.0] — 2026-10-25
 
