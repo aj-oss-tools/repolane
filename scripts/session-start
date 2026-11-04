@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Output: JSON with additionalContext (for Claude) and systemMessage (shown to the owner on the startup screen).
+# Output: what the agent's adapter makes of two texts: one for the model, one shown to the owner on the startup screen.
 # Set LANE_PLAIN=1 to get the plain text instead (used by the wrapper for terminal printing).
 if [ -z "${LANE_PLAIN:-}" ] && [ -z "${_LANE_INNER:-}" ]; then
   input=""; [ -t 0 ] || input=$(cat)
   text=$(printf '%s' "$input" | _LANE_INNER=1 "$0" "$@")
   screen=$(printf '%s' "$input" | _LANE_INNER=1 LANE_SCREEN=1 "$0" "$@")
-  python3 -c 'import json,sys; ctx,scr=sys.argv[1],sys.argv[2]; print(json.dumps({"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":ctx},"systemMessage":scr}))' "$text" "$screen"
+  python3 -B -c 'import os,sys; sys.path.insert(0,os.path.dirname(os.path.realpath(sys.argv[1]))); import agents; print(agents.get().session_start_reply(sys.argv[2],sys.argv[3]))' "$0" "$text" "$screen"
   exit 0
 fi
 # SessionStart hook. Reads the hook JSON on stdin (session_id, transcript_path, source, cwd), prints
@@ -15,21 +15,11 @@ source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.a
 source "$PRODUCT/scripts/gitstate.sh"
 input=""; [ -t 0 ] || input=$(cat)
 printf '%s' "$input" > "$CACHE_DIR/last-session-start.json" 2>/dev/null || true
-read -r source sid scwd <<<"$(printf '%s' "$input" | python3 -c 'import json,sys
-try: d=json.load(sys.stdin)
-except Exception: d={}
-print(d.get("source","startup"), d.get("session_id","-"), d.get("cwd","-"))' 2>/dev/null || echo "startup - -")"
+read -r source sid scwd <<<"$(printf '%s' "$input" | lane_agent session-start-input 2>/dev/null || echo "startup - -")"
 [ "$scwd" = "-" ] && scwd="$PWD"
-# repo the conversation belongs to: the managed-repo project folder that holds <session_id>.jsonl
-# (transcript_path in the hook input is derived from cwd, not from where the file lives — do not use it)
+# repo the conversation belongs to: the mirror its transcript is filed under
 repo=""
-if [ "$sid" != "-" ]; then
-  # the project folder is named after THIS folder's path, so compute it rather than assume it
-  # (a mirror's folder is named after repos/<repo>, which sits under .repolane/ in a workspace)
-  slug=$(claude_project_dir "$REPOS")
-  f=$(ls "$HOME"/.claude/projects/"$slug"-*/"$sid".jsonl 2>/dev/null | head -1 || true)
-  [ -n "$f" ] && { repo=${f#*"$slug"-}; repo=${repo%%/*}; }
-fi
+if [ "$sid" != "-" ]; then repo=$(lane_agent session-owner "$sid" "$REPOS" 2>/dev/null || true); fi
 # How a session runs the lane-* commands and names the data folders: a workspace's package puts the commands on PATH, so
 # they go by name, and the data sits under .repolane/; a clone's are its scripts/ folder, by absolute path.
 if [ "$LANE_MODE" = workspace ]; then X=""; else X="$PRODUCT/scripts/"; fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sessions <repo|lane-id> [n]  — list resumable Claude conversations for a repo (newest first)
+# sessions <repo|lane-id> [n]  — list resumable conversations for a repo (newest first)
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 source "$PRODUCT/scripts/gitstate.sh"
 key="${1:-}"; n="${2:-10}"; [ -n "$key" ] || die "usage: sessions <repo|lane-id> [n]"
@@ -8,7 +8,7 @@ key="${1:-}"; n="${2:-10}"; [ -n "$key" ] || die "usage: sessions <repo|lane-id>
 if ! [ -d "$REPOS/$key" ]; then
   repo=$(lane_repos "$key" 2>/dev/null | head -1 | cut -d' ' -f1)
   [ -n "$repo" ] && [ -d "$REPOS/$repo" ] || die "unknown repo/lane '$key'"
-  projs=("$HOME/.claude/projects/$(claude_project_dir "$LANES/$key/$repo")")
+  projs=("$LANES/$key/$repo")
   old_n=0; old_path=""
 else
   repo="$key"
@@ -24,43 +24,15 @@ else
     id=$(basename "$lf" .md)
     while read -r r b; do
       [ "$r" = "$repo" ] || continue
-      projs+=("$HOME/.claude/projects/$(claude_project_dir "$LANES/$id/$repo")")
+      projs+=("$LANES/$id/$repo")
     done < <(sed -n '/^---$/,/^---$/p' "$lf" | awk '/^  - repo:/{r=$3} /^    branch:/{print r, $2}')
   done
   # source #3: the pre-Repolane checkout this repo was added from, if any
   old_path=$(sed -n "/^  $repo:\$/,/^  [a-z]/p" "$REGISTRY/repos.yaml" | sed -n 's/^      - //p' | head -1)
   old_n=0
-  if [ -n "$old_path" ]; then
-    olddir="$HOME/.claude/projects/$(claude_project_dir "$old_path")"
-    [ -d "$olddir" ] && old_n=$(ls "$olddir"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
-  fi
+  if [ -n "$old_path" ]; then old_n=$(lane_agent session-count "$old_path"); fi
 fi
-python3 - "$n" "$repo" "${projs[@]}" <<'PY'
-import sys,os,json,glob,datetime
-n,repo=int(sys.argv[1]),sys.argv[2]
-projs=sys.argv[3:]
-rows=[]
-for proj in projs:
- for f in glob.glob(f"{proj}/*.jsonl"):
-    sid=os.path.basename(f)[:-6]; first=None; last=os.path.getmtime(f); turns=0
-    with open(f) as fh:
-        for l in fh:
-            try: d=json.loads(l)
-            except: continue
-            ts=d.get("timestamp")
-            if ts:
-                try: last=datetime.datetime.fromisoformat(ts.replace("Z","+00:00")).timestamp()
-                except Exception: pass
-            if d.get("type")=="user":
-                c=d.get("message",{}).get("content")
-                if isinstance(c,str) and not c.startswith("<"): turns+=1; first=first or c.strip().replace("\n"," ")[:90]
-    if first: rows.append((last,sid,turns,first))
-rows.sort(reverse=True)
-print(f"Resumable conversations for {repo} (launch claude inside its worktree, then `claude --resume <id>`):")
-for last,sid,turns,first in rows[:n]:
-    print(f"  {datetime.datetime.fromtimestamp(last):%Y-%m-%d %H:%M}  {sid}  {turns:>3} turns  {first}")
-if not rows: print("  none")
-PY
+lane_agent sessions "$n" "$repo" "${projs[@]}"
 if [ "${old_n:-0}" -gt 0 ] 2>/dev/null; then
   echo "  $old_n more conversation(s) at the original checkout ($old_path), not yet imported — bring them in with: lane import"
 fi

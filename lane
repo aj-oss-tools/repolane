@@ -30,7 +30,7 @@ else lane_resolve_roots; fi
 # for `lane doctor`, which reports a stale workspace (and repairs it with --fix) rather than hide it, nor for the
 # doctor's own probe of the hook path
 # nor for `lane upgrade`, which refreshes every registered workspace itself and reports what it did
-case "${1:-} ${2:-}" in "doctor "*|"upgrade "*|"hook ping") : ;; *) lane_refresh_workspace ;; esac
+case "${1:-} ${2:-}" in "doctor "*|"upgrade "*|"hook ping"|"agent "*) : ;; *) lane_refresh_workspace ;; esac
 
 # the installed package (LANE_PRODUCT set by its launcher, and no git checkout of its own) as opposed to a clone: a few
 # commands only make sense for one of the two
@@ -192,6 +192,9 @@ case "$cmd" in
       *) echo "lane hook: unknown event '$ev' (session-start, pre-tool-use, post-tool-use, user-prompt-submit, pre-compact, session-end, worktree-create, worktree-remove)" >&2
          exit 1 ;;
     esac ;;
+  agent)
+    # `lane agent <action>`: what bash needs to know about the agent (read-only: scripts/agents/cli.py lists the actions)
+    shift; exec python3 -B "$S/agents/cli.py" "$@" ;;
   statusline)
     # what a workspace's statusLine runs (the status line's JSON on stdin), so it names no file in the product either
     exec "$S/statusline.sh" ;;

@@ -65,64 +65,14 @@ lane_set_status(){
   local f t; f="$(lane_file "$1")"; t="$f.tmp.$$"
   sed "s/^status: .*/status: $2/; s/^updated: .*/updated: $(date +%F)/" "$f" > "$t" && mv "$t" "$f" || { rm -f "$t"; return 1; }
 }
+# lane_agent <action> : the adapter, for what bash needs from the agent (the same thing as `lane agent <action>`)
+lane_agent(){ python3 -B "$PRODUCT/scripts/agents/cli.py" "$@"; }
+# lane_install <action> : the adapter's installers for a lane (scripts/agents/install.py), told where everything is
+lane_install(){ local a="$1"; shift; python3 -B "$PRODUCT/scripts/agents/install.py" "$a" "$AD" "$PRODUCT" "$LANE_MODE" "$REPOS" "$LANES_DIR" "$MEMORY_DIR" "$KNOWLEDGE_DIR" "$CACHE_DIR" "$@"; }
 # permission guard for a session rooted at $1: deny repos/ and every other lane
-write_guard(){ # $1 = dir to write .claude/settings.local.json in, $2 = this lane id, $3 = memory dir
-  local dir="$1" id="$2" mem="$3"; mkdir -p "$dir/.claude"
-  python3 - "$dir" "$id" "$mem" "$AD" "$PRODUCT" "$LANE_MODE" "$REPOS" "$LANES_DIR" "$MEMORY_DIR" "$KNOWLEDGE_DIR" "$CACHE_DIR" <<'PY'
-import json,os,shlex,sys
-d,id_,mem,ad,prod,mode,repos,lanes_dir,memory,knowledge,cache=sys.argv[1:]
-deny=[f"Read({repos}/**)",f"Edit({repos}/**)"]  # Edit covers Write/MultiEdit; Write() rules are ignored
-for pat in ("**/.env","**/.env.local","**/.env.*.local","**/.env.development","**/.env.production","**/.env.staging","**/.env.test","**/*.pem","**/*.key",
-            "**/*.p12","**/*.pfx","**/*.p8","**/*.jks","**/*.keystore","**/*.kdbx","**/id_rsa","**/id_ed25519","**/id_ecdsa","**/id_dsa",
-            "**/.netrc","**/.npmrc","**/.pgpass","**/.git-credentials","**/.htpasswd","**/service-account*.json"):   # the same names guard.py's SECRET_FILE knows
-    deny+=[f"Read({pat})",f"Edit({pat})"]
-for o in sorted(os.listdir(f"{ad}/lanes")):
-    if o!=id_ and os.path.isdir(f"{ad}/lanes/{o}"):
-        deny+=[f"Read({ad}/lanes/{o}/**)",f"Edit({ad}/lanes/{o}/**)"]
-p=f"{d}/.claude/settings.local.json"
-cur=json.load(open(p)) if os.path.exists(p) else {}
-perm=cur.setdefault("permissions",{})
-keep=[x for x in perm.get("deny",[]) if f"{repos}/" not in x and f"{ad}/lanes/" not in x]
-seen=set(); perm["deny"]=[x for x in keep+deny if not (x in seen or seen.add(x))]   # order kept, never repeated
-# Pre-approved means "runs without asking", so it is only for commands that read. lane-memory (file/rm/move write and delete
-# markdown) and lane-workspace (rewrites the .code-workspace files) are NOT here; the read-only lane-memory verbs are.
-READONLY_LANE=["lane-merge-plan","lane-status","lane-brief","lane-find","lane-menu","lane-sessions","lane-env-check","lane-env-keys",
-               "lane-memory list","lane-memory show","lane-memory audit"]
-OWN_WRITES=["lane-memory goal","lane-memory draft"]   # write this lane's Goal / a draft in the inbox, nothing else
-RETIRED=("Bash(lane-memory:*)","Bash(lane-workspace:*)")   # earlier versions approved these; a refresh has to take that back
-# A session in this lane records its Goal and Findings in registry/lanes/<id>.md, which sits in the control plane root,
-# outside the lane's folder; Claude Code refuses a path outside the session's folder unless a rule allows it (the guard
-# already does). Allow exactly this lane's file, nothing else under registry/. A leading // is an absolute path in a rule;
-# a single / is relative to the project and would match nothing.
-lf="/"+lanes_dir+"/"+id_+".md"
-# Reads of what the rules tell a session to open: memory/, knowledge/ and the draft inbox. Claude Code's Read rule also
-# covers Glob and Grep, so a session can search them too. Writes there are NOT allowed here: a session that entered a worktree
-# cannot use Edit/Write outside that folder at all (no setting lifts it), so they go through `lane-memory draft <slug> -` and
-# `lane-memory goal`, which write only this lane's file and the inbox and run without asking.
-OWN=(f"Read({lf})",f"Edit({lf})")+tuple(f"Read(/{x}/**)" for x in (memory,knowledge,f"{cache}/memory-inbox"))
-own_prefix=("Read(/"+lanes_dir+"/","Edit(/"+lanes_dir+"/")   # an earlier lane's rule, or one for another id, is dropped
-perm["allow"]=sorted({x for x in perm.get("allow",[]) if x not in RETIRED and not x.startswith(own_prefix)}
-                     |{f"Bash({c}:*)" for c in READONLY_LANE+OWN_WRITES}
-                     |{f"Bash({prod}/scripts/{c}:*)" for c in READONLY_LANE+OWN_WRITES}|set(OWN))   # CLAUDE.md tells a session to call them by absolute path
-cur["autoMemoryDirectory"]=mem
-if mode=="workspace":
-    # A workspace names no product path at all: `lane hook <event>` finds the installed product on PATH and the
-    # workspace from the session's folder, so an upgrade or a reinstall never leaves a hook pointing at nothing.
-    sys.path.insert(0,f"{prod}/scripts"); sys.dont_write_bytecode=True
-    import roots
-    cur["hooks"]=roots.workspace_hooks()
-else:
-    # A hook runs in Claude Code's environment, not ours, so when the two roots differ the command itself names them. When
-    # they are one folder (a clone) it stays the bare path it has always been.
-    pre="" if prod==ad else f"LANE_PRODUCT={shlex.quote(prod)} LANE_WORKSPACE={shlex.quote(ad)} "
-    g=f"{pre}{prod}/scripts/hooks/guard.py"
-    hk=lambda m=None,to=30:[{**({"matcher":m} if m else {}),"hooks":[{"type":"command","command":g,"timeout":to}]}]
-    cur["hooks"]={"SessionStart":[{"matcher":"startup|resume|clear|compact|fork","hooks":[{"type":"command","command":f"{pre}{prod}/scripts/session-start --worktree","timeout":60}]}],
-      "PreToolUse":hk("Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree|Glob|Grep"),"PostToolUse":hk("Edit|Write|MultiEdit|NotebookEdit"),
-      "WorktreeCreate":hk(None,120),"WorktreeRemove":hk(),
-      "UserPromptSubmit":hk(),"PreCompact":hk(),"SessionEnd":hk()}
-json.dump(cur,open(p,"w"),indent=2)
-PY
+write_guard(){ # $1 = dir to write the agent's local settings in, $2 = this lane id, $3 = memory dir
+  local dir="$1" id="$2" mem="$3" kept
+  kept=$(lane_install lane "$dir" "$id" "$mem")
   # keep the guard out of git status in the worktree
   if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
     # --git-common-dir answers relatively inside a plain repo and absolutely inside a worktree;
@@ -133,7 +83,7 @@ PY
     case "$gd" in /*) : ;; *) gd="$dir/$gd" ;; esac
     mkdir -p "$gd/info" 2>/dev/null
     ex="$gd/info/exclude"
-    grep -qx '.claude/settings.local.json' "$ex" 2>/dev/null || echo '.claude/settings.local.json' >> "$ex"
+    local p; for p in $kept; do grep -qx "$p" "$ex" 2>/dev/null || echo "$p" >> "$ex"; done
   fi
 }
 # A lane folder sits inside the control plane, which is a git repo — so git would claim it and a session
@@ -156,13 +106,7 @@ lane_anchor(){ # $1 = lane id
 EOT
 }
 
-write_lane_claude(){ # $1 = id
-  cat > "$LANES/$1/CLAUDE.md" <<EOT
-# Lane: $1
-Spec and state: \`$(lane_file "$1")\` — read it first. Repos in scope are its \`repos:\` list; nothing else.
-Per-repo memory: \`$MEMORY_DIR/<repo>/MEMORY.md\`. Preferences: \`$KNOWLEDGE_DIR/preferences.md\`.
-EOT
-}
+write_lane_claude(){ lane_install rules "$LANES/$1" "$(lane_file "$1")"; } # $1 = id
 # env files are gitignored, so a fresh worktree has none. Link every env-like file of the mirror into the
 # worktree at the same relative path (symlink: one source of truth, edit it in repos/<repo>). Never reads them.
 link_env(){ # $1 = repo, $2 = worktree dir
@@ -185,41 +129,5 @@ refresh_guards(){ # re-write guards in every lane so new siblings are denied eve
   done
   write_additional_dirs
 }
-# Claude Code only edits inside the session's folder plus "additionalDirectories". A dispatcher session enters one
-# repo of a lane, so the sibling repos must be listed. Root local settings: every worktree (hook still denies
-# other lanes). Each worktree's local settings: its siblings.
-write_additional_dirs(){
-  python3 - "$AD" "$LANES_DIR" "$PRODUCT" <<'PY'
-import json,os,glob,sys
-ad,lanes_dir,prod=sys.argv[1:4]
-wts=sorted(p for p in glob.glob(f"{ad}/lanes/*/*") if os.path.exists(f"{p}/.git"))
-import re
-def refs_of(lane):
-    f=f"{lanes_dir}/{lane}.md"
-    if not os.path.exists(f): return []
-    head=open(f).read().split("\n---\n",1)[0]
-    return [m.group(1) for m in re.finditer(r"^  - path: (.+)$",head,re.M)]
-def put(path,dirs):
-    cur=json.load(open(path)) if os.path.exists(path) else {}
-    cur.setdefault("permissions",{})["additionalDirectories"]=dirs
-    os.makedirs(os.path.dirname(path),exist_ok=True); json.dump(cur,open(path,"w"),indent=2)
-allrefs=sorted({r for w in set(os.path.dirname(x) for x in wts) for r in refs_of(os.path.basename(w))})
-put(f"{ad}/.claude/settings.local.json",wts+allrefs)
-for w in wts:
-    lane=os.path.dirname(w); put(f"{w}/.claude/settings.local.json",[s for s in wts if os.path.dirname(s)==lane and s!=w]+refs_of(os.path.basename(lane)))
-for lane in set(os.path.dirname(x) for x in wts):
-    p=f"{lane}/.claude/settings.local.json"
-    if os.path.exists(p): put(p,[s for s in wts if os.path.dirname(s)==lane]+refs_of(os.path.basename(lane)))
-put_root=f"{ad}/.claude/settings.local.json"
-# A dispatcher session at the root that enters a lane keeps the root's permissions, and is told to save the Goal and draft
-# memories with lane-memory goal / draft (they write only that lane's file and the inbox; `lane-memory file` still asks).
-# A clone's .claude/settings.json is tracked and edited by lane init, so the approvals go into the root's local settings,
-# by bare name and by the absolute path the rules give.
-cur=json.load(open(put_root))
-al=cur.setdefault("permissions",{}).setdefault("allow",[])
-for c in ("lane-memory goal","lane-memory draft"):
-    for r in (f"Bash({c}:*)",f"Bash({prod}/scripts/{c}:*)"):
-        if r not in al: al.append(r)
-json.dump(cur,open(put_root,"w"),indent=2)
-PY
-}
+# Each session folder may reach the rest of its lane, and the root every lane (the adapter says how).
+write_additional_dirs(){ lane_install folders; }

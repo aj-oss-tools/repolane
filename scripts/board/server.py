@@ -28,7 +28,9 @@ HERE = os.path.dirname(os.path.realpath(__file__))   # the page and its static f
 sys.dont_write_bytecode = True   # the product is only read
 sys.path.insert(0, os.path.dirname(HERE))
 import roots as _roots
+import agents as _agents
 sys.path.pop(0)
+AGENT = _agents.get()
 R = _roots.Roots(os.path.dirname(os.path.dirname(HERE)))
 PRODUCT, AD = R.product, R.ad
 LANES, REPOS, LANES_DIR = R.lanes, R.repos, R.lanes_dir
@@ -675,7 +677,7 @@ def refresh_all():
         BOARD["data"] = compute_board()
 
 def sessions_cached(repo):
-    proj = os.path.expanduser("~/.claude/projects/") + f"{REPOS}/{repo}".replace("/", "-").replace("_", "-")
+    proj = AGENT.signature_dir(f"{REPOS}/{repo}")
     try: sig = tuple(sorted((e.name, e.stat().st_mtime) for e in os.scandir(proj) if e.name.endswith(".jsonl")))
     except FileNotFoundError: sig = ()
     hit = SESS.get(repo)
