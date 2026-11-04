@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """lane hook dispatcher. Configured in the control plane/.claude/settings.json; runs for every session
 launched at the control plane root, including after EnterWorktree moved the session into lanes/<id>/<repo>.
-Reads the hook JSON on stdin, decides by hook_event_name.
+Reads the hook's body on stdin; the agent's adapter (scripts/agents/) turns it into a neutral Event, and every answer back
+into what the agent reads. The rules below know the tool call, not the agent.
 
 What happens when the input is not what we expect is decided here, on purpose:
   PreToolUse fails CLOSED. A payload the guard cannot make sense of (a command that is not a string, a cwd that is
@@ -30,16 +31,20 @@ marker the model can type itself, so it is advisory: it documents that the human
 import fnmatch, glob, itertools, json, os, re, subprocess, sys, datetime
 
 LIMIT = []       # why the Bash reader gave up on a command; any entry turns the call into a deny (fail closed)
-_EVENT = ""      # set once the payload is read; the crash handler below needs it to pick fail-closed vs fail-open
+_PRE_TOOL = False   # set once the payload is read; the crash handler below needs it to pick fail-closed vs fail-open
 def _crash(et, ev, tb):
     import traceback
     traceback.print_exception(et, ev, tb)
-    if _EVENT == "PreToolUse":
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-              "permissionDecisionReason": f"The lane guard hit an internal error ({et.__name__}) while judging this tool call, "
-                                          f"and refuses what it cannot judge. Retry; if it repeats, run `lane doctor` and report it."}}))
+    if _PRE_TOOL:
+        why = (f"The lane guard hit an internal error ({et.__name__}) while judging this tool call, "
+               f"and refuses what it cannot judge. Retry; if it repeats, run `lane doctor` and report it.")
+        try: print(AGENT.format_decision(PRE_TOOL, Decision.deny(why)).stdout)
+        except Exception:
+            # the adapter is what broke, or never loaded. Claude Code's refusal, written out: with no adapter it is the default
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                  "permissionDecisionReason": why}}))
     sys.stdout.flush(); sys.stderr.flush()
-    os._exit(0 if _EVENT == "PreToolUse" else 1)
+    os._exit(0 if _PRE_TOOL else 1)
 sys.excepthook = _crash
 
 # Two roots, as in scripts/lib.sh: PRODUCT holds Repolane's own files (this one, scripts/, templates), AD is the workspace
@@ -51,12 +56,16 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 try:
     import roots as _roots
+    import agents as _agents
+    from agents.base import Decision, ToolKind as Kind, LANE_ENTER, LANE_LEAVE, POST_TOOL, PRE_COMPACT, PRE_TOOL, PROMPT, SESSION_END
+    AGENT = _agents.get()
 except Exception as _e:
-    # Without its resolver the guard cannot know what to protect. That must not become a silent pass: a PreToolUse
-    # call is refused, like any other internal error (fail closed), every other event shows a hook error.
+    # Without its resolver or its adapter the guard cannot know what to protect or read what it is asked. That must not become
+    # a silent pass: a tool call is refused, like any other internal error (fail closed), every other event shows a hook error.
+    # There is no adapter to ask here, so this is Claude Code's field by name.
     _raw0 = sys.stdin.read() if not sys.stdin.isatty() else ""
     if re.search(r'"hook_event_name"\s*:\s*"PreToolUse"', _raw0):
-        _EVENT = "PreToolUse"
+        _PRE_TOOL = True
     raise
 sys.path.pop(0)
 R = _roots.Roots(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
@@ -80,13 +89,17 @@ OWNER = _owner()
 REPOS, LANES, LANES_DIR = R.repos, R.lanes, R.lanes_dir
 REGISTRY, MEMORY, KNOWLEDGE, CACHE = R.registry, R.memory, R.knowledge, R.cache
 
-def out(obj): print(json.dumps(obj).replace("__OWNER__", OWNER)); sys.exit(0)
+def answer(event, d):
+    """Say it the way the agent reads it, and stop. __OWNER__ goes in last, into what the adapter wrote."""
+    r = AGENT.format_decision(event, d)
+    if r.stderr is not None: print(r.stderr, file=sys.stderr)
+    if r.stdout is not None: print(r.stdout if d.kind == Decision.ENTER else r.stdout.replace("__OWNER__", OWNER))
+    sys.exit(r.code)
 def deny(event, reason):
     # the refusals are written in a clone's words; a workspace's are its own paths and commands (roots.Roots.words)
-    reason = R.words(reason)
-    out({"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason}})
-def allow(event): out({"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "allow"}})
-def context(event, text): out({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}})
+    answer(event, Decision.deny(R.words(reason)))
+def allow(event, extra=None): answer(event, Decision.allow(extra))
+def context(event, text): answer(event, Decision.add_context(text))
 def lane_of(path):
     """lane id if path is under lanes/<id>/…, else None. Only ids that really exist count, so a stray
     path like lanes/repos/… is not reported as a lane."""
@@ -193,11 +206,11 @@ def memory_brief(lane):
                  "The index line is written for you. Findings of this lane are in its spec under ## Findings.")
     return "\n".join(parts)
 def rules_brief(lane, repo):
-    """The repo's own CLAUDE.md in full plus a list of its rules files, injected the first time a session touches it."""
+    """The repo's own instructions file in full plus a list of its rules files, injected the first time a session touches it."""
     root = f"{LANES}/{lane}/{repo}"; out = [f"RULES for {repo} (first touch in this session — they apply to every edit under lanes/{lane}/{repo}/):"]
-    for cm in (f"{root}/CLAUDE.md", f"{root}/.claude/CLAUDE.md"):
+    files, rd = AGENT.repo_rules(root)
+    for cm in files:
         if os.path.exists(cm): out += [f"## {os.path.relpath(cm, AD)}", read(cm, 8000).strip()]
-    rd = f"{root}/.claude/rules"
     if os.path.isdir(rd):
         out.append(f"## {os.path.relpath(rd, AD)}/ — read the ones that match the files you touch:")
         for f in sorted(os.listdir(rd)):
@@ -206,7 +219,7 @@ def rules_brief(lane, repo):
             m = re.search(r"^description:\s*(.+)$", head, re.M) or re.search(r"^#\s*(.+)$", head, re.M)
             g = re.search(r"^(?:paths|globs):\s*(.+)$", head, re.M)
             out.append(f"  - {f}: {(m.group(1).strip() if m else '')}{('  [applies to: '+g.group(1).strip()+']') if g else ''}")
-    if len(out) == 1: out.append("(no CLAUDE.md or rules in this repo)")
+    if len(out) == 1: out.append(f"(no {AGENT.rules_file} or rules in this repo)")
     return "\n".join(out)
 def repo_of(path, lane):
     if not path or not lane: return None
@@ -386,9 +399,9 @@ def _path_cands(given, cwd):
     parts = a.strip("/").split("/")
     return [given, given.lstrip("./"), a] + ["/".join(parts[i:]) for i in range(len(parts))]
 
-def rule_hits(rule, tool, ti, segs, cwd):
+def rule_hits(rule, tool, segs, cwd):
     w = rule["when"]
-    if w["tool"] != tool: return False
+    if w["tool"] != tool.name: return False   # a project rule names the tool the way the agent does
     if w.get("matches"):
         # The same normalised segments the built-in command rules are matched against — never a
         # second splitter of our own, or `echo ok && alembic upgrade head` would slip a project
@@ -397,12 +410,12 @@ def rule_hits(rule, tool, ti, segs, cwd):
         return any(pat.search(s) for s in segs)
     glob = w["path"].strip().rstrip("/")
     pats = [glob] if glob.endswith("*") else [glob, glob + "/**"]
-    for key in ("file_path", "notebook_path", "path"):
-        for c in _path_cands(ti.get(key) or "", cwd):
+    for given in tool.paths:
+        for c in _path_cands(given, cwd):
             if any(fnmatch.fnmatch(c, p) for p in pats): return True
     return False
 
-def enforce_rules(event, tool, ti, segs, cwd):
+def enforce_rules(event, tool, segs, cwd):
     """Runs before the built-ins, because several of them answer `allow` and exit — a project rule
     placed after those would never be reached for the files they cover. It can only ever deny."""
     rules, bad = load_rules()
@@ -410,7 +423,7 @@ def enforce_rules(event, tool, ti, segs, cwd):
         print(R.words("lane guard: registry/rules.yaml — these project rules are NOT being enforced:\n  "
               + "\n  ".join(bad) + "\n  The built-in rules are unaffected. Fix them, then `lane doctor`."), file=sys.stderr)
     for r in rules:
-        try: hit = rule_hits(r, tool, ti, segs, cwd)
+        try: hit = rule_hits(r, tool, segs, cwd)
         except Exception as e:
             print(f"lane guard: project rule '{r.get('id','?')}' could not be evaluated "
                   f"({e.__class__.__name__}) and was skipped.", file=sys.stderr); continue
@@ -431,19 +444,15 @@ MALFORMED_MSG = ("The lane guard could not read this tool call (a field has the 
                  "happening report it -- Claude Code is sending something this guard does not expect.")
 try: _raw = sys.stdin.read()
 except Exception: sys.exit(0)
-try: data = json.loads(_raw)
+try: payload = AGENT.parse_event(_raw)
 except Exception:
-    if re.search(r'"hook_event_name"\s*:\s*"PreToolUse"', _raw):
-        _EVENT = "PreToolUse"; deny("PreToolUse", MALFORMED_MSG)
-    sys.exit(0)
-if not isinstance(data, dict): sys.exit(0)
-event = data.get("hook_event_name")
-if not isinstance(event, str): event = ""
-_EVENT = event
-_cwd = data.get("cwd")
-if event == "PreToolUse" and _cwd is not None and (not isinstance(_cwd, str) or "\x00" in _cwd):
-    deny(event, MALFORMED_MSG)
-cwd = _cwd if isinstance(_cwd, str) and _cwd and "\x00" not in _cwd else os.getcwd()
+    _PRE_TOOL = AGENT.claims_pre_tool(_raw)
+    raise
+if payload is None: sys.exit(0)
+event = payload.kind
+_PRE_TOOL = event == PRE_TOOL
+if payload.malformed: deny(event, MALFORMED_MSG)
+cwd = payload.cwd or os.getcwd()
 cur = lane_of(cwd)
 
 # secrets: never read, never edit, never print. Structure is available via `lane-env-keys` and .env.example.
@@ -1739,8 +1748,8 @@ def ref_add_refusal(raw, base):
     if is_secret(rp, base): return "that is a secret file"
     return None
 
-PLANE_TOP = ("scripts", "src", "docs", ".claude", "bin", ".github", ".git")   # src/: the package launcher, product code like scripts/
-WORKSPACE_TOP = (".claude", ".repolane", ".git")
+PLANE_TOP = ("scripts", "src", "docs", AGENT.config_dir, "bin", ".github", ".git")   # src/: the package launcher, product code like scripts/
+WORKSPACE_TOP = (AGENT.config_dir, ".repolane", ".git")
 def plane_target(rp):
     """What part of the control plane a path belongs to, or None."""
     if rp == AD: return "plane"
@@ -1756,13 +1765,13 @@ def plane_target(rp):
     if top == ".cache":
         # the inbox is where lane-memory drafts are written, and nx is a build cache; the rest is the guard's own state
         return None if rel.split("/")[1:2] in (["memory-inbox"], ["nx"]) else "plane"
-    # a workspace holds no product code at its top: what is the plane's there is .claude/ and the rest of .repolane/
+    # a workspace holds no product code at its top: what is the plane's there is the agent's folder and the rest of .repolane/
     tops = WORKSPACE_TOP if R.workspace else PLANE_TOP
     if top in tops or top == "registry" or "/" not in rel: return "plane"     # a file at the root is the plane's too
     return None
 
 def session_config_msg(rp):
-    if os.path.basename(rp).startswith("settings") and os.path.basename(os.path.dirname(rp)) == ".claude":
+    if AGENT.is_session_config(rp):
         return ("That file is the session's own permission and hook configuration. Editing it from "
                 "inside a session is how the rules get switched off silently. Change it from a "
                 "dispatcher session at the control plane root, or ask __OWNER__.")
@@ -2309,22 +2318,16 @@ def collect_vars(stmts):
         for _x in _names:
             if _ASSIGN.match(_x) and len(VARS) < 64: VARS[_x.split("=", 1)[0].rstrip("+")] = _x.split("=", 1)[1]
 
-if event == "PreToolUse":
-    tool = data.get("tool_name")
-    ti = data.get("tool_input")
+if event == PRE_TOOL:
+    tool = payload.tool
     # A field of the wrong type cannot be judged, and a guard that cannot judge a call refuses it (see the
     # docstring): a crash here would let the tool run with no decision at all.
-    if not isinstance(tool, str) or not (ti is None or isinstance(ti, dict)):
-        deny(event, MALFORMED_MSG)
-    ti = ti or {}
-    if any(ti.get(k) is not None and not isinstance(ti[k], str) for k in ("command", "file_path", "notebook_path", "path", "name", "pattern", "glob", "type")):
-        deny(event, MALFORMED_MSG)
-    ti = {k: (v if isinstance(v, (str, dict, list)) else str(v)) for k, v in ti.items()}
-    cmdA = ti.get("command", "") if tool == "Bash" else ""
+    if tool is None: deny(event, MALFORMED_MSG)
+    cmdA = tool.command
     # The segments project rules (registry/rules.yaml) are matched against.
     _segs = [s.strip() for s in re.split(r"[;&|]{1,2}|\n", cmdA) if s.strip()]
     stmts = []
-    if tool == "Bash":
+    if tool.kind is Kind.SHELL:
         stmts = shell_stmts(cmdA)
         collect_vars(stmts)                  # first, so that `bash -c "$c"` can be read; again afterwards for what the inner programs set
         for _st in stmts: subst_words(_st)
@@ -2346,9 +2349,9 @@ if event == "PreToolUse":
     OURS = bool(stmts) and all(st.words and ours_word(st.words[0], bases_of(st)[0]) and all(r == "/dev/null" for r in st.redirs) for st in stmts)
     # Project rules first: they only ever add a refusal, and several built-ins below answer
     # `allow` and exit, which would put the files they cover out of a project rule's reach.
-    enforce_rules(event, tool, ti, _segs, cwd)
-    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
-        fp0 = ti.get("file_path") or ti.get("notebook_path") or ""
+    enforce_rules(event, tool, _segs, cwd)
+    if tool.kind is Kind.WRITE:
+        fp0 = tool.file
         rp0 = os.path.realpath(abs_of(fp0, cwd)) if fp0 else ""
         msg = session_config_msg(rp0) if rp0 else None
         if msg and (cur or rp0.startswith(LANES + "/")): deny(event, msg)
@@ -2365,7 +2368,7 @@ if event == "PreToolUse":
             wid = os.path.basename(rp0)[:-3]
             if cur and wid != cur: deny(event, f"That is lane '{wid}'; this session is in '{cur}'. Only its own spec may be edited from here.")
         if kind == "plane" and cur: deny(event, PLANE_GATE.format(what=os.path.relpath(rp0, AD)))
-    if tool == "Bash":
+    if tool.kind is Kind.SHELL:
         # Lane lifecycle commands act on a lane by id; from inside a lane the only id that is yours is your own.
         for name, w, j in lane_cmds(stmts):
             if cur and name in ("done", "park", "resume", "with"):
@@ -2396,10 +2399,10 @@ if event == "PreToolUse":
                 or (any(os.path.basename(x) == "sed" for x in st.words) and any(re.match(r"-[a-zA-Z]*i|--in-place", x) for x in st.words)) \
                 or any(re.search(r"(memory|knowledge)/", x) for x in st.redirs)
             if memref and writes and (cur or os.path.realpath(cwd) != os.path.realpath(AD)): deny(event, MEMORY_GATE)
-    if tool == "EnterWorktree":
+    if tool.kind is Kind.ENTER_LANE:
         if cur:
             # Which lane is it aiming at? Aiming at its OWN is a re-pin attempt, not an escape.
-            aim = lane_of(abs_of(ti.get("path") or "", cwd)) if ti.get("path") else (ti.get("name") or "").strip("/").split("/")[0]
+            aim = lane_of(abs_of(tool.root, cwd)) if tool.root else tool.target.strip("/").split("/")[0]
             if aim == cur:
                 deny(event, f"You are already in lane {cur}. Nothing is wrong and there is nothing to repair — "
                             f"every repo of {cur} is already reachable from where you stand.\n"
@@ -2410,8 +2413,8 @@ if event == "PreToolUse":
                             f"If the shell sits inside one repo, that is cosmetic: it changes nothing about what you can "
                             f"reach. Do not try to move it, and do not exit — carry on with the work.")
             deny(event, STAY_MSG.format(cur=cur))
-        nm = (ti.get("name") or "").strip("/")
-        if ti.get("path"):
+        nm = tool.target.strip("/")
+        if tool.root:
             deny(event, "There is one way into a lane: EnterWorktree name=\"<lane-id>\". A path is not "
                         "accepted — it can land outside the registry, in a mirror, or in a stale worktree. "
                         "`lane-status` lists the ids.")
@@ -2422,7 +2425,7 @@ if event == "PreToolUse":
             deny(event, f"Name the lane, not a repo: EnterWorktree name=\"{lane_id}\". A session works on every "
                         f"repo of the lane at once — once inside, `cd ../<repo>` switches which one you stand "
                         f"in, and `git -C ../<repo>` needs no move at all. Never exit and re-enter to change repo.")
-    if tool == "Bash" and cur:
+    if tool.kind is Kind.SHELL and cur:
         for g in git_calls(stmts):
             if g.sub == "worktree" and "add" in g.args: deny(event, STAY_MSG.format(cur=cur))
         for st in stmts:
@@ -2444,36 +2447,34 @@ if event == "PreToolUse":
         # inside lane: a reference reached through lanes/<id>/refs/ is readable, never writable
         mode = ref_mode(tp, cur) if cur else None
         if mode:
-            if tool in ("Read", "Glob", "Grep") or mode == "rw": allow(event)
+            if tool.kind in (Kind.READ, Kind.LIST, Kind.SEARCH) or mode == "rw": allow(event)
             deny(event, f"This is a read-only reference of lane '{cur}'. Read it, do not change it. (lane-ref {cur} add <path> --rw to allow edits)")
         if in_old(tp): deny(event, FROZEN_MSG)
-    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Glob", "Grep"):
-        for key in ("file_path", "notebook_path", "path"):
-            tp = ti.get(key) or ""
-            if not tp: continue
+    if tool.kind in (Kind.WRITE, Kind.READ, Kind.LIST, Kind.SEARCH):
+        for tp in tool.paths:
             # first, so that nothing below (a reference's `allow`, say) can answer before a secret is looked at
-            if tool != "Glob" and is_secret(tp, cwd): deny(event, WRITE_SECRET_MSG if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit") else SECRET_MSG)
+            if tool.kind is not Kind.LIST and is_secret(tp, cwd): deny(event, WRITE_SECRET_MSG if tool.kind is Kind.WRITE else SECRET_MSG)
             judge_path(tp)
-        if tool == "Glob" and ti.get("pattern"):
+        if tool.kind is Kind.LIST and tool.pattern:
             # the part of a Glob pattern before its first wildcard is a path like any other, and `../..` climbs out
-            base_dir = re.split(r"[*?\[{]", ti["pattern"], maxsplit=1)[0]
-            if base_dir: judge_path(base_dir if base_dir.startswith(("/", "~")) else os.path.join(abs_of(ti.get("path") or "", cwd) or cwd, base_dir))
-        if tool == "Grep":
+            base_dir = re.split(r"[*?\[{]", tool.pattern, maxsplit=1)[0]
+            if base_dir: judge_path(base_dir if base_dir.startswith(("/", "~")) else os.path.join(abs_of(tool.root, cwd) or cwd, base_dir))
+        if tool.kind is Kind.SEARCH:
             # A search over a folder returns the lines of every file in it, `.env` included (the tool does not skip hidden files), so
             # a folder that holds a secret may be searched only with a filter that leaves it out: a negative glob ("!.env*") or a
             # positive one that cannot match it ("*.py"), or a file type. Glob lists names only, like `ls`, and is left alone.
-            if ti.get("glob") and glob_names_secret(ti["glob"]): deny(event, SECRET_MSG)
-            gdir = abs_of(ti.get("path") or "", cwd) if ti.get("path") else cwd
-            gl = ti.get("glob") or ""; excl, incl = [], []
+            if tool.glob and glob_names_secret(tool.glob): deny(event, SECRET_MSG)
+            gdir = abs_of(tool.root, cwd) if tool.root else cwd
+            gl = tool.glob; excl, incl = [], []
             for form in expand_braces(gl):
                 for piece in form.split():
                     (excl if piece.startswith("!") else incl).append(piece[1:] if piece.startswith("!") else piece)
-            if os.path.isdir(gdir) and (gdir == AD or gdir.startswith(AD + "/")) and not cannot_match_secret(incl, bool(ti.get("type"))):
+            if os.path.isdir(gdir) and (gdir == AD or gdir.startswith(AD + "/")) and not cannot_match_secret(incl, bool(tool.filetype)):
                 bad = uncovered(secrets_under(os.path.realpath(gdir)), excl, incl, [], restricted=False)
                 if bad:
                     deny(event, SECRET_MSG + f" (Grep over {gdir} would return lines from {', '.join(sorted(bad)[:3])}"
                          + ("" if len(bad) <= 3 else f" and {len(bad) - 3} more") + "; add glob \"!.env*\" (or a glob like \"*.py\", or type) so it is left out, or search a subfolder)")
-    if tool == "Bash" and cur and not OURS:
+    if tool.kind is Kind.SHELL and cur and not OURS:
         refs_ro = [(r, ref_name(cur, r)) for r, mode in lane_refs(cur) if mode != "rw"]
         if refs_ro:
             write_ish = any(os.path.basename(x) in ("rm", "mv", "tee", "touch", "mkdir", "chmod") for st in stmts for x in st.words) \
@@ -2485,11 +2486,11 @@ if event == "PreToolUse":
                 if touched and (write_ish or any(nm in x for st in stmts for x in st.redirs)):
                     deny(event, f"'{nm}' is a read-only reference of lane '{cur}': read it, do not change it. "
                                 f"(`lane-ref {cur} add <path> --rw` if it should be editable, `lane-ref {cur} rm {nm}` to detach it)")
-    if tool == "Bash" and not OURS and cmd_mentions_old(cmdA) \
+    if tool.kind is Kind.SHELL and not OURS and cmd_mentions_old(cmdA) \
        and not (cur and any(r in cmdA for r, _ in lane_refs(cur))):
         deny(event, FROZEN_MSG)
     in_mirror = os.path.realpath(cwd).startswith(REPOS + "/")
-    if tool == "Bash":
+    if tool.kind is Kind.SHELL:
         # Every path a command names is judged the way a file tool would judge it: the words themselves, the redirect
         # targets, and where their symlinks lead. Mentioning another lane is refused outright; a mirror or the plane
         # is refused only when the path is what the command WRITES. HOME, not a literal /Users/..., because that is
@@ -2648,57 +2649,52 @@ if event == "PreToolUse":
         if LIMIT: deny(event, LIMIT_MSG.format(why=LIMIT[0]))
 
     if LIMIT: deny(event, LIMIT_MSG.format(why=LIMIT[0]))
-    if tool == "Bash" and cur:
+    if tool.kind is Kind.SHELL and cur:
         m = re.search(re.escape(f"{LANES}/{cur}/") + r"([\w.-]+)", cmdA) or re.search(r"(?:^|\s)(?:cd|-C)\s+(?:\S*/)?lanes/" + re.escape(cur) + r"/([\w.-]+)", cmdA)
         repo = m.group(1) if m and os.path.exists(f"{LANES}/{cur}/{m.group(1)}/.git") else None
         if repo:
             # last, so that a first touch of a repo can never answer before every refusal above has had its say
-            st, sp = sess_state(data.get("session_id", ""))
+            st, sp = sess_state(payload.session_id)
             if repo not in st["rules"]:
                 st["rules"].append(repo); sess_save(st, sp)
-                out({"hookSpecificOutput": {"hookEventName": event, "additionalContext": rules_brief(cur, repo)}})
-    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Read"):
-        fp = ti.get("file_path") or ti.get("notebook_path") or ""
+                context(event, rules_brief(cur, repo))
+    if tool.kind in (Kind.WRITE, Kind.READ):
+        fp = tool.file
         rp = os.path.realpath(fp) if fp else ""
-        if rp.startswith(REPOS + "/") and (tool != "Read" or cur):
+        if rp.startswith(REPOS + "/") and (tool.kind is not Kind.READ or cur):
             deny(event, f"{REPOS}/ is the read-only mirror. Work in the lane worktree under lanes/ (scripts/lane-start or lane-resume).")
         target = lane_of(rp)
         if cur and target and target != cur:
             deny(event, f"'{target}' is a different lane. This session is in '{cur}'. Ask __OWNER__ to add that repo with scripts/lane-with {cur} <repo>, or switch lanes.")
         if cur and target == cur:
             repo = repo_of(rp, cur); extra = None
-            here = repo_of(cwd, cur)  # the repo the session stands in loads its own CLAUDE.md natively
+            here = repo_of(cwd, cur)  # the repo the session stands in loads its own instructions natively
             if repo and repo != here:
-                st, sp = sess_state(data.get("session_id", ""))
+                st, sp = sess_state(payload.session_id)
                 if repo not in st["rules"]:
                     st["rules"].append(repo); sess_save(st, sp); extra = rules_brief(cur, repo)
-            o = {"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "allow"}}
-            if extra: o["hookSpecificOutput"]["additionalContext"] = extra
-            out(o)
-    if tool in ("Glob", "Grep") and cur:
-        target = lane_of(abs_of(ti.get("path") or "", cwd)) if ti.get("path") else None
+            allow(event, extra)
+    if tool.kind in (Kind.LIST, Kind.SEARCH) and cur:
+        target = lane_of(abs_of(tool.root, cwd)) if tool.root else None
         if target and target != cur:
             deny(event, f"'{target}' is a different lane. This session is in '{cur}'. Ask __OWNER__ to add that repo with scripts/lane-with {cur} <repo>, or switch lanes.")
     sys.exit(0)
 
 # ------------------------------------------------------------ PostToolUse: touched files
-if event == "PostToolUse":
-    tool = data.get("tool_name", "")
+if event == POST_TOOL:
+    tool = payload.tool
     # Bookkeeping only (which files a lane touched), so unlike PreToolUse a malformed body is simply ignored.
-    ti = data.get("tool_input") or {}
-    if not isinstance(ti, dict): ti = {}
-    ti = {k: (v if isinstance(v, (str, dict, list)) else str(v)) for k, v in ti.items()}
-    if not isinstance(ti.get("file_path"), (str, type(None))) or not isinstance(ti.get("notebook_path"), (str, type(None))): sys.exit(0)
+    if tool is None: sys.exit(0)
     # A session that has just entered a lane gets the lane's rules (LANE.md) now: from here on Claude Code refuses its
     # Edit/Write outside the lane folder before any hook runs, so only told instructions can point it at lane-memory.
     # The lane is the one the session now sits in, or the one EnterWorktree named (`<id>` or `<id>/<repo>`).
-    if tool == "EnterWorktree" and R.workspace:
-        lid = cur or (ti.get("name") if isinstance(ti.get("name"), str) else "").split("/")[0]
+    if tool.kind is Kind.ENTER_LANE and R.workspace:
+        lid = cur or tool.target.split("/")[0]
         if lid and re.fullmatch(r"[A-Za-z0-9._-]+", lid) and lid not in (".", "..") and os.path.isfile(f"{LANES_DIR}/{lid}.md"):
             context(event, R.lane_context(lid))
         sys.exit(0)
-    if cur and tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
-        fp = ti.get("file_path") or ti.get("notebook_path")
+    if cur and tool.kind is Kind.WRITE:
+        fp = tool.file
         if fp:
             try:
                 with open(f"{LANES}/{cur}/.touched", "a") as f: f.write(os.path.realpath(fp) + "\n")
@@ -2706,10 +2702,10 @@ if event == "PostToolUse":
     sys.exit(0)
 
 # --------------------------------------------------------- UserPromptSubmit: one-line state
-if event == "UserPromptSubmit":
+if event == PROMPT:
     if cur:
         rel = os.path.relpath(os.path.realpath(cwd), AD)
-        st, sp = sess_state(data.get("session_id", "")); pre = ""
+        st, sp = sess_state(payload.session_id); pre = ""
         if cur not in st["mem"]:
             st["mem"].append(cur); sess_save(st, sp); pre = memory_brief(cur) + "\n\n"
         repos_here = lane_repo_dirs(cur)
@@ -2738,11 +2734,11 @@ if event == "UserPromptSubmit":
     sys.exit(0)
 
 # --------------------------------------------------------------- PreCompact: keep the spec
-if event == "PreCompact":
+if event == PRE_COMPACT:
     # The conversation is about to lose its context, so the once-per-session briefs (memory index, a repo's rules)
     # have to be injected again. This used to hang off SessionStart/compact, but SessionStart is wired to
     # scripts/session-start, never to this file, so the branch was dead.
-    try: os.remove(sess_file(data.get("session_id")))
+    try: os.remove(sess_file(payload.session_id))
     except OSError: pass
     if cur and os.path.exists(f"{LANES_DIR}/{cur}.md"):
         spec = open(f"{LANES_DIR}/{cur}.md").read()
@@ -2758,27 +2754,13 @@ if event == "PreCompact":
     sys.exit(0)
 
 # --------------------------------------------------------------- SessionEnd: auto-log
-if event == "SessionEnd":
-    try: os.remove(sess_file(data.get("session_id")))
+if event == SESSION_END:
+    try: os.remove(sess_file(payload.session_id))
     except OSError: pass
-    # Keep every transcript in exactly one project folder, under its repo. A conversation resumed from the
-    # lane root may get its continuation written under the root's project folder; if the same id also
-    # exists under a repos/<repo> folder, move the newer file into the repo folder and park the older one.
-    sid = data.get("session_id", "")
-    proj = os.path.expanduser("~/.claude/projects")
-    root_slug = re.sub(r"[^A-Za-z0-9-]", "-", AD)          # how Claude Code names a project folder: everything but letters, digits and "-"
-    root_f = f"{proj}/{root_slug}/{sid}.jsonl"
-    if sid and os.path.exists(root_f):
-        import glob as _g
-        # a mirror's project folder: the slug of repos/<repo> (under .repolane/ in a workspace)
-        others = _g.glob(f"{proj}/{re.sub(r'[^A-Za-z0-9-]', '-', REPOS)}-*/{sid}.jsonl")
-        if len(others) == 1:
-            repo_f = others[0]
-            newer, older = (root_f, repo_f) if os.path.getmtime(root_f) >= os.path.getmtime(repo_f) else (repo_f, root_f)
-            os.replace(older, older + ".superseded")
-            if newer == root_f: os.replace(root_f, repo_f)
-            with open(f"{CACHE}/transcript-moves.log", "a") as lg:
-                lg.write(f"{datetime.datetime.now():%F %T} {sid}: kept newest under {os.path.dirname(repo_f)}; older -> .superseded\n")
+    moved = AGENT.tidy_transcripts(payload.session_id, AD, REPOS)
+    if moved:
+        with open(f"{CACHE}/transcript-moves.log", "a") as lg:
+            lg.write(f"{datetime.datetime.now():%F %T} {moved}\n")
     if cur and os.path.exists(f"{LANES_DIR}/{cur}.md"):
         touched = set()
         tf = f"{LANES}/{cur}/.touched"
@@ -2811,13 +2793,13 @@ if event == "SessionEnd":
     sys.exit(0)
 
 # ------------------------------------------------- WorktreeCreate: EnterWorktree(name="<id>/<repo>")
-if event == "WorktreeCreate":
+if event == LANE_ENTER:
     if cur:
-        print(R.words(STAY_MSG.format(cur=cur)), file=sys.stderr); sys.exit(1)
+        answer(event, Decision.refuse(R.words(STAY_MSG.format(cur=cur))))
     # EnterWorktree name= is interpreted by us, not by git:
     #   "<id>"          an existing lane -> resume it and land in whichever repo the work is in
     #   "<id>/<repo>"   that repo of that lane; creates the lane/worktree if needed
-    name = data.get("name", "").strip("/")
+    name = payload.target.strip("/")
     parts = [x for x in name.split("/") if x]
     known = sorted(os.listdir(REPOS))
 
@@ -2832,23 +2814,22 @@ if event == "WorktreeCreate":
         rs = repos_in(lane_id)
         if not rs:
             active = sorted(os.path.basename(f)[:-3] for f in __import__("glob").glob(f"{LANES_DIR}/*.md"))
-            print(f"lane: no lane '{lane_id}'. To start new work name a repo too: <id>/<repo>.\n"
-                  f"  repos: {', '.join(known)}\n  lanes: {', '.join(active)}", file=sys.stderr)
-            sys.exit(1)
+            answer(event, Decision.refuse(f"lane: no lane '{lane_id}'. To start new work name a repo too: <id>/<repo>.\n"
+                                          f"  repos: {', '.join(known)}\n  lanes: {', '.join(active)}"))
         # inherits LANE_PRODUCT / LANE_WORKSPACE when they were set, so it acts on the workspace this guard judged
         r = subprocess.run([f"{PRODUCT}/scripts/lane-resume", lane_id], capture_output=True, text=True)
         if r.returncode != 0:
-            print(r.stdout + r.stderr, file=sys.stderr); sys.exit(1)
+            answer(event, Decision.refuse(r.stdout + r.stderr))
         live = [x for x in rs if os.path.exists(f"{LANES}/{lane_id}/{x}/.git")]
         if not live:
-            print(f"lane: lane '{lane_id}' has no worktree to enter", file=sys.stderr); sys.exit(1)
+            answer(event, Decision.refuse(f"lane: lane '{lane_id}' has no worktree to enter"))
         # Sit in the lane itself, not in one of its repos. The anchor repo in that folder is what
         # makes it possible; without it git would resolve the folder to lane and Claude Code would refuse.
         if os.path.exists(f"{LANES}/{lane_id}/.git"):
-            print(f"lane: in lane {lane_id}. Its repos — {', '.join(live)} — are all yours to work on; "
-                  f"none is primary. Edit them at <repo>/…, run git with `git -C <repo>`, and `cd <repo>` only when a "
-                  f"tool needs the working directory.", file=sys.stderr)
-            print(f"{LANES}/{lane_id}"); sys.exit(0)
+            answer(event, Decision.enter(f"{LANES}/{lane_id}",
+                f"lane: in lane {lane_id}. Its repos — {', '.join(live)} — are all yours to work on; "
+                f"none is primary. Edit them at <repo>/…, run git with `git -C <repo>`, and `cd <repo>` only when a "
+                f"tool needs the working directory."))
         # No repo of a lane is primary. A session has to start somewhere, so start where the work is:
         # uncommitted changes first, then the most recent commit. The choice changes with the work, by design.
         def recency(x):
@@ -2857,21 +2838,22 @@ if event == "WorktreeCreate":
             when = git(d, "log", "-1", "--format=%ct") or "0"
             return (-min(dirty, 1), -int(when) if when.isdigit() else 0, x)
         here = sorted(live, key=recency)[0]
+        note = None
         if len(live) > 1:
             rest = [x for x in live if x != here]
-            print(f"lane: a session's folder is always one repo — git needs it — so this one starts in {here}, "
-                  f"where the most recent work is. That makes it no more important than {', '.join(rest)}.\n"
-                  f"  to work in another repo of {lane_id}:   cd ../<repo>      (allowed, and it stays in the lane)\n"
-                  f"  to start there next time:             EnterWorktree name=\"{lane_id}/<repo>\"\n"
-                  f"  never exit and re-enter to switch repo — that is what a cd is for.", file=sys.stderr)
-        print(f"{LANES}/{lane_id}/{here}"); sys.exit(0)
+            note = (f"lane: a session's folder is always one repo — git needs it — so this one starts in {here}, "
+                    f"where the most recent work is. That makes it no more important than {', '.join(rest)}.\n"
+                    f"  to work in another repo of {lane_id}:   cd ../<repo>      (allowed, and it stays in the lane)\n"
+                    f"  to start there next time:             EnterWorktree name=\"{lane_id}/<repo>\"\n"
+                    f"  never exit and re-enter to switch repo — that is what a cd is for.")
+        answer(event, Decision.enter(f"{LANES}/{lane_id}/{here}", note))
 
     lane_id = parts[0]
-    print(f"lane: name the lane, not a repo — EnterWorktree name=\"{lane_id}\". A session works on every "
-          f"repo of the lane at once; `cd ../<repo>` switches which one you stand in. A lane is created "
-          f"with `lane-start {lane_id} <repo>[:<branch>][@<base>] …`.", file=sys.stderr); sys.exit(1)
+    answer(event, Decision.refuse(f"lane: name the lane, not a repo — EnterWorktree name=\"{lane_id}\". A session works on every "
+                                  f"repo of the lane at once; `cd ../<repo>` switches which one you stand in. A lane is created "
+                                  f"with `lane-start {lane_id} <repo>[:<branch>][@<base>] …`."))
 
-if event == "WorktreeRemove":
-    print(R.words("lane: worktrees are removed by scripts/lane-done after the branch is pushed. Nothing was removed."), file=sys.stderr); sys.exit(1)
+if event == LANE_LEAVE:
+    answer(event, Decision.refuse(R.words("lane: worktrees are removed by scripts/lane-done after the branch is pushed. Nothing was removed.")))
 
 sys.exit(0)
