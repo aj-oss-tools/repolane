@@ -8,7 +8,9 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- Everything specific to Claude Code now sits behind an agent adapter (`scripts/agents/`, `lane agent <action>`), so a second agent costs one new adapter. Nothing changes in how it behaves.
 
 ## [0.11.0] — 2026-10-25
 

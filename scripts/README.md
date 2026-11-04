@@ -60,6 +60,7 @@ can tell you to type `lane-brief <id>` and have it work from any directory.
 | `statusline.sh`, `wire-statusline.py` | the Claude Code status line |
 | `session-start` | the `SessionStart` hook: what a new session is told |
 | `hooks/` | the guard — see [`hooks/README.md`](hooks/README.md) |
+| `agents/` | everything specific to the agent: Claude Code's hook format, settings, status line wiring, transcripts (see below) |
 | `board/` | the web board — see [`board/README.md`](board/README.md) |
 
 ## `lib.sh`
@@ -86,10 +87,11 @@ siblings. `lib.sh` then sets `set -euo pipefail` and defines the shared vocabula
 | `lane_repos <id>` | the `repo branch` pairs in the lane |
 | `lane_set_status <id> <status>` | rewrite `status:` and `updated:` |
 | `lane_anchor <id>` | give the lane folder an empty git repo of its own (see below) |
-| `write_guard <dir> <id> <mem>` | write the per-session `.claude/settings.local.json` |
+| `write_guard <dir> <id> <mem>` | write the per-session `.claude/settings.local.json`, through the adapter |
 | `refresh_guards` | rewrite every lane's guard, so new siblings are denied everywhere |
 | `link_env <repo> <worktree>` | symlink the mirror's env files into a fresh worktree |
-| `write_lane_claude <id>` | the small `CLAUDE.md` at the lane root |
+| `write_lane_claude <id>` | the small `CLAUDE.md` at the lane root, through the adapter |
+| `lane_agent <action>` | ask the adapter something (`lane agent <action>` is the same) |
 
 Two of those are worth understanding:
 
@@ -98,11 +100,24 @@ walks up from the lane folder, decides it belongs to the control plane's own rep
 Code refuses to sit there. Nothing is ever committed to it; the real work is in the repo worktrees
 beside it, each with its own `.git`.
 
-**`write_guard`** is the belt to the hook's braces. It writes a `.claude/settings.local.json` that
+**`write_guard`** is the belt to the hook's braces. Through `install_lane` in `agents/claude_setup.py`, it writes a `.claude/settings.local.json` that
 denies `repos/**` and every *other* lane by absolute path, denies every env and key pattern, allows
 the read-only `lane-*` commands, points `autoMemoryDirectory` at the right folder, and wires the
 hooks. `refresh_guards` re-runs it everywhere, because starting a fourth lane has to teach the
 other three that it exists.
+
+## `agents/`
+
+What is specific to the agent lives behind one adapter per agent, one level of inheritance, stdlib only. Claude Code is the
+default and the only one registered (`agents/__init__.py`).
+
+| | |
+|---|---|
+| `base.py` | the neutral types (`Event`, `ToolCall`, `Decision`, `Capability`) and the `AgentAdapter` base class |
+| `claude.py` | `ClaudeAdapter`: reads the hook body, writes the answer, knows the transcripts. The guard loads it on every tool call, so it stays small |
+| `claude_setup.py` | Claude Code's files: hooks and approvals in the settings, status line, slash commands, `CLAUDE.md`, a lane's `settings.local.json`. Loaded only to install; `roots.py` passes its names on to the commands that use them |
+| `cli.py` | `lane agent <action>`: what bash needs to ask. Read-only, because a session can run it |
+| `install.py` | what `lib.sh` calls to write a lane's agent files. Not reachable through `lane agent` |
 
 ## Adding a command
 
@@ -111,8 +126,8 @@ other three that it exists.
 2. Symlink it: `ln -s ../scripts/lane-<name> bin/lane-<name>`.
 3. Add a line to the `map()` case and to `ORDER` in `../lane`, so it appears in `lane help`.
 4. Add it to `scripts/menu` if a person should discover it there.
-5. If it only ever reads, add it to `READONLY_LANE` in `lib.sh` so sessions may run it without a
-   permission prompt.
+5. If it only ever reads, add it to `READONLY_LANE` in `agents/claude_setup.py` so sessions may run it
+   without a permission prompt.
 
 Two conventions worth keeping. **Check everything before changing anything** — `lane-done` verifies
 every repo before it removes any worktree, because the version that checked and removed in one pass
