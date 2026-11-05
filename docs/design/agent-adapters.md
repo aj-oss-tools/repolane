@@ -1,6 +1,6 @@
 # Agent adapters: supporting more than Claude Code
 
-**Status: proposed. Nothing here is built.** Trial run on 2026-11-04 with Antigravity CLI (`agy`) 1.5.0.
+**Status: step 2 built (`scripts/agents/`, Claude only). Antigravity is not built yet.** Trial run on 2026-11-04 with Antigravity CLI (`agy`) 1.5.0.
 
 ## Goal
 
