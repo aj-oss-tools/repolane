@@ -473,6 +473,12 @@ raw_case pass 0 "JSON list holding a PreToolUse-looking object" '[{"hook_event_n
 raw_case pass 0 "empty stdin" ''
 raw_case pass 0 "not JSON, not a tool call" 'this is not json'
 raw_case deny 0 "not JSON but plainly a PreToolUse payload" '{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "cat .env"'
+raw_case deny 0 "a PreToolUse payload that is not valid UTF-8" "$(pre Bash "$W" $'{"command":"cat .env \xff"}')"
+raw_case deny 0 "not valid UTF-8 inside an otherwise truncated PreToolUse payload" $'{"hook_event_name":"PreToolUse","tool_input":{"command":"\xff'
+raw_case pass 0 "not valid UTF-8, not a tool call" $'{"hook_event_name":"SessionEnd","cwd":"\xff"}'
+raw_case pass 0 "bytes that are not text at all" $'\xff\xfe\x80'
+raw_case pass 0 "a well-formed call with non-ASCII text still passes" "$(pre Bash "$W" '{"command":"echo héllo ✓"}')"
+raw_case deny 0 "a well-formed call with non-ASCII text is still judged" "$(pre Bash "$W" '{"command":"echo héllo; cat .env"}')"
 raw_case deny 0 "Bash command is a list" "$(pre Bash "$W" '{"command":["cat",".env"]}')"
 raw_case deny 0 "Bash command is a number" "$(pre Bash "$W" '{"command":5}')"
 raw_case deny 0 "Read file_path is a list" "$(pre Read "$W" '{"file_path":["/etc/passwd"]}')"
