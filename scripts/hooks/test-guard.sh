@@ -11,6 +11,11 @@ set -u
 unset LANE_PRODUCT LANE_WORKSPACE
 cd "$(dirname "$0")/../.." || exit 1
 SRC=$PWD; fail=0; cases=0; passed=0
+# LANE_GUARD_AGENT=antigravity runs every case below through that adapter: scripts/agents/translate.py turns a call written for
+# Claude Code into the agent's own, and its answer back. tests/t_guard_agents.sh holds the differences it expects.
+if [ -n "${LANE_GUARD_AGENT:-}" ]; then
+  python3(){ case "${1:-}" in */scripts/hooks/guard.py) local g="$1"; shift; command python3 -B "$SRC/scripts/agents/translate.py" "$g" "$@" ;; *) command python3 "$@" ;; esac; }
+fi
 
 die(){ echo "!! test-guard: $*" >&2; exit 1; }
 # The number of cases is not written down anywhere (a hard-coded count has to be edited by hand and nobody notices when
