@@ -134,6 +134,16 @@ judged "$d" '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/tmp","to
 assert_eq "format_decision blows up: exit 0" 0 "$RC"; assert_contains "format_decision blows up: still a deny" "$OUT" '"permissionDecision": "deny"'
 assert_contains "format_decision blows up: says why" "$OUT" "internal error (RuntimeError)"
 
+echo "-- the adapter is the plane's code: a session cannot rewrite it"
+make_remote_repo guarded; add_repo guarded; lane start G1 guarded
+GW="$PLANE/lanes/G1/guarded"
+for t in "Edit file_path" "Write file_path"; do
+  j="{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"${t%% *}\",\"cwd\":\"$GW\",\"tool_input\":{\"file_path\":\"$S/agents/claude.py\"}}"
+  assert_contains "${t%% *} on scripts/agents from a lane is refused" "$(printf '%s' "$j" | python3 -B "$G" 2>/dev/null)" '"permissionDecision": "deny"'
+done
+j="{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"cwd\":\"$GW\",\"tool_input\":{\"command\":\"echo x > $S/agents/base.py\"}}"
+assert_contains "a redirect onto scripts/agents from a lane is refused" "$(printf '%s' "$j" | python3 -B "$G" 2>/dev/null)" '"permissionDecision": "deny"'
+
 echo "-- the guard's startup stays cheap"
 assert_eq "no slow module comes with the adapter" "[]" "$(py 'print([m for m in ("dataclasses","typing","inspect","pathlib","asyncio","importlib.metadata") if m in sys.modules])')"
 assert_eq "the guard does not load the settings code" False "$(py 'print("agents.claude_setup" in sys.modules)')"
