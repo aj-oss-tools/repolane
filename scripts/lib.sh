@@ -65,8 +65,15 @@ lane_set_status(){
   local f t; f="$(lane_file "$1")"; t="$f.tmp.$$"
   sed "s/^status: .*/status: $2/; s/^updated: .*/updated: $(date +%F)/" "$f" > "$t" && mv "$t" "$f" || { rm -f "$t"; return 1; }
 }
+# LANE_AGENT : the agent a workspace opted in to (`agent:` in config.yml), empty for Claude Code alone. What is said to a person
+# follows it; Claude Code's files stay in place either way. A session's own hook says which agent it is (LANE_HOOK_AGENT).
+LANE_AGENT=""; [ "$LANE_MODE" = workspace ] && LANE_AGENT=$(sed -n 's/^agent:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -1 || true)
 # lane_agent <action> : the adapter, for what bash needs from the agent (the same thing as `lane agent <action>`)
-lane_agent(){ python3 -B "$PRODUCT/scripts/agents/cli.py" "$@"; }
+lane_agent(){ python3 -B "$PRODUCT/scripts/agents/cli.py" ${LANE_AGENT:+--agent "$LANE_AGENT"} "$@"; }
+# lane_can <capability> : Claude Code alone can do all of them, and needs no process to say so
+lane_can(){ [ -z "$LANE_AGENT" ] || lane_agent has "$1"; }
+# lane_launch : the command that starts a session here
+lane_launch(){ if [ -z "$LANE_AGENT" ]; then echo claude; else lane_agent launch; fi; }
 # lane_install <action> : the adapter's installers for a lane (scripts/agents/install.py), told where everything is
 lane_install(){ local a="$1"; shift; python3 -B "$PRODUCT/scripts/agents/install.py" "$a" "$AD" "$PRODUCT" "$LANE_MODE" "$REPOS" "$LANES_DIR" "$MEMORY_DIR" "$KNOWLEDGE_DIR" "$CACHE_DIR" "$@"; }
 # permission guard for a session rooted at $1: deny repos/ and every other lane

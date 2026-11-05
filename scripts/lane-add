@@ -138,7 +138,7 @@ if [ -n "$candidates" ]; then
 fi
 
 # Past conversations live under the folder they ran in. If we know that folder, say what is there.
-if [ -n "$local_path" ]; then
+if [ -n "$local_path" ] && lane_can import-conversations; then
   oldslug=$(claude_project_dir "$local_path")
   olddir="${CLAUDE_HOME:-$HOME/.claude}/projects/$oldslug"
   n=0; [ -d "$olddir" ] && n=$(ls "$olddir"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')

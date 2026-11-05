@@ -125,7 +125,7 @@ while read -r repo branch; do d="$LANES/$id/$repo"; [ -d "$d" ] || continue
   [ "$DELETE_BRANCHES" = 1 ] && git -C "$REPOS/$repo" branch -D "$branch" && echo "deleted branch $branch"
 
   sdir="$HOME/.claude/projects/$(claude_project_dir "$d")"
-  sn=0; [ -d "$sdir" ] && sn=$(ls "$sdir"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+  sn=0; lane_can import-conversations && [ -d "$sdir" ] && sn=$(ls "$sdir"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
   if [ "$sn" -gt 0 ] 2>/dev/null; then
     case "$SESSIONS_MODE" in
       delete) rm -rf "$sdir"; echo "deleted $sn session(s) for $repo" ;;

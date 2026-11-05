@@ -5,7 +5,7 @@ if [ -z "${LANE_PLAIN:-}" ] && [ -z "${_LANE_INNER:-}" ]; then
   input=""; [ -t 0 ] || input=$(cat)
   text=$(printf '%s' "$input" | _LANE_INNER=1 "$0" "$@")
   screen=$(printf '%s' "$input" | _LANE_INNER=1 LANE_SCREEN=1 "$0" "$@")
-  python3 -B -c 'import os,sys; sys.path.insert(0,os.path.dirname(os.path.realpath(sys.argv[1]))); import agents; print(agents.get().session_start_reply(sys.argv[2],sys.argv[3]))' "$0" "$text" "$screen"
+  python3 -B -c 'import os,sys; sys.path.insert(0,os.path.dirname(os.path.realpath(sys.argv[1]))); import agents; print(agents.get(os.environ.get("LANE_HOOK_AGENT") or agents.DEFAULT).session_start_reply(sys.argv[2],sys.argv[3]))' "$0" "$text" "$screen"
   exit 0
 fi
 # SessionStart hook. Reads the hook JSON on stdin (session_id, transcript_path, source, cwd), prints
@@ -13,6 +13,8 @@ fi
 # the conversation belongs to and the exact choices to offer the owner before anything else.
 source "$(python3 -c 'import os,sys;print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")/lib.sh"
 source "$PRODUCT/scripts/gitstate.sh"
+LANE_AGENT="${LANE_HOOK_AGENT:-}"   # this session's agent, as its hook named it; not the workspace's choice, which a claude session there does not follow
+export LANE_HOOK_AGENT="${LANE_HOOK_AGENT:-claude}"   # and the same for roots.py words
 input=""; [ -t 0 ] || input=$(cat)
 printf '%s' "$input" > "$CACHE_DIR/last-session-start.json" 2>/dev/null || true
 read -r source sid scwd <<<"$(printf '%s' "$input" | lane_agent session-start-input 2>/dev/null || echo "startup - -")"
@@ -91,7 +93,7 @@ if [ "${1:-}" = "--worktree" ] || [ -n "$cur" ]; then
       echo "Lane scripts: call them by ABSOLUTE path, $PRODUCT/scripts/<name> (e.g. $PRODUCT/scripts/lane-brief $id). You are in the lane, so a relative scripts/<name> does not exist here and exits 127."
     fi
     # a workspace hands the lane's rules (LANE.md) to a session started inside the lane too, not only after EnterWorktree
-    if [ "$LANE_MODE" = workspace ]; then echo; python3 -B "$PRODUCT/scripts/roots.py" lane-context "$id" </dev/null; fi
+    if [ "$LANE_MODE" = workspace ] && lane_can enter-lane; then echo; python3 -B "$PRODUCT/scripts/roots.py" lane-context "$id" </dev/null; fi
   fi
   exit 0
 fi

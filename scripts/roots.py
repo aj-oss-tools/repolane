@@ -239,13 +239,30 @@ def refresh(product, ad, force=False):
         if applies(have, want): step(ad)
     for f in RULE_FILES:
         with open(f"{product}/templates/{f}") as fh: _write(f"{data}/{f}", fh.read())
-    _agents().get().refresh_workspace(product, ad)
+    for a in _agents_of(ad): a.refresh_workspace(product, ad)
     _write(f"{data}/version", want + "\n")
     return True
 
 
 # ------------------------------------------------------------------------------------------- an empty workspace
-def make_workspace(product, ad, owner=""):
+def _agents_of(ad):
+    """Claude Code's adapter, and the one this workspace opted in to, if any."""
+    a = _agents()
+    extra = a.configured(f"{ad}/.repolane/config.yml")
+    return [a.get()] + ([a.get(extra)] if extra and extra != a.DEFAULT else [])
+
+
+def _set_agent(ad, name):
+    """The workspace's choice: one line in config.yml, which a session cannot write (the guard refuses it)."""
+    import re
+    p = f"{ad}/.repolane/config.yml"
+    with open(p) as fh: text = fh.read()
+    line = f"agent: {name}\n"
+    text = re.sub(r"^agent:.*\n?", line, text, flags=re.M) if re.search(r"^agent:", text, re.M) else text + ("" if text.endswith("\n") or not text else "\n") + line
+    _write(p, text)
+
+
+def make_workspace(product, ad, owner="", agent=""):
     """Create the workspace layout in `ad` (made if missing), filling only what is absent: it is safe to run again over a
     workspace in use, and never overwrites the user's data. CLAUDE.md is the user's file: a small one is written when there
     is none, and an existing one is never edited here (`lane init` and `lane doctor --fix` ask before adding the import
@@ -272,7 +289,8 @@ def make_workspace(product, ad, owner=""):
     except OSError:
         pass
     seed(f"{data}/env.sh", template("env.sh"))
-    made += _agents().get().install_workspace(product, ad, seed)
+    if agent and agent != "claude": _set_agent(ad, agent)
+    for a in _agents_of(ad): made += a.install_workspace(product, ad, seed)
     if refresh(product, ad):
         made.append(f".repolane/REPOLANE.md, .repolane/LANE.md (version {product_version(product)})")
     return made
@@ -284,12 +302,17 @@ def main(argv):
         refresh(os.path.realpath(argv[2]), os.path.realpath(argv[3])); return 0
     if cmd == "make-workspace" and len(argv) in (4, 5):
         make_workspace(os.path.realpath(argv[2]), argv[3], argv[4] if len(argv) == 5 else ""); print(os.path.realpath(argv[3])); return 0
+    if cmd == "agent" and len(argv) == 2:
+        here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        print(_agents().configured(Roots(here).config)); return 0
     if cmd == "lane-context" and len(argv) == 3:
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         sys.stdout.write(Roots(here).lane_context(argv[2])); return 0
     if cmd == "words" and len(argv) == 2:
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-        sys.stdout.write(Roots(here).words(sys.stdin.read())); return 0
+        r = Roots(here); text = r.words(sys.stdin.read())
+        a = _agents()   # a hook says whose session it is; otherwise it is the person, and the workspace's choice
+        sys.stdout.write(a.get(os.environ.get("LANE_HOOK_AGENT") or a.configured(r.config) or a.DEFAULT).say(text)); return 0
     if cmd == "paths" and len(argv) in (2, 3):
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         for k, v in Roots(here, start=argv[2] if len(argv) == 3 else None).paths().items(): print(f"{k}={v}")
