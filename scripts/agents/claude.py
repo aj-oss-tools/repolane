@@ -52,15 +52,16 @@ def _post_tool(data):
 
 class ClaudeAdapter(AgentAdapter):
     name = "claude"
-    capabilities = frozenset(Capability)
+    capabilities = frozenset(Capability) - {Capability.CONVERSATION_LEDGER}
     rules_file = "CLAUDE.md"
     config_dir = ".claude"
     resume_hint = "launch claude inside its worktree, then `claude --resume <id>`"
+    launch = "claude"
 
     def claims_pre_tool(self, raw):
         return bool(_PRE_TOOL_TEXT.search(raw))
 
-    def parse_event(self, raw):
+    def parse_event(self, raw, hint=None):
         try: data = json.loads(raw)
         except Exception:
             return Event(PRE_TOOL, malformed=True) if self.claims_pre_tool(raw) else None
@@ -76,6 +77,7 @@ class ClaudeAdapter(AgentAdapter):
     def format_decision(self, event, d):
         if d.kind == Decision.REFUSE: return Reply(stderr=d.text, code=1)
         if d.kind == Decision.ENTER: return Reply(stdout=d.text, stderr=d.context)
+        if d.kind == Decision.NONE: return Reply()
         out = {"hookEventName": _EVENT_NAMES[event]}
         if d.kind == Decision.DENY: out.update(permissionDecision="deny", permissionDecisionReason=d.text)
         elif d.kind == Decision.ALLOW:
