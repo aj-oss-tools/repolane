@@ -31,7 +31,10 @@ marker the model can type itself, so it is advisory: it documents that the human
 import fnmatch, glob, itertools, json, os, re, subprocess, sys, datetime
 
 LIMIT = []       # why the Bash reader gave up on a command; any entry turns the call into a deny (fail closed)
-_PRE_TOOL = False   # set once the payload is read; the crash handler below needs it to pick fail-closed vs fail-open
+# The agent and the event, when the hook command names them (an agent whose body does not). Claude Code's hooks pass neither.
+def _arg(flag): return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv[:-1] else None
+_AGENT_ARG, _EVENT_ARG = _arg("--agent"), _arg("--event")
+_PRE_TOOL = _EVENT_ARG == "pre-tool-use"   # set for good once the payload is read; the crash handler below needs it to pick fail-closed vs fail-open
 def _crash(et, ev, tb):
     import traceback
     traceback.print_exception(et, ev, tb)
@@ -40,9 +43,10 @@ def _crash(et, ev, tb):
                f"and refuses what it cannot judge. Retry; if it repeats, run `lane doctor` and report it.")
         try: print(AGENT.format_decision(PRE_TOOL, Decision.deny(why)).stdout)
         except Exception:
-            # the adapter is what broke, or never loaded. Claude Code's refusal, written out: with no adapter it is the default
-            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                  "permissionDecisionReason": why}}))
+            # the adapter is what broke, or never loaded. The refusal, written out: with no adapter Claude Code's is the default
+            print(json.dumps({"decision": "deny", "reason": why} if _AGENT_ARG == "antigravity" else
+                             {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                              "permissionDecisionReason": why}}))
     sys.stdout.flush(); sys.stderr.flush()
     os._exit(0 if _PRE_TOOL else 1)
 sys.excepthook = _crash
@@ -57,8 +61,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 try:
     import roots as _roots
     import agents as _agents
-    from agents.base import Decision, ToolKind as Kind, LANE_ENTER, LANE_LEAVE, POST_TOOL, PRE_COMPACT, PRE_TOOL, PROMPT, SESSION_END
-    AGENT = _agents.get()
+    from agents.base import Capability, Decision, ToolKind as Kind, LANE_ENTER, LANE_LEAVE, POST_TOOL, PRE_COMPACT, PRE_TOOL, PROMPT, SESSION_END, TURN_END
+    AGENT = _agents.get(_AGENT_ARG or _agents.DEFAULT)
 except Exception as _e:
     # Without its resolver or its adapter the guard cannot know what to protect or read what it is asked. That must not become
     # a silent pass: a tool call is refused, like any other internal error (fail closed), every other event shows a hook error.
@@ -70,6 +74,9 @@ except Exception as _e:
 sys.path.pop(0)
 R = _roots.Roots(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 PRODUCT, AD = R.product, R.ad
+# A workspace that opted in to another agent holds both agents' files, and a session of either must not reach the other's.
+_CONFIGURED = _agents.configured(R.config) if R.workspace else ""
+AGENTS = [AGENT] + [_agents.get(n) for n in {_agents.DEFAULT, _CONFIGURED} if n and n != AGENT.name and (n == _CONFIGURED or AGENT.name != _agents.DEFAULT)]
 HOME = os.path.expanduser("~")
 
 
@@ -97,9 +104,9 @@ def answer(event, d):
     sys.exit(r.code)
 def deny(event, reason):
     # the refusals are written in a clone's words; a workspace's are its own paths and commands (roots.Roots.words)
-    answer(event, Decision.deny(R.words(reason)))
+    answer(event, Decision.deny(AGENT.say(R.words(reason))))
 def allow(event, extra=None): answer(event, Decision.allow(extra))
-def context(event, text): answer(event, Decision.add_context(text))
+def context(event, text): answer(event, Decision.add_context(AGENT.say(text)))
 def lane_of(path):
     """lane id if path is under lanes/<id>/…, else None. Only ids that really exist count, so a stray
     path like lanes/repos/… is not reported as a lane."""
@@ -210,7 +217,7 @@ def rules_brief(lane, repo):
     root = f"{LANES}/{lane}/{repo}"; out = [f"RULES for {repo} (first touch in this session — they apply to every edit under lanes/{lane}/{repo}/):"]
     files, rd = AGENT.repo_rules(root)
     for cm in files:
-        if os.path.exists(cm): out += [f"## {os.path.relpath(cm, AD)}", read(cm, 8000).strip()]
+        if os.path.exists(cm) and not AGENT.repo_rules_skip(cm): out += [f"## {os.path.relpath(cm, AD)}", read(cm, 8000).strip()]
     if os.path.isdir(rd):
         out.append(f"## {os.path.relpath(rd, AD)}/ — read the ones that match the files you touch:")
         for f in sorted(os.listdir(rd)):
@@ -401,7 +408,7 @@ def _path_cands(given, cwd):
 
 def rule_hits(rule, tool, segs, cwd):
     w = rule["when"]
-    if w["tool"] != tool.name: return False   # a project rule names the tool the way the agent does
+    if not AGENT.rule_matches(w["tool"], tool): return False   # the agent's own name for the tool, or its neutral kind
     if w.get("matches"):
         # The same normalised segments the built-in command rules are matched against — never a
         # second splitter of our own, or `echo ok && alembic upgrade head` would slip a project
@@ -443,16 +450,18 @@ MALFORMED_MSG = ("The lane guard could not read this tool call (a field has the 
                  "and it refuses what it cannot judge. A normally typed command is not the cause: retry it, and if it keeps "
                  "happening report it -- Claude Code is sending something this guard does not expect.")
 try: _raw = sys.stdin.read()
-except Exception: sys.exit(0)
-try: payload = AGENT.parse_event(_raw)
 except Exception:
-    _PRE_TOOL = AGENT.claims_pre_tool(_raw)
+    if _PRE_TOOL: deny(PRE_TOOL, MALFORMED_MSG)   # an agent that lets a tool run on an empty answer gets a decision on this too
+    sys.exit(0)
+try: payload = AGENT.parse_event(_raw, _EVENT_ARG)
+except Exception:
+    _PRE_TOOL = _PRE_TOOL or AGENT.claims_pre_tool(_raw)
     raise
 if payload is None: sys.exit(0)
 event = payload.kind
 _PRE_TOOL = event == PRE_TOOL
 if payload.malformed: deny(event, MALFORMED_MSG)
-cwd = payload.cwd or os.getcwd()
+cwd = payload.cwd or os.getcwd()   # a tool call that does not say where it runs was refused just above, for an agent whose hook runs elsewhere
 cur = lane_of(cwd)
 
 # secrets: never read, never edit, never print. Structure is available via `lane-env-keys` and .env.example.
@@ -1733,7 +1742,7 @@ def ref_hint(a, cur):
     return ""
 
 CRED_DIRS = (".ssh", ".aws", ".gnupg", ".kube", ".docker", ".azure", ".config", ".claude", ".cursor", ".netrc", ".npmrc", ".pypirc",
-             ".git-credentials", ".gitconfig", ".password-store", "Library/Keychains")
+             ".git-credentials", ".gitconfig", ".password-store", "Library/Keychains") + tuple(d for a in AGENTS for d in a.cred_dirs)
 SYSTEM_DIRS = ("/etc", "/proc", "/sys", "/dev", "/boot", "/root", "/System", "/private/etc", "/var/root")
 def ref_add_refusal(raw, base):
     """Why `lane-ref add <raw>` is refused, or None. A reference is read by every session of the lane, so it may not be
@@ -1748,8 +1757,8 @@ def ref_add_refusal(raw, base):
     if is_secret(rp, base): return "that is a secret file"
     return None
 
-PLANE_TOP = ("scripts", "src", "docs", AGENT.config_dir, "bin", ".github", ".git")   # src/: the package launcher, product code like scripts/
-WORKSPACE_TOP = (AGENT.config_dir, ".repolane", ".git")
+PLANE_TOP = ("scripts", "src", "docs", AGENT.config_dir, "bin", ".github", ".git") + tuple(a.config_dir for a in AGENTS[1:])   # src/: the package launcher, product code like scripts/
+WORKSPACE_TOP = (AGENT.config_dir, ".repolane", ".git") + tuple(a.config_dir for a in AGENTS[1:])
 def plane_target(rp):
     """What part of the control plane a path belongs to, or None."""
     if rp == AD: return "plane"
@@ -1770,8 +1779,11 @@ def plane_target(rp):
     if top in tops or top == "registry" or "/" not in rel: return "plane"     # a file at the root is the plane's too
     return None
 
+def _agent_key_file(rp):
+    """.repolane/config.yml says which agent a workspace wires, once one has opted in or the session is that agent's."""
+    return bool(R.workspace and rp == os.path.realpath(R.config) and (_CONFIGURED or len(AGENTS) > 1))
 def session_config_msg(rp):
-    if AGENT.is_session_config(rp):
+    if any(a.is_session_config(rp) for a in AGENTS) or _agent_key_file(rp):
         return ("That file is the session's own permission and hook configuration. Editing it from "
                 "inside a session is how the rules get switched off silently. Change it from a "
                 "dispatcher session at the control plane root, or ask __OWNER__.")
@@ -2318,6 +2330,17 @@ def collect_vars(stmts):
         for _x in _names:
             if _ASSIGN.match(_x) and len(VARS) < 64: VARS[_x.split("=", 1)[0].rstrip("+")] = _x.split("=", 1)[1]
 
+def pre_approved(tool, stmts, ours):
+    """What the agent's own settings would pre-approve, for an agent where only the guard can: the read-only lane commands, the
+    lane's own file, and reading memory and the inbox. Everything that gets here has already passed every rule above."""
+    if not AGENT.pre_approved: return False
+    if tool.kind is Kind.SHELL:
+        return ours and all(any((" ".join([os.path.basename(st.words[0])] + st.words[1:]) + " ").startswith(c + " ") for c in AGENT.pre_approved) for st in stmts)
+    rp = os.path.realpath(abs_of(tool.file, cwd)) if tool.file else ""
+    if not rp: return False
+    if cur and rp == os.path.realpath(f"{LANES_DIR}/{cur}.md"): return tool.kind in (Kind.READ, Kind.WRITE)
+    return tool.kind is Kind.READ and any(rp.startswith(os.path.realpath(d) + "/") for d in (MEMORY, KNOWLEDGE, f"{CACHE}/memory-inbox"))
+
 if event == PRE_TOOL:
     tool = payload.tool
     # A field of the wrong type cannot be judged, and a guard that cannot judge a call refuses it (see the
@@ -2354,7 +2377,7 @@ if event == PRE_TOOL:
         fp0 = tool.file
         rp0 = os.path.realpath(abs_of(fp0, cwd)) if fp0 else ""
         msg = session_config_msg(rp0) if rp0 else None
-        if msg and (cur or rp0.startswith(LANES + "/")): deny(event, msg)
+        if msg and (cur or rp0.startswith(LANES + "/") or AGENT.protects_config_at_root or _agent_key_file(rp0)): deny(event, msg)
         kind = plane_target(rp0) if rp0 else None
         if kind in ("memory", "knowledge"):
             # Creating a memory always goes through lane-memory, so the scope is __OWNER__'s choice.
@@ -2375,6 +2398,7 @@ if event == PRE_TOOL:
                 target = first_arg(w, j)
                 if target and target != cur:
                     deny(event, OTHER_LANE_MSG.format(what=f"lane {name}", target=target, cur=cur))
+            if name == "init" and "--agent" in w: deny(event, OWNER_ONLY_MSG.format(what="lane init --agent"))
             if cur and name in OWNER_ONLY_CMDS:
                 deny(event, OWNER_ONLY_MSG.format(what=f"lane {name}"))
             if cur and (name in CONTROL_PLANE_CMDS or (name == "rules" and first_arg(w, j) == "pull")
@@ -2425,6 +2449,17 @@ if event == PRE_TOOL:
             deny(event, f"Name the lane, not a repo: EnterWorktree name=\"{lane_id}\". A session works on every "
                         f"repo of the lane at once — once inside, `cd ../<repo>` switches which one you stand "
                         f"in, and `git -C ../<repo>` needs no move at all. Never exit and re-enter to change repo.")
+    if tool.kind is Kind.UNKNOWN:
+        # A tool the adapter does not know. What it does is unknown, so it is judged by every path it names, as if it wrote them.
+        for tp in tool.paths:
+            if is_secret(tp, cwd): deny(event, SECRET_MSG)
+            a = outside_ad(tp, cwd)
+            if a: deny(event, OUTSIDE_MSG.format(what=a) + ref_hint(a, cur))
+            lane_t = lane_of(abs_of(tp, cwd))
+            if lane_t and lane_t != cur: deny(event, REACH_MSG.format(lane=lane_t))
+            if in_old(tp): deny(event, FROZEN_MSG)
+            v = _write_verdict(os.path.realpath(abs_of(tp, cwd)), cur, cwd)
+            if v: deny(event, v)
     if tool.kind is Kind.SHELL and cur:
         for g in git_calls(stmts):
             if g.sub == "worktree" and "add" in g.args: deny(event, STAY_MSG.format(cur=cur))
@@ -2657,7 +2692,7 @@ if event == PRE_TOOL:
             st, sp = sess_state(payload.session_id)
             if repo not in st["rules"]:
                 st["rules"].append(repo); sess_save(st, sp)
-                context(event, rules_brief(cur, repo))
+                if AGENT.has(Capability.TOOL_CONTEXT): context(event, rules_brief(cur, repo))
     if tool.kind in (Kind.WRITE, Kind.READ):
         fp = tool.file
         rp = os.path.realpath(fp) if fp else ""
@@ -2678,13 +2713,13 @@ if event == PRE_TOOL:
         target = lane_of(abs_of(tool.root, cwd)) if tool.root else None
         if target and target != cur:
             deny(event, f"'{target}' is a different lane. This session is in '{cur}'. Ask __OWNER__ to add that repo with scripts/lane-with {cur} <repo>, or switch lanes.")
-    sys.exit(0)
+    answer(event, Decision.none(pre_approved(tool, stmts, OURS)))
 
 # ------------------------------------------------------------ PostToolUse: touched files
 if event == POST_TOOL:
     tool = payload.tool
     # Bookkeeping only (which files a lane touched), so unlike PreToolUse a malformed body is simply ignored.
-    if tool is None: sys.exit(0)
+    if tool is None: answer(event, Decision.none())
     # A session that has just entered a lane gets the lane's rules (LANE.md) now: from here on Claude Code refuses its
     # Edit/Write outside the lane folder before any hook runs, so only told instructions can point it at lane-memory.
     # The lane is the one the session now sits in, or the one EnterWorktree named (`<id>` or `<id>/<repo>`).
@@ -2699,15 +2734,30 @@ if event == POST_TOOL:
             try:
                 with open(f"{LANES}/{cur}/.touched", "a") as f: f.write(os.path.realpath(fp) + "\n")
             except OSError: pass
-    sys.exit(0)
+    answer(event, Decision.none())
 
+KEEP_RULES = ("Preserve through compaction — the session is in lane '%s' at %s.\n"
+              "Rules that still apply after this compaction:\n"
+              "  - the only way into a lane is EnterWorktree name=\"<id>\"; never cd into one\n"
+              "  - work only under lanes/%s/; repos/ are read-only mirrors; other lanes are out of bounds\n"
+              "  - nothing outside the control plane is readable; attach it with lane-ref and read it under refs/\n"
+              "  - never change a git remote, never move a default branch, ask before any commit or a push to main\n"
+              "  - memories go through lane-memory; __OWNER__ chooses the scope\n"
+              "  - old checkout paths in earlier turns are frozen copies; they all mean this worktree now\n"
+              "Its spec:\n%s")
 # --------------------------------------------------------- UserPromptSubmit: one-line state
 if event == PROMPT:
+    AGENT.record_session(payload, cur, CACHE)
+    # No compaction event and a context that lasts one step: what Claude Code is told once, this agent is told every step.
+    _once = AGENT.has(Capability.PRE_COMPACT)
     if cur:
         rel = os.path.relpath(os.path.realpath(cwd), AD)
         st, sp = sess_state(payload.session_id); pre = ""
-        if cur not in st["mem"]:
-            st["mem"].append(cur); sess_save(st, sp); pre = memory_brief(cur) + "\n\n"
+        if cur not in st["mem"] or not _once:
+            if cur not in st["mem"]: st["mem"].append(cur); sess_save(st, sp)
+            pre = memory_brief(cur) + "\n\n"
+        if not _once:
+            pre = R.words(KEEP_RULES % (cur, cwd, cur, "")).rstrip() + "\n\n" + "".join(rules_brief(cur, r) + "\n\n" for r in st["rules"]) + pre
         repos_here = lane_repo_dirs(cur)
         at_root = os.path.realpath(cwd) == os.path.realpath(f"{LANES}/{cur}")
         how = ""
@@ -2731,7 +2781,7 @@ if event == PROMPT:
                        R.words(f"\nSpec: {spec}. Never mention repos/ or the old checkouts."))
     if os.path.realpath(cwd) == os.path.realpath(AD):
         context(event, "[lane] at the dispatcher root, no lane entered. If this request is code work on a repo, first offer/enter a lane (EnterWorktree) and say so; do not edit code from here.")
-    sys.exit(0)
+    answer(event, Decision.none())
 
 # --------------------------------------------------------------- PreCompact: keep the spec
 if event == PRE_COMPACT:
@@ -2742,25 +2792,11 @@ if event == PRE_COMPACT:
     except OSError: pass
     if cur and os.path.exists(f"{LANES_DIR}/{cur}.md"):
         spec = open(f"{LANES_DIR}/{cur}.md").read()
-        context(event, R.words("Preserve through compaction — the session is in lane '%s' at %s.\n"
-                        "Rules that still apply after this compaction:\n"
-                        "  - the only way into a lane is EnterWorktree name=\"<id>\"; never cd into one\n"
-                        "  - work only under lanes/%s/; repos/ are read-only mirrors; other lanes are out of bounds\n"
-                        "  - nothing outside the control plane is readable; attach it with lane-ref and read it under refs/\n"
-                        "  - never change a git remote, never move a default branch, ask before any commit or a push to main\n"
-                        "  - memories go through lane-memory; __OWNER__ chooses the scope\n"
-                        "  - old checkout paths in earlier turns are frozen copies; they all mean this worktree now\n"
-                        "Its spec:\n%s") % (cur, cwd, cur, spec))
+        context(event, R.words(KEEP_RULES) % (cur, cwd, cur, spec))
     sys.exit(0)
 
-# --------------------------------------------------------------- SessionEnd: auto-log
-if event == SESSION_END:
-    try: os.remove(sess_file(payload.session_id))
-    except OSError: pass
-    moved = AGENT.tidy_transcripts(payload.session_id, AD, REPOS)
-    if moved:
-        with open(f"{CACHE}/transcript-moves.log", "a") as lg:
-            lg.write(f"{datetime.datetime.now():%F %T} {moved}\n")
+def log_session(what):
+    """A state line in the lane file: its repos, what was touched, whether work was left uncommitted."""
     if cur and os.path.exists(f"{LANES_DIR}/{cur}.md"):
         touched = set()
         tf = f"{LANES}/{cur}/.touched"
@@ -2771,7 +2807,7 @@ if event == SESSION_END:
         for r in lane_repo_dirs(cur):
             b, a, be, d = repo_state(f"{LANES}/{cur}/{r}"); any_dirty |= d > 0
             parts.append(f"{r}@{b} ahead {a} behind {be} dirty {d}")
-        line = f"- {now} session ended: " + "; ".join(parts)
+        line = f"- {now} {what}: " + "; ".join(parts)
         if touched: line += "; touched " + ", ".join(sorted(touched)[:12]) + (" …" if len(touched) > 12 else "")
         if any_dirty: line += " — UNPARKED: uncommitted work left in a worktree"
         # Every session end used to append a line, so read-only and denied runs filled the log with
@@ -2790,7 +2826,24 @@ if event == SESSION_END:
             open(sp, "w").write(txt)
         except OSError:
             pass
+
+# --------------------------------------------------------------- SessionEnd: auto-log
+if event == SESSION_END:
+    try: os.remove(sess_file(payload.session_id))
+    except OSError: pass
+    moved = AGENT.tidy_transcripts(payload.session_id, AD, REPOS)
+    if moved:
+        with open(f"{CACHE}/transcript-moves.log", "a") as lg:
+            lg.write(f"{datetime.datetime.now():%F %T} {moved}\n")
+    log_session("session ended")
     sys.exit(0)
+
+# ---------------------------------------------------- the end of a turn, for an agent with no session end
+# Stop fires after every turn, so it only writes the same state line (identical lines are not repeated), and only once the
+# agent is idle. It is not a session end: the session cache and any tidying wait.
+if event == TURN_END:
+    if (payload.extra or {}).get("fullyIdle"): log_session("turn ended")
+    answer(event, Decision.none())
 
 # ------------------------------------------------- WorktreeCreate: EnterWorktree(name="<id>/<repo>")
 if event == LANE_ENTER:
