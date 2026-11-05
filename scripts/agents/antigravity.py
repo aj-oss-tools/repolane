@@ -48,6 +48,7 @@ _WORDS = [(re.compile(p), r) for p, r in (
     (r"`?claude --resume <session-id>`?", "`agy --conversation <session-id>`"),
     (r"Claude Code", "Antigravity"), (r"CLAUDE\.md", "AGENTS.md"), (r"\.claude/settings\.json", ".agents/hooks.json"),
     (r"\bClaude\b", "the agent"), (r"\bcd lanes/(\S+) && claude\b", r"cd lanes/\1 && agy"))]
+_INJECTED = "## lane"   # how session-start's text always begins
 _TOKEN = re.compile(r"""[^\s=,;:"'`()<>\[\]{}|]+""")
 
 
@@ -179,6 +180,8 @@ class AntigravityAdapter(AgentAdapter):
         if x.get("invocationNum") not in (0, None) or not isinstance(event.session_id, str): return
         import time
         first = x.get("lastUserInput")
+        # On a conversation's first step this is what session-start injected, not the person: session-start already recorded that turn.
+        if isinstance(first, str) and first.startswith(_INJECTED) and event.kind == PROMPT: return
         rec = {"id": event.session_id, "lane": lane or "", "folder": event.cwd or "", "at": time.time(),
                "said": (first.strip().replace("\n", " ")[:90] if isinstance(first, str) else "")}
         try:

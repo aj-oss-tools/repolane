@@ -47,4 +47,5 @@ led="$WS/.repolane/cache/conversations.jsonl"
 assert_eq "both conversations are in the ledger" 2 "$(python3 -c 'import json,sys;print(len({json.loads(l)["id"] for l in open(sys.argv[1])}))' "$led" 2>/dev/null)"
 OUT=$(cd "$WS" && lane sessions L1 </dev/null 2>&1); printf '%s\n' "$OUT" | sed 's/^/    | /'
 assert_contains "lane sessions lists them, with how to resume" "$OUT" "agy --conversation"
+assert_contains "and what was asked" "$OUT" "This tests a permission hook"
 finish

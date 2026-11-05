@@ -203,7 +203,9 @@ ss=$(H "$WS" session-start "$(inv "$WS" c9 0)")
 for w in EnterWorktree ExitWorktree "claude --resume"; do assert_not_contains "the dispatcher text has no $w" "$ss" "$w"; done
 assert_contains "the dispatcher text is the board" "$ss" "L1"
 echo "-- past conversations"
+H "$LR" user-prompt-submit "$(python3 -c 'import json,sys;print(json.dumps({"conversationId":"c1","workspacePaths":[sys.argv[1]],"invocationNum":0,"lastUserInput":"## lane — injected text"}))' "$LR")" >/dev/null
 L "$WS" sessions L1; assert_contains "a conversation is filed under its lane" "$OUT" "c1"; assert_contains "it says how to resume" "$OUT" "agy --conversation"; assert_contains "with what was said" "$OUT" "fix the login"
+assert_not_contains "session-start's own text is not taken for what they said" "$OUT" "injected text"
 assert_not_contains "not claude" "$OUT" "claude --resume"
 L "$WS" sessions api; assert_contains "and under the repo" "$OUT" "c1"
 L "$WS" sessions T1; assert_not_contains "not under another lane" "$OUT" "c1  "

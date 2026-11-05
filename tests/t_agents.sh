@@ -12,13 +12,13 @@ event(){ py "e=a.parse_event(sys.argv[1]); print($2)" "$1"; }
 
 echo "-- selecting: Claude is the default, nothing else is registered"
 assert_eq "the default" claude "$(py 'print(a.name)')"
-assert_eq "one agent registered" "['claude']" "$(py 'print(list(agents.REGISTERED))')"
+assert_eq "the agents registered" "['claude', 'antigravity']" "$(py 'print(list(agents.REGISTERED))')"
 assert_eq "an unknown name is an error" KeyError "$(py 'try: agents.get("nobody")
 except KeyError: print("KeyError")')"
 assert_eq "an adapter missing a method cannot be built" TypeError "$(py 'class X(AgentAdapter): pass
 try: X()
 except TypeError: print("TypeError")')"
-assert_eq "it has every capability today" "$(py 'print(len(Capability))')" "$(py 'print(len(a.capabilities))')"
+assert_eq "it has every capability but the ledger" "$(py 'print(len(Capability) - 1)')" "$(py 'print(len(a.capabilities))')"
 
 echo "-- parse_event: events"
 for pair in SessionStart:session-start PreToolUse:pre-tool-use PostToolUse:post-tool-use UserPromptSubmit:user-prompt-submit \
@@ -117,11 +117,11 @@ assert_contains "no adapter at all: says why" "$OUT" "internal error (ModuleNotF
 judged "$d" '{"hook_event_name":"UserPromptSubmit","cwd":"/tmp"}'; assert_eq "no adapter, another event: a hook error" 1 "$RC"; assert_eq "no adapter, another event: says nothing" "" "$OUT"
 d=$(crash_tree syntax); echo 'def (' >> "$d/scripts/agents/claude.py"; judged "$d" "$PRE"
 assert_eq "an adapter with a syntax error: exit 0" 0 "$RC"; assert_contains "an adapter with a syntax error: a deny" "$OUT" '"permissionDecision": "deny"'
-d=$(crash_tree parse); printf '\n    def parse_event(self, raw): raise RuntimeError("boom")\n' > "$T/snip"
+d=$(crash_tree parse); printf '\n    def parse_event(self, raw, hint=None): raise RuntimeError("boom")\n' > "$T/snip"
 python3 -B - "$d/scripts/agents/claude.py" "$T/snip" <<'PY'
 import sys
 s = open(sys.argv[1]).read(); s = s.replace('    def claims_pre_tool(self, raw):', open(sys.argv[2]).read() + '\n    def claims_pre_tool(self, raw):', 1)
-s = s.replace('    def parse_event(self, raw):\n        try: data', '    def _old_parse(self, raw):\n        try: data', 1); open(sys.argv[1], "w").write(s)
+s = s.replace('    def parse_event(self, raw, hint=None):\n        try: data', '    def _old_parse(self, raw, hint=None):\n        try: data', 1); open(sys.argv[1], "w").write(s)
 PY
 judged "$d" "$PRE"
 assert_eq "parse_event blows up on a tool call: exit 0" 0 "$RC"; assert_contains "parse_event blows up on a tool call: a deny" "$OUT" 'internal error (RuntimeError)'

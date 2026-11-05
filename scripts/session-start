@@ -27,6 +27,10 @@ if [ "$sid" != "-" ]; then repo=$(lane_agent session-owner "$sid" "$REPOS" 2>/de
 if [ "$LANE_MODE" = workspace ]; then X=""; else X="$PRODUCT/scripts/"; fi
 MEM_REL="${MEMORY_DIR#"$AD"/}"
 cur=$(python3 -c "import os;p=os.path.realpath('$scwd');w='$LANES/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')")
+# Conversations an agent does not file by folder: this is the one moment the body still holds what the person said first.
+if [ -z "${LANE_SCREEN:-}" ] && [ -n "$LANE_AGENT" ] && lane_can conversation-ledger; then
+  printf '%s' "$input" | lane_install record-session "$LANE_AGENT" "$cur" 2>/dev/null || true
+fi
 
 # ---- human screen (systemMessage) -------------------------------------------------------------
 if [ -n "${LANE_SCREEN:-}" ]; then

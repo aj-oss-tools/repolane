@@ -109,7 +109,7 @@ other three that it exists.
 ## `agents/`
 
 What is specific to the agent lives behind one adapter per agent, one level of inheritance, stdlib only. Claude Code is the
-default and the only one registered (`agents/__init__.py`).
+default (`agents/__init__.py`), and a workspace opts in to another with `lane init --agent`.
 
 | | |
 |---|---|
@@ -118,6 +118,8 @@ default and the only one registered (`agents/__init__.py`).
 | `claude_setup.py` | Claude Code's files: hooks and approvals in the settings, status line, slash commands, `CLAUDE.md`, a lane's `settings.local.json`. Loaded only to install; `roots.py` passes its names on to the commands that use them |
 | `cli.py` | `lane agent <action>`: what bash needs to ask. Read-only, because a session can run it |
 | `install.py` | what `lib.sh` calls to write a lane's agent files. Not reachable through `lane agent` |
+| `antigravity.py`, `antigravity_setup.py` | `AntigravityAdapter`, for a workspace with `agent: antigravity` in its config: `agy`'s hook bodies and answers, and `.agents/hooks.json` and `AGENTS.md` in every session folder |
+| `translate.py` | a hook call written for Claude Code, put to the guard the way `agy` sends it. What lets the guard suite and `lane doctor`'s probes judge both |
 
 ## Adding a command
 

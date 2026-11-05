@@ -22,6 +22,11 @@ tool call is `ToolCall(kind=SHELL|READ|WRITE|SEARCH|LIST|ENTER_LANE|OTHER, comma
 below work on that, never on `Bash` or `tool_input`. The adapter turns each `Decision` back into the JSON
 on stdout (or the text and exit status the worktree events take), and the guard exits.
 
+`agy` runs the same rules. Its hook runs `lane hook --agent antigravity <event>`, since its body has no event name, and exit 0 with empty output
+would let the tool run: so every tool call gets a decision (no objection is `ask`), and unreadable input, a crash or a broken adapter is a `deny`.
+A tool the adapter does not know is judged by every path in its arguments. `bash tests/t_guard_agents.sh` runs this whole suite through that
+adapter, with the differences it expects listed there.
+
 ```
 PreToolUse        allow / deny / add context, before the tool runs
 PostToolUse       records every file edited, into lanes/<id>/.touched

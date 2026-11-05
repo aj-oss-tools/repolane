@@ -1,6 +1,6 @@
 # Agent adapters: supporting more than Claude Code
 
-**Status: step 2 built (`scripts/agents/`, Claude only). Antigravity is not built yet.** Trial run on 2026-11-04 with Antigravity CLI (`agy`) 1.5.0.
+**Status: steps 2 and 3 built (`scripts/agents/`). Board and public docs are not done yet.** Trial run on 2026-11-04 with Antigravity CLI (`agy`) 1.5.0.
 
 ## Goal
 
@@ -84,6 +84,59 @@ Other differences:
 5. **Enter a lane by name:** no `WorktreeCreate` or `EnterWorktree`. A session starts inside the lane instead, so
    `ENTER_LANE` is a capability Antigravity lacks.
 6. **Desktop app and IDE:** they share the hooks, but lanes were not tried there.
+
+## What building it found (agy 1.5.0, step 3)
+
+Six real runs in throwaway folders, plus the hook documentation inside the binary.
+
+| Question | Result |
+|---|---|
+| Exit 0 with **empty** output on `PreToolUse` | **The tool runs**, if agy's own check allows it. So a tool call always gets a decision |
+| `{}` on `PreToolUse` | Blocked, with an empty reason |
+| An unknown decision (`banana`) | Blocked |
+| `allow` | Does not skip agy's own check. In `-p`, a tool that needs a prompt is auto-denied and the run ends |
+| `ask` | Goes by agy's own check: ran with an allow rule, and on a read in the workspace. An interactive prompt was not tried |
+| `auto_approve` | Runs with no allow rule. Not in agy's docs, but it works |
+| `ephemeralMessage` from `PreInvocation` | Reaches the model, once. `PreInvocation` fires before every model call, so nine times in one turn of the test |
+| `userMessage` from `PreInvocation` | Reaches the model and stays, so it piles up. Used only once, from `SessionStart` |
+| `ephemeralMessage` from `SessionStart` | Did not reach the model |
+| `lastUserInput` | On the first step it holds what `SessionStart` injected. The `SessionStart` body itself still has the real prompt |
+| `cd sub`, then `pwd` | Back at the start: a `cd` does not last between commands, unlike Claude Code |
+| Hook body | No event name, so the hook command names it. `conversationId`, `workspacePaths`, `transcriptPath` under `~/.gemini` |
+
+The tools the model listed in 1.5.0: `run_command` (`CommandLine`, `IsDaemon`, `WaitMsBeforeAsync`, `toolSummary`), `read_file` (`Path`…),
+`write_file` (`Path`, `Content`…), `edit_file` (`Path`, `Target`, `Replacement`…), `manage_task`, `search_web`, `ask_question`,
+`invoke_subagent` (`Workspace`…), `define_subagent`, `send_message`, `manage_subagents`, `schedule`, `list_resources`, `read_resource`,
+`call_mcp_tool`. There is no search or list tool: those go through the shell. The older names in the binary (`view_file`, `grep_search`,
+`find`, `list_directory`, `replace_file_content`…) are mapped too, from the step types; those were not seen in a real run.
+
+Status line: `statusLine` and `/statusline` exist, but only in `~/.gemini` (or `--settings` for one session). No per-workspace file, so
+`STATUS_LINE` is off.
+
+### What was chosen
+
+- **Selecting:** `agent: antigravity` in `.repolane/config.yml`, written by `lane init --agent antigravity`, workspaces only. Claude Code's
+  files stay, so a `claude` started there is guarded too; agy's files are added. The line decides what is installed and said to a person. A
+  hook names its own agent in its command, so a session's answers never depend on that line. No session can change it: the guard refuses
+  writes to it from anywhere, and `lane init --agent`.
+- **A tool call with no objection** is `ask`, what the owner pre-approves is `auto_approve`, and a refusal is `deny`. An unmapped tool is judged by
+  every path in its arguments as if it wrote them, then `ask`.
+- **A repo's own `.agents/hooks.json`** refuses `lane start`. **A repo's own `AGENTS.md`** is kept and stays editable; a session in that worktree gets
+  Repolane's rules from the hook, each step, and not up front. An untracked `hooks.json` that is not ours is not overwritten either.
+- **`registry/rules.yaml`:** `tool:` may be agy's name, a neutral kind (`shell`, `read`, `write`, `search`, `list`), or Claude Code's name. On agy, `Edit`
+  means the whole write kind, so it is stricter there.
+- **`Stop`** is not a session end: it fires each turn. When `fullyIdle` it writes the lane's state line, and nothing else.
+- **`.gemini`** is added to the credential folders in an agy session. `~/.gemini` is already refused as outside the workspace.
+
+### Still not known
+
+1. **`--dangerously-skip-permissions`:** never run. Whether hooks fire in that mode is still open, and until then the rules are not known to hold there.
+2. **`/btw`:** agy's changelog says side questions do not run hooks, and that they can call read tools. If so, `/btw` can read a secret with no guard. Not tried.
+3. **Interactive `ask`:** only `-p` was run. How often a person is prompted is not known.
+4. **Artifacts:** agy can write plans into its `brain` folder under `~/.gemini`. The guard refuses that as outside the workspace; the model then has to write elsewhere.
+5. **`manage_task` with `Input`** can type into a running background command. It is judged by the paths it names, not read as shell.
+6. **`SessionStart` on `--conversation`** and real compaction were not observed.
+7. **`cd` is still refused the way it is for Claude Code,** though on agy it does not last. Stricter than it has to be, kept so both run the same rules.
 
 ## Order of work
 

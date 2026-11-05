@@ -6,6 +6,7 @@ allowed to do. Every action starts with the Layout's fields (see lane_install in
   rules <layout…> <lane-dir> <spec>                 the rules file at a lane's root
   folders <layout…>                                 what each session folder may reach
   check-repo <layout…> <mirror> <ref>               refuse a ref the agent's files cannot be installed over
+  record-session <layout…> <agent> <lane>           hook body on stdin: note which lane a new conversation is in
 Claude Code's files are always written; an agent the workspace opts in to gets its own as well.
 """
 import os
@@ -24,6 +25,10 @@ def main(argv):
     if not layout:
         sys.stderr.write(__doc__)
         return 2
+    if cmd == "record-session" and len(rest) == 2:
+        a = agents.get(rest[0])
+        a.record_session(a.parse_event(sys.stdin.read(), "session-start"), rest[1], layout.cache)
+        return 0
     extra = agents.configured(f"{layout.ad}/.repolane/config.yml") if layout.mode == "workspace" else ""
     every = [agents.get()] + ([agents.get(extra)] if extra and extra != agents.DEFAULT else [])
     try:
