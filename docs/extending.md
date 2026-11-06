@@ -2,6 +2,7 @@
 
 Two ways to add to a workspace without forking it: your own `lane` subcommands, and (see
 below) a shared, git-backed source of `.repolane/registry/rules.yaml`-style rules for a team.
+Supporting another coding agent is a change to the product, described [at the end](#adding-another-agent).
 
 ## Your own `lane <name>` commands
 
@@ -134,3 +135,22 @@ shared repo, or add it to `.gitignore`.
 
 For rules alone, `lane rules pull` (above) is the lighter way: every machine pins the same commit of a separate rules
 repo, and nobody's own files are touched.
+
+## Adding another agent
+
+Shared code never reads an agent's formats and never checks its name: it asks an adapter in `scripts/agents/`. A new
+agent is a new module and one line, with no plugin loading.
+
+1. **Subclass `AgentAdapter`** (`scripts/agents/base.py`) in `scripts/agents/<agent>.py`. Set its `name`, `label`,
+   `capabilities`, `rules_file`, `config_dir`, `launch`, `resume_hint` and `resume_command`.
+2. **Implement the hook protocol.** `parse_event` turns the agent's hook body into a neutral `Event` and `ToolCall`, and
+   `format_decision` turns a neutral `Decision` into what the agent expects. A wrong answer here is a security bug, so
+   find out by running the real agent what it does with an empty reply, a non-zero exit and bad JSON.
+3. **Implement the rest:** its sessions, and the `install_*` methods that write its files. Put the writing in a
+   `<agent>_setup.py`, the way `claude_setup.py` and `antigravity_setup.py` do.
+4. **Declare only what it can do.** A feature it lacks is a missing `Capability`, and shared code gates on that.
+5. **Register it** in `REGISTERED` in `scripts/agents/__init__.py`. `lane init --agent <name>` then accepts it.
+6. **Test it.** Add it to `tests/t_guard_agents.sh`, which runs the guard's cases through every adapter and fails on any
+   difference you have not listed, and add a real-agent script like `tests/agy-integration.sh`.
+
+[Using Repolane with Antigravity](antigravity.md) shows what a second agent looks like to a person.
