@@ -573,6 +573,24 @@ class TestMemory(unittest.TestCase):
         self.assertFalse(os.path.exists(f"{PLANE}/memory/web/note-1.md"))
         for c in self.canaries: self.assertTrue(os.path.exists(c), c)
 
+    def test_move_to_pref(self):
+        open(f"{PLANE}/memory/to-pref.md", "w").write("---\nname: to-pref\ndescription: always terse\n---\nshort answers\n")
+        open(f"{PLANE}/memory/MEMORY.md", "a").write("- [To pref](to-pref.md) — always terse\n")
+        st, r = self.mem({"action": "move", "file": "to-pref.md", "to": "pref"}); self.assertEqual(st, 200, r)
+        self.assertFalse(os.path.exists(f"{PLANE}/memory/to-pref.md"))
+        self.assertFalse(os.path.isdir(f"{PLANE}/memory/pref"))
+        self.assertIn("- always terse\n  short answers\n", open(f"{PLANE}/knowledge/preferences.md").read())
+        self.assertNotIn("to-pref.md", open(f"{PLANE}/memory/MEMORY.md").read())
+
+    def test_move_to_bogus_target_refused(self):
+        open(f"{PLANE}/memory/stay.md", "w").write("---\nname: stay\ndescription: d\n---\nb\n")
+        for to in ("pref2", "web", "repo:nope", "repo:pref", "drafts", "lane", ""):
+            st, r = self.mem({"action": "move", "file": "stay.md", "to": to})
+            self.assertEqual(st, 400, (to, r)); self.assertIn("bad memory scope", r.get("error", ""), to)
+        self.assertTrue(os.path.exists(f"{PLANE}/memory/stay.md"))
+        for d in ("pref2", "nope", "pref", "drafts", "lane"): self.assertFalse(os.path.isdir(f"{PLANE}/memory/{d}"), d)
+        os.remove(f"{PLANE}/memory/stay.md")
+
 
 class TestTrackerUrl(unittest.TestCase):
     """A blank tracker.url must mean "no link", not whatever key follows it in the file."""

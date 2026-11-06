@@ -20,7 +20,8 @@ unstaged), the diff of the one you picked, and a commit box. History shows this 
 every repo's at once. *About this lane* (press `i`) opens a side panel with the Goal, resume note,
 Findings, references, past conversations and the lane file.
 
-**Memory** browses the scopes and what is in each, and files or discards drafts.
+**Memory** browses the scopes and what is in each, files or discards drafts, and moves a memory to another scope:
+cross-repo, one of your repos, or preferences (added to `preferences.md`, and the file removed).
 
 Press the jump control in the top bar, or Command-K, to move between pieces of work without going
 back Home. Press `?` for every shortcut.

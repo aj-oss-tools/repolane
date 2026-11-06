@@ -10,7 +10,8 @@
 #   lane-memory file  <slug> cross           -> memory/<slug>.md          + index line
 #   lane-memory file  <slug> lane [<id>]     -> ## Findings of registry/lanes/<id>.md
 #   lane-memory file  <slug> pref            -> appended to knowledge/preferences.md
-#   lane-memory move  <name> repo <repo>|cross   re-scope an existing memory (reindexes both sides)
+#   lane-memory move  <name> repo <repo>|cross|pref   re-scope an existing memory (reindexes both sides; pref
+#                                            appends it to knowledge/preferences.md and deletes the file)
 #   lane-memory rm    <name> [repo <repo>]       delete a memory and its index line
 #   lane-memory drop  <slug>                 discard a draft
 #   lane-memory index [repo|cross]           rebuild MEMORY.md index lines from the files
@@ -37,6 +38,17 @@ valid_name(){ # $1 = what it is called in the error, $2 = the value
 # folder ("This session is isolated in the worktree ..."), and no setting lifts it. The lane file and
 # the inbox live in the control plane root, so what a lane session writes there goes through here.
 lane_of_cwd(){ python3 -c "import os;p=os.path.realpath('$PWD');w=os.path.realpath('$LANES')+'/';print(p[len(w):].split('/')[0] if p.startswith(w) else '')"; }
+# a memory file appended to knowledge/preferences.md (lane-memory file <slug> pref, lane-memory move <name> pref)
+append_pref(){
+  python3 - "$1" "$KNOWLEDGE_DIR/preferences.md" "$AD" <<'PY'
+import sys,re,os
+src,dst,ad=sys.argv[1:]; t=open(src).read()
+body=t.split("---",2)[2].strip() if t.startswith("---") else t.strip()
+d=re.search(r"^description: *(.+)$",t,re.M)
+open(dst,"a").write(f"\n- {d.group(1).strip() if d else ''}\n" + ("\n".join("  "+l for l in body.splitlines() if l.strip()) + "\n" if body else ""))
+print("appended to",os.path.relpath(dst,ad))
+PY
+}
 case "$cmd" in
   draft|show|drop) [ -n "$slug" ] || die "usage: lane-memory $cmd <slug>"; valid_name slug "$slug" ;;
   file) [ -n "$slug" ] || die "usage: lane-memory file <slug> repo <repo> | cross | pref | lane [<id>]"; valid_name slug "$slug" ;;
@@ -124,14 +136,7 @@ PY
       rm -f "$src"; exit 0
     fi
     if [ "$scope" = pref ]; then
-      python3 - "$src" "$KNOWLEDGE_DIR/preferences.md" "$AD" <<'PY'
-import sys,re,os
-src,dst,ad=sys.argv[1:]; t=open(src).read()
-body=t.split("---",2)[2].strip() if t.startswith("---") else t.strip()
-d=re.search(r"^description: *(.+)$",t,re.M)
-open(dst,"a").write(f"\n- {d.group(1).strip() if d else ''}\n" + ("\n".join("  "+l for l in body.splitlines() if l.strip()) + "\n" if body else ""))
-print("appended to",os.path.relpath(dst,ad))
-PY
+      append_pref "$src" || exit 1
       rm -f "$src"; exit 0
     fi
     [ ! -L "$(dirname "$dst")" ] || die "$(dirname "$dst") is a symlink — refusing to write through it"
@@ -151,17 +156,19 @@ print("filed:",os.path.relpath(dst,ad),"\nindexed in:",os.path.relpath(idx,ad))
 PY
     ;;
   move|rm)
-    name="${2:-}"; [ -n "$name" ] || die "usage: lane-memory move <name> repo <repo>|cross   /   lane-memory rm <name> [repo <repo>]"
+    name="${2:-}"; [ -n "$name" ] || die "usage: lane-memory move <name> repo <repo>|cross|pref   /   lane-memory rm <name> [repo <repo>]"
     valid_name "memory name" "${name%.md}"; [ -z "${4:-}" ] || valid_name "repo" "${4:-}"
-    python3 - "$DATA" "$cmd" "$name" "${3:-}" "${4:-}" <<'PY'
+    if [ "$cmd" = move ] && [ "${3:-}" = repo ]; then [ -n "${4:-}" ] && [ -d "$REPOS/$4" ] || die "unknown repo '${4:-}'"; fi
+    memop(){ python3 - "$DATA" "$@" <<'PY'
 import sys,os,re,glob
-ad,cmd,name,scope,repo=sys.argv[1:]
+ad,cmd,name,scope,repo=(sys.argv[1:]+["",""])[:5]
 name=name[:-3] if name.endswith(".md") else name
 hits=[f for f in glob.glob(f"{ad}/memory/**/{name}.md",recursive=True)]
 if scope=="repo" and repo: hits=[f for f in hits if os.path.basename(os.path.dirname(f))==repo] or hits
 if not hits: sys.exit(f"no memory named '{name}'")
-if len(hits)>1 and cmd=="rm": sys.exit("more than one match: "+", ".join(os.path.relpath(h,ad) for h in hits)+" — name the scope")
+if len(hits)>1 and cmd in ("rm","which"): sys.exit("more than one match: "+", ".join(os.path.relpath(h,ad) for h in hits)+" — name the scope")
 src=hits[0]
+if cmd=="which": print(src); sys.exit()
 def deindex(f):
     idx=os.path.join(os.path.dirname(f),"MEMORY.md")
     if os.path.exists(idx):
@@ -181,12 +188,18 @@ else:
     if scope=="cross": dst=f"{ad}/memory/{os.path.basename(src)}"
     elif scope=="repo" and repo and os.path.islink(f"{ad}/memory/{repo}"): sys.exit(f"memory/{repo} is a symlink - refusing to write through it")
     elif scope=="repo" and repo: os.makedirs(f"{ad}/memory/{repo}",exist_ok=True); dst=f"{ad}/memory/{repo}/{os.path.basename(src)}"
-    else: sys.exit("usage: lane-memory move <name> repo <repo> | cross")
+    else: sys.exit("usage: lane-memory move <name> repo <repo> | cross | pref")
     if os.path.realpath(dst)==os.path.realpath(src): sys.exit("already there")
     if os.path.exists(dst): sys.exit(f"a memory with that name already exists at {os.path.relpath(dst,ad)} — rename one first")
     deindex(src); os.rename(src,dst); index(dst)
     print("moved",os.path.relpath(src,ad),"->",os.path.relpath(dst,ad))
 PY
+    }
+    if [ "$cmd" = move ] && [ "${3:-}" = pref ]; then
+      src=$(memop which "$name") || exit 1
+      append_pref "$src" && memop rm "$name"; exit
+    fi
+    memop "$cmd" "$name" "${3:-}" "${4:-}"
     ;;
   index)
     python3 - "$DATA" "${2:-all}" <<'PY'

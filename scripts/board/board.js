@@ -138,11 +138,11 @@ function toast(kind,text,opts={}){const box=$('#toasts');if(opts.replace&&opts.r
   box.appendChild(t);while(box.children.length>3)box.firstChild.remove();if(kind==='ok')setTimeout(()=>t.remove(),3000);return t}
 /* ---------- board ---------- */
 async function memAct(verb,scope,file,to,lane){try{const j=await post(`/api/memory/${E(scope)}/${E(file)}/${verb}`,{to,lane});toast('ok',j.output||'done');S.mfile=null;await loadMemory()}catch(e){toast('err',e.message)}}
-function scopeOptions(){return (S.mem?.scopes||[]).filter(s=>!['drafts'].includes(s.id)).map(s=>`<option value="${esc(s.id)}">${esc(s.label)} — ${esc(s.hint)}</option>`).join('')}
+function scopeOptions(){return (S.mem?.scopes||[]).filter(s=>s.id!=='drafts'&&!(s.repo&&!(S.mem.repos||[]).includes(s.repo))).map(s=>`<option value="${esc(s.id)}">${esc(s.label)} — ${esc(s.hint)}</option>`).join('')}
 const dlgHead=(title,sub,icon,tone='')=>`<h3><span class="hi ${tone}">${ico(icon)}</span><span>${title}${sub?`<small>${sub}</small>`:''}</span></h3>`;
 function memMoveDlg(file){const d=openDlg(dlgHead(`Move ${esc(file)}`,'Pick the scope by how long it stays true.','move')
   +`<label>New scope</label><select id="sc">${scopeOptions()}</select>
-  <div class="infobox">${ico('info')}<span>Cross-repo stays true everywhere; a repo scope stays true for that repo after a ticket ships. The index lines are rewritten for you.</span></div>`,
+  <div class="infobox">${ico('info')}<span>Cross-repo stays true everywhere; a repo scope stays true for that repo after a ticket ships; preferences adds it to preferences.md and removes the file. The index lines are rewritten for you.</span></div>`,
   async d=>memAct('move',S.mscope,file,d.querySelector('#sc').value));d.querySelector('#dok').textContent='Move'}
 function memFileDlg(file){const d=openDlg(dlgHead(`File ${esc(file)}`,'Where does it belong? Ask yourself how long it stays true.','inbox')
   +`<label>Scope</label><select id="sc">${scopeOptions()}${(S.board?.lanes||[]).filter(w=>w.status==='active').map(w=>`<option value="lane:${esc(w.id)}">lane ${esc(w.id)} — only while this work is live</option>`).join('')}</select>
