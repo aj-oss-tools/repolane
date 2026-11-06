@@ -29,6 +29,9 @@ const laneApi=(id=S.lane)=>`/api/lanes/${E(id)}`;
 const repoApi=()=>`${laneApi()}/repos/${E(S.repo)}`;
 const post=(p,obj={})=>api(p,{method:'POST',body:JSON.stringify(obj)});
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// The workspace's agent comes from the server (the adapter), so nothing on this page names one.
+const who=()=>S.board?.agent?.label||'the agent';
+const resumeCmd=id=>S.board?.agent?.resume?`${S.board.agent.resume} ${id}`:'';
 const api=async(p,o={})=>{
   const body=o.body;
   if(S.plane&&S.plane!=='home'&&p!=='/api/planes')p='/api/w/'+encodeURIComponent(S.plane)+p.slice(4);
@@ -180,7 +183,7 @@ function md(src){const out=[];const lines=src.replace(/\r/g,'').split('\n');let 
   flushP();flushL();if(code)out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`);return `<div class="md">${out.join('')}</div>`}
 /* ---------- pane ---------- */
 const PT={diff:'Diff',history:'History',notes:'Notes',refs:'Refs',spec:'Spec',sessions:'Sessions'};
-const PT_TIP={refs:'Outside folders or files attached to this lane for reference (per lane)',diff:'Changes in the selected file (per file)',history:'Recent commits on this branch (per repo)',notes:'Goal and resume note from the lane file (per lane)',spec:'The whole lane file: frontmatter, goal, note, log (per lane)',sessions:'Old Claude conversations for this repo (per repo)'};
+const PT_TIP={refs:'Outside folders or files attached to this lane for reference (per lane)',diff:'Changes in the selected file (per file)',history:'Recent commits on this branch (per repo)',notes:'Goal and resume note from the lane file (per lane)',spec:'The whole lane file: frontmatter, goal, note, log (per lane)',sessions:'Old conversations for this repo (per repo)'};
 const srcLine=(what,scope)=>`<div class="src">${what}<span class="scope">${scope}</span></div>`;
 async function loadDiff(key){const rm=rmem();S.diffKey=key||S.diffKey;S.diffAll=false;try{S.diff=await api(`${repoApi()}/diff?file=${E(rm.file)}&staged=${rm.staged?1:0}`)}catch(e){S.diff={error:e.message}}if(feedOf()!=='history'&&rm.file){S.stageSig=null;renderStage(true)}}
 function renderDiff(){const rm=rmem(),d=S.data,body=$('#pbody');const f=d.files.find(x=>x.file===rm.file&&(rm.staged?x.staged:x.unstaged));
@@ -349,11 +352,11 @@ async function laneRun(b){const labels={start:'Starting…',resume:'Resuming…'
   catch(e){t.remove();toast('err',(b.action+' failed\n\n'+(e.output||e.message)));setBusy(null)}}
 async function refReveal(name){try{const j=await post(`${laneApi()}/refs/${E(name)}/reveal`);toast('ok',j.output||'revealed')}catch(e){toast('err',e.message)}}
 async function refRm(name){openDlg(dlgHead(`Detach reference ${esc(name)}?`,'','unlink','warn')+`<div class="infobox">${ico('info')}<span>Only the link under <span class="mono">lanes/${esc(S.lane)}/refs/</span> and the registry line are removed. The folder or file itself is not touched.</span></div>`,async()=>{const j=await post(`${laneApi()}/refs/${E(name)}/detach`);toast('ok',j.output);await refreshWs();if(!$('#sheetwrap').classList.contains('hidden'))renderSheet()});$('#dok').textContent='Detach'}
-function refAddDlg(){const d=openDlg(dlgHead('Attach a reference',`To ${esc(S.lane)} — outside code or docs Claude may read`,'folder')
+function refAddDlg(){const d=openDlg(dlgHead('Attach a reference',`To ${esc(S.lane)} — outside code or docs ${esc(who())} may read`,'folder')
     +`<label>Path <span class="req">*</span></label><input id="rp" placeholder="~/Desktop/some-folder  or  ~/Downloads/spec.pdf" autocomplete="off">
     <div class="hint">${ico('info','sm')}<span>A folder or file outside the repos. It will appear as <span class="mono">lanes/${esc(S.lane)}/refs/&lt;name&gt;</span>.</span></div>
     <label>Note <span class="opt">(optional)</span></label><input id="rn" placeholder="why it matters for this work" autocomplete="off">
-    <label class="chk"><input type="checkbox" id="rw"> Allow Claude to edit it (default is read-only)</label>`,
+    <label class="chk"><input type="checkbox" id="rw"> Allow ${esc(who())} to edit it (default is read-only)</label>`,
     async d=>{const j=await post(`${laneApi()}/refs/attach`,{path:d.querySelector('#rp').value.trim(),note:d.querySelector('#rn').value.trim(),rw:d.querySelector('#rw').checked});toast('ok',j.output.split('\n').filter(l=>l.startsWith('ref')).join('\n')||'attached');await refreshWs();if(!$('#sheetwrap').classList.contains('hidden'))renderSheet()},d=>d.querySelector('#rp').value.trim().length>0);d.querySelector('#dok').textContent='Attach';d.querySelector('#rp').focus()}
 function discardDlg(list){
   if(!list.length)return;
@@ -614,12 +617,12 @@ function renderHome(){
         ${t.act?` <button class="link do" data-todo="${i}">${t.act} →</button>`:''}</span></div>`).join('')}</div></section>
     <section class="rsec"><h4>${ico('book','sm')}Context memory</h4>
       <div class="mbox ${drafts.length?'hot':''}"><div class="mt">${drafts.length?`<span class="dotc"></span>${plural(drafts.length,'draft')} waiting`:'No drafts waiting'}</div>
-        <div class="msub">${drafts.length?'Things Claude learned, waiting for you to pick how long they stay true.':'Claude drafts a memory when it learns something; you pick where it goes.'}</div>
+        <div class="msub">${drafts.length?`Things ${esc(who())} learned, waiting for you to pick how long they stay true.`:`${esc(who())} drafts a memory when it learns something; you pick where it goes.`}</div>
         ${drafts.slice(0,4).map(f=>`<div class="d1"><div class="dn" title="${esc(f.description||f.name||f.file)}"><button class="link" data-mopen="${esc(f.file)}">${esc(f.name||f.file)}</button><span>${esc(daysAgo(f.modified))}</span></div>
           <div class="da"><button class="pri sm" data-mfileit="${esc(f.file)}">${ico('inbox','sm')}File it</button><button class="sm" data-mdrop="${esc(f.file)}">Discard</button></div></div>`).join('')}
         ${drafts.length>4?`<button class="link" data-rail="memory">${drafts.length-4} more in Memory →</button>`:''}</div></section>
     <section class="rsec"><h4>${ico('term','sm')}Recent sessions${sessAll.length?`<span class="hx">history (${sessAll.length})</span>`:''}</h4>
-      ${sess.map(s=>`<button class="s1" data-resume="${esc(s.id)}" title="Click to copy: claude --resume ${esc(s.id)}">
+      ${sess.map(s=>`<button class="s1" data-resume="${esc(s.id)}" title="${resumeCmd(s.id)?`Click to copy: ${esc(resumeCmd(s.id))}`:''}">
         <span class="st">${esc(s.first)}</span><span class="sw">${esc(s.when.slice(5))}</span>
         <span class="sr"><span class="repotag ${repoClass(s.repo)}">${esc(s.repo)}</span> ${s.turns} turns · ${esc(s.id.slice(0,8))}</span></button>`).join('')
         ||'<div class="pempty">None recorded yet.</div>'}</section>
@@ -780,7 +783,8 @@ function renderSheet(){
   const sessions=inWork?parseSessions(S.data.sessions):w.repos.flatMap(r=>parseSessions(S.sessAll?.[r.repo]));
   const fnd=(w.findings||'').replace(/^\(things learned[\s\S]*?\)$/m,'').trim();
   const items=fnd.split('\n').filter(l=>/^\s*[-*]\s+/.test(l)).map(l=>l.replace(/^\s*[-*]\s+/,''));
-  const sess=[...sessions].sort((a,b)=>b.when.localeCompare(a.when));
+  // a conversation of a lane's agent can be listed under each repo of the lane: once is enough
+  const sess=[...sessions].sort((a,b)=>b.when.localeCompare(a.when)).filter((s,i,all)=>all.findIndex(x=>x.id===s.id)===i);
   const raw=S.sheetRaw&&S.sheetRaw.id===w.id?S.sheetRaw.html:null;
   $('#sheetbody').innerHTML=`
     <div class="ssec"><h5>${ico('target','sm')}Goal</h5>${realText(w.goal)?`<div class="sbox">${md(w.goal)}</div>`:'<div class="sbox dim">No goal written yet. It lives in the lane file’s ## Goal section.</div>'}</div>
@@ -797,10 +801,10 @@ function renderSheet(){
           <div class="rpath" title="${esc(r.path)}">${esc(r.path)}</div>${r.note?`<div class="rnote">${esc(r.note)}</div>`:''}
           <div class="ra"><button class="txt" data-reveal="${esc(nm)}">${ico('eye','sm')} Reveal</button><button class="txt" data-detach="${esc(nm)}">${ico('unlink','sm')} Detach</button></div></div>`}).join('')
         :`<div class="sbox dim">Nothing attached. A reference shows up as <span class="mono">lanes/${esc(w.id)}/refs/&lt;name&gt;</span>, read-only unless attached with --rw.</div>`}</div>
-    <div class="ssec"><h5>${ico('term','sm')}Sessions <span class="q">· past Claude conversations in ${esc(inWork?S.repo:w.repos.map(r=>r.repo).join(', '))}</span></h5>
+    <div class="ssec"><h5>${ico('term','sm')}Sessions <span class="q">· past ${esc(who())} conversations in ${esc(inWork?S.repo:w.repos.map(r=>r.repo).join(', '))}</span></h5>
       ${sess.length?sess.map(s=>`<div class="sessc"><div class="top"><span>${esc(s.when)}</span><span class="tn">${s.turns} turns</span></div>
           <div class="tx">${esc(s.first)}</div>
-          <button class="cmdline" data-resume="${esc(s.id)}" title="Copy: claude --resume ${esc(s.id)}"><span>claude --resume ${esc(s.id)}</span>${ico('copy','sm')}</button></div>`).join('')
+          ${resumeCmd(s.id)?`<button class="cmdline" data-resume="${esc(s.id)}" title="Copy: ${esc(resumeCmd(s.id))}"><span>${esc(resumeCmd(s.id))}</span>${ico('copy','sm')}</button>`:''}</div>`).join('')
         :'<div class="sbox dim">None recorded for this repo.</div>'}</div>
     <div class="ssec"><h5>${ico('file','sm')}The lane file <span class="q">· registry/lanes/${esc(w.id)}.md</span>
       ${raw?'':`<button class="link" onclick="loadSheetRaw()">Show it</button>`}</h5>${raw?`<div class="sbox">${raw}</div>`:''}</div>`;
@@ -1065,7 +1069,7 @@ function renderMemory(){
       <div class="t">${drafts?'<span class="dotc"></span>':''}${esc(f.name||f.file.replace(/\.md$/,''))}</div>
       ${f.description?`<div class="d">${esc(f.description)}</div>`:''}
       <div class="m">${f.type?`<span class="ty">${esc(f.type)}</span>`:''}<span>${esc(daysAgo(f.modified)||f.modified||'')}</span><span class="sp"></span><span>${esc(f.file)}</span></div></div>`).join('')
-    ||`<div class="empty big">${drafts?`${ico('check')}No drafts waiting. Claude drafts a memory when it learns something; you pick where it goes.`:'Nothing in this scope yet.'}</div>`}</div>`;
+    ||`<div class="empty big">${drafts?`${ico('check')}No drafts waiting. ${esc(who())} drafts a memory when it learns something; you pick where it goes.`:'Nothing in this scope yet.'}</div>`}</div>`;
   renderMemBody();
   renderCrumb();
   if(S.view==='memory')nav(false);
@@ -1181,7 +1185,7 @@ document.addEventListener('click',e=>{
     if(cr.dataset.repo&&cr.dataset.repo!==S.repo){pickRepo(cr.dataset.repo).then(()=>{const r2=rmem();if(r2)r2.sha=cr.dataset.sha;nav(true);renderFiles();renderStage(true)})}
     else{nav(true);renderFiles();renderStage(true)}return}
   const sn=e.target.closest('#crumb b.link');if(sn){openSheet();return}
-  const rs=e.target.closest('[data-resume]');if(rs){const cmd='claude --resume '+rs.dataset.resume;
+  const rs=e.target.closest('[data-resume]');if(rs){const cmd=resumeCmd(rs.dataset.resume);if(!cmd)return;
     navigator.clipboard?.writeText(cmd);toast('ok','Copied: '+cmd);return}
   if(e.target.id==='sheetwrap'){closeSheet();return}
   const f=e.target.closest('.frow');if(f){

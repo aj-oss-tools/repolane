@@ -94,7 +94,9 @@ class AgentAdapter(abc.ABC):
     capabilities = frozenset()
     rules_file = ""    # the file the agent loads its instructions from
     config_dir = ""    # its folder in a project, part of what the plane protects
+    label = ""         # what a person calls it, in a sentence on the board
     resume_hint = ""   # how a person picks a past conversation back up
+    resume_command = ""   # the command that takes a conversation id, for a line to copy
     launch = ""        # the command that starts a session
     cred_dirs = ()     # folders under the home directory, beyond the shared list, that must never become a reference
     protects_config_at_root = False   # is its config refused to a session at the workspace root as well?

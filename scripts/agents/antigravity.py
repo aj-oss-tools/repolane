@@ -120,7 +120,9 @@ class AntigravityAdapter(AgentAdapter):
     rules_file = RULES_FILE
     config_dir = ".agents"
     launch = "agy"
+    label = "agy"
     resume_hint = "start agy in the lane's folder, then `agy --conversation <id>`"
+    resume_command = "agy --conversation"
     cred_dirs = (".gemini",)
     protects_config_at_root = True
     pre_approved = _PRE_APPROVED
@@ -228,7 +230,8 @@ class AntigravityAdapter(AgentAdapter):
         return json.dumps({"injectSteps": [{"userMessage": self.say(context)}]})
 
     def signature_dir(self, mirror):
-        return ""
+        """The folder of the ledger: .repolane/repos/<repo> -> .repolane/cache. Every repo of the workspace shares it."""
+        return f"{os.path.dirname(os.path.dirname(mirror))}/cache"
 
     # ---- installing
     def install_workspace(self, product, ad, seed):

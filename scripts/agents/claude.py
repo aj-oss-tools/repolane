@@ -55,7 +55,9 @@ class ClaudeAdapter(AgentAdapter):
     capabilities = frozenset(Capability) - {Capability.CONVERSATION_LEDGER}
     rules_file = "CLAUDE.md"
     config_dir = ".claude"
+    label = "Claude"
     resume_hint = "launch claude inside its worktree, then `claude --resume <id>`"
+    resume_command = "claude --resume"
     launch = "claude"
 
     def claims_pre_tool(self, raw):
