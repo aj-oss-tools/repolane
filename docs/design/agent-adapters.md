@@ -98,7 +98,7 @@ Six real runs in throwaway folders, plus the hook documentation inside the binar
 | `ask` | Goes by agy's own check: ran with an allow rule, and on a read in the workspace. An interactive prompt was not tried |
 | `auto_approve` | Runs with no allow rule. Not in agy's docs, but it works |
 | `ephemeralMessage` from `PreInvocation` | Reaches the model, once. `PreInvocation` fires before every model call, so nine times in one turn of the test |
-| `userMessage` from `PreInvocation` | Reaches the model and stays, so it piles up. Used only once, from `SessionStart` |
+| `userMessage` from `PreInvocation` | Reaches the model and stays, so it piles up, and it shows in the chat as if typed. Used only once, from `SessionStart` at the workspace root |
 | `ephemeralMessage` from `SessionStart` | Did not reach the model |
 | `lastUserInput` | On the first step it holds what `SessionStart` injected. The `SessionStart` body itself still has the real prompt |
 | `cd sub`, then `pwd` | Back at the start: a `cd` does not last between commands, unlike Claude Code |
@@ -131,8 +131,8 @@ Status line: `statusLine` and `/statusline` exist, but only in `~/.gemini` (or `
 ### Still not known
 
 1. **`--dangerously-skip-permissions`:** never run. Whether hooks fire in that mode is still open, and until then the rules are not known to hold there.
-2. **`/btw`:** agy's changelog says side questions do not run hooks, and that they can call read tools. If so, `/btw` can read a secret with no guard. Not tried.
-3. **Interactive `ask`:** only `-p` was run. How often a person is prompted is not known.
+2. **`/btw`, beyond `read_file`:** agy's changelog says side questions do not run hooks, but a `/btw` `read_file` was denied by the hook in a real session. Other tools in `/btw` were not tried.
+3. **Always allow, saved to settings:** the conversation-only option does not get past the guard. The saved one was not tried.
 4. **Artifacts:** agy can write plans into its `brain` folder under `~/.gemini`. The guard refuses that as outside the workspace; the model then has to write elsewhere.
 5. **`manage_task` with `Input`** can type into a running background command. It is judged by the paths it names, not read as shell.
 6. **`SessionStart` on `--conversation`** and real compaction were not observed.

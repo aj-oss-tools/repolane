@@ -38,6 +38,7 @@ all work the same way. In `rules.yaml`, `tool:` can be `agy`'s tool name, a neut
 | A tool call nothing objects to | Left to `agy`'s own permission check. What Repolane pre-approves runs without it |
 | A tool Repolane does not know | Judged by every path in its arguments, as if it wrote them, then left to `agy`'s check |
 | Rules | Up front from `AGENTS.md`, and restated by the hook before each model call |
+| The lane's goal, note and findings | Sent by the hook before each model call, and kept out of the chat. There is no automatic brief at the start of a session. At the workspace root, the board shows in the chat once, as if you had typed it |
 | Past conversations | `agy` does not file them by folder, so the hook records them in `.repolane/cache/conversations.jsonl`. `lane sessions` and the board list them, and `agy --conversation <id>` resumes one |
 | A `cd` | Refused the same way as in Claude Code, although in `agy` a `cd` does not last between commands |
 
@@ -56,12 +57,25 @@ all work the same way. In `rules.yaml`, `tool:` can be `agy`'s tool name, a neut
   `.repolane/memory/` and is reached directly.
 - **Moving a session into a lane by name:** start `agy` in the lane's folder.
 - **Conversation clean-up:** `lane done` does not delete `agy`'s conversations.
+- **Listing both agents:** an `agy` workspace lists only `agy`'s conversations, so a `claude` session there does not show on
+  the board or in `lane sessions`.
+
+## What real sessions show
+
+Tested in interactive sessions with `agy` 1.5.0:
+
+- **Default mode:** an ordinary shell command prompts you, with "Repolane has no objection to this call." A write Repolane
+  pre-approves runs with no prompt.
+- **Auto mode:** a shell command the guard refuses is refused. Edits and commands nothing objects to run with no prompt,
+  and a read outside the workspace still prompts. `agy` saves this mode in its own settings, so it carries over to later
+  sessions.
+- **Always allow, for this conversation:** a longer command that starts the same way is still refused by the guard, and
+  does not run. The option that saves to your settings was not tried.
+- **`/btw` side questions:** `agy`'s changelog says these do not run hooks, but a `/btw` read of a file refused by a
+  workspace rule came back as "tool call denied by pre-tool hook" with the rule's message, and no contents. Only
+  `read_file` was tested.
 
 ## What is not known
 
-- **`--dangerously-skip-permissions`:** not tested, so your rules are not known to hold in that mode.
-- **Interactive `agy`:** Repolane has been run with real `agy` in print mode (`agy -p`) only. How often a person is
-  prompted is not known.
-- **`/btw` side questions:** `agy`'s changelog says they do not run hooks and can use read tools. If so, one could read a
-  secret with no guard. This has not been tried.
+- **`--dangerously-skip-permissions`:** not tested. Do not rely on your rules in that mode.
 - **Compaction, and `SessionStart` on a resumed conversation:** not observed in a real run.

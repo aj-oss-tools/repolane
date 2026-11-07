@@ -10,7 +10,7 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ### Added
 
-- **Antigravity CLI, opt-in per workspace:** `lane init --agent antigravity` wires `agy`'s hooks and rules into the workspace, every lane and every worktree, and the same guard judges its tool calls. Claude Code stays the default. Running `agy` with `--dangerously-skip-permissions` is untested, so the rules are not known to hold in that mode. There is no status line. The board names the workspace's agent and copies its resume command, and [`docs/antigravity.md`](docs/antigravity.md) covers what is written, shared and not supported.
+- **Antigravity CLI, opt-in per workspace:** `lane init --agent antigravity` wires `agy`'s hooks and rules into the workspace, every lane and every worktree, and the same guard judges its tool calls. Claude Code stays the default. Running `agy` with `--dangerously-skip-permissions` is untested, so the rules are not known to hold in that mode. In interactive `agy` 1.5.0 the guard held in default and auto mode, after an always-allow for a command prefix, and for a `read_file` from a `/btw` side question. There is no status line. The board names the workspace's agent and copies its resume command, and [`docs/antigravity.md`](docs/antigravity.md) covers what is written, shared and not supported.
 
 ### Changed
 
