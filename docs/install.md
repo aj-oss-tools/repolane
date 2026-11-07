@@ -168,7 +168,11 @@ lane upgrade                    # upgrade the package, then refresh every regist
 ```
 
 `lane upgrade` upgrades the package the way it was installed (`pipx upgrade repolane`, or `uv tool upgrade repolane`;
-for a pip install it prints the `pip` command to run), then refreshes every workspace in `planes.json` with the new
+for a pip install it prints the `pip` command to run). It then checks the installed version against the newest on
+PyPI: a uv tool install made with an exact pin (`uv tool install repolane==X`), which `uv tool upgrade` does not move,
+is reinstalled with `uv tool install repolane@latest`, which also drops the pin. If the package still is not the newest,
+`lane upgrade` says so, prints the command to run, and exits non-zero; `--check` mentions a pinned uv install. It then
+refreshes every workspace in `planes.json` with the new
 version: the rule files and data migrations, Repolane's hooks in `.claude/settings.json` (your own keys and hooks
 kept), Repolane's slash commands and agents in `.claude/`, and every lane's `settings.local.json` and `CLAUDE.md`. Nothing you wrote is changed. It reports each
 workspace and exits non-zero if one could not be refreshed.

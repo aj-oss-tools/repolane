@@ -54,7 +54,7 @@ try:
 except Exception as _e:
     # Without its resolver the guard cannot know what to protect. That must not become a silent pass: a PreToolUse
     # call is refused, like any other internal error (fail closed), every other event shows a hook error.
-    _raw0 = sys.stdin.read() if not sys.stdin.isatty() else ""
+    _raw0 = sys.stdin.buffer.read().decode("utf-8", "replace") if not sys.stdin.isatty() else ""
     if re.search(r'"hook_event_name"\s*:\s*"PreToolUse"', _raw0):
         _EVENT = "PreToolUse"
     raise
@@ -429,11 +429,11 @@ if "--rules" in sys.argv:
 MALFORMED_MSG = ("The lane guard could not read this tool call (a field has the wrong type, or the payload is not valid JSON), "
                  "and it refuses what it cannot judge. A normally typed command is not the cause: retry it, and if it keeps "
                  "happening report it -- Claude Code is sending something this guard does not expect.")
-try: _raw = sys.stdin.read()
+try: _raw = sys.stdin.buffer.read()
 except Exception: sys.exit(0)
-try: data = json.loads(_raw)
+try: data = json.loads(_raw.decode("utf-8"))
 except Exception:
-    if re.search(r'"hook_event_name"\s*:\s*"PreToolUse"', _raw):
+    if re.search(rb'"hook_event_name"\s*:\s*"PreToolUse"', _raw):
         _EVENT = "PreToolUse"; deny("PreToolUse", MALFORMED_MSG)
     sys.exit(0)
 if not isinstance(data, dict): sys.exit(0)

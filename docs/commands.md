@@ -105,7 +105,8 @@ is always a command you type. `lane doctor -v` adds every wiring location and ru
 throwaway one it builds and deletes. A broken workspace or guard exits non-zero; the advisories do not.
 
 `lane upgrade` upgrades the package (`pipx upgrade repolane`, `uv tool upgrade repolane`, or for a pip install the
-`pip` command to run), then refreshes every workspace registered in `~/.local/share/lane/planes.json`: the rule files
+`pip` command to run) and checks it reached the newest release on PyPI (a uv tool install pinned to an older version,
+`uv tool install repolane==X`, is reinstalled with `uv tool install repolane@latest`), then refreshes every workspace registered in `~/.local/share/lane/planes.json`: the rule files
 and data migrations, Repolane's hooks in `.claude/settings.json` (your own keys and hooks kept), and every lane's
 settings and `CLAUDE.md`. Nothing you wrote is changed. `lane upgrade --check` shows the installed version against the
 newest on PyPI and which workspaces are behind, and changes nothing. See
