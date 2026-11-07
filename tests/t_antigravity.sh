@@ -150,6 +150,12 @@ mal(){ python3 -c 'import json,sys;print(json.dumps({"workspacePaths":[sys.argv[
 for tc in '5' 'null' '{"name":5}' '{"name":"read_file","args":[]}' '{"name":"read_file","args":{"Path":5}}' '{"name":"run_command","args":{"CommandLine":["ls"]}}' '{"args":{}}'; do
   assert_eq "toolCall $tc is refused" deny "$(H "$LR" pre-tool-use "$(mal "$tc")" | dec)"
 done
+U(){ (cd "$1/.agents" && env -u LANE_WORKSPACE -u LANE_PRODUCT lane hook --agent antigravity "$2" 2>/dev/null); }
+BAD=$(python3 -c 'import sys;sys.stdout.write(sys.argv[1])' "$LR" | sed 's/.*/{"conversationId":"c1","workspacePaths":["&"],"toolCall":{"name":"run_command","args":{"CommandLine":"cat .env /')
+assert_eq "agy's tool call that is not valid UTF-8: deny" deny "$( { printf '%s' "$BAD"; printf '\xff"}}}'; } | U "$LR" pre-tool-use | dec)"
+assert_eq "not valid UTF-8 and cut short: deny" deny "$( { printf '%s' "$BAD"; printf '\xff'; } | U "$LR" pre-tool-use | dec)"
+assert_eq "bytes that are not text at all: deny" deny "$(printf '\xff\xfe\x80' | U "$LR" pre-tool-use | dec)"
+{ printf '%s' "$BAD"; printf '\xff"}}}'; } | U "$LR" post-tool-use >/dev/null; assert_eq "not valid UTF-8, not a tool call: no refusal, exit 0" 0 "$?"
 assert_eq "the hook's exit status is 0 on a refusal, or agy reads it another way" 0 "$( (cd "$LR/.agents" && printf 'x' | env -u LANE_WORKSPACE -u LANE_PRODUCT lane hook --agent antigravity pre-tool-use >/dev/null 2>&1); echo $?)"
 echo "-- when the adapter itself breaks"
 CT="$T/crash"; mkdir -p "$CT/scripts/hooks" "$CT/registry/lanes" "$CT/lanes" "$CT/repos"; : > "$CT/registry/config.yml"; cp "$PROD/scripts/hooks/guard.py" "$CT/scripts/hooks/"; cp "$PROD/scripts/roots.py" "$CT/scripts/"
@@ -195,11 +201,14 @@ assert_contains "memory again: yesterday's ephemeral message is gone" "$c2" "MEM
 ctxroot=$(ctx "$WS" c9 0); assert_contains "at the root too" "$ctxroot" "dispatcher root"
 for t in "$c1" "$ctxroot"; do for w in EnterWorktree ExitWorktree "claude --resume" Claude; do assert_not_contains "context has no $w" "$t" "$w"; done; done
 assert_contains "a first touch of a repo brings its rules on the next step" "$(printf '%s' x >/dev/null; D "$LR" edit_file "$(p "$WS/lanes/L1/web/README.md")" >/dev/null; ctx "$LR" c1 2)" "RULES for web"
+assert_contains "the lane's goal reaches the model each step" "$c2" "## Goal"
+assert_contains "and the lane commands" "$c2" "lane-park L1"
+assert_not_contains "the lane's log does not" "$c2" "## Log"
 ss=$(H "$LR" session-start "$(inv "$LR" c1 0)")
-assert_contains "SessionStart injects a userMessage" "$ss" '"userMessage"'
-assert_not_contains "never a systemMessage" "$ss" "systemMessage"
-for w in EnterWorktree ExitWorktree "claude --resume"; do assert_not_contains "the session-start text has no $w" "$ss" "$w"; done
+assert_eq "a session in a lane puts nothing in the chat at the start" "{}" "$ss"
 ss=$(H "$WS" session-start "$(inv "$WS" c9 0)")
+assert_contains "at the root, SessionStart injects a userMessage" "$ss" '"userMessage"'
+assert_not_contains "never a systemMessage" "$ss" "systemMessage"
 for w in EnterWorktree ExitWorktree "claude --resume"; do assert_not_contains "the dispatcher text has no $w" "$ss" "$w"; done
 assert_contains "the dispatcher text is the board" "$ss" "L1"
 echo "-- past conversations"

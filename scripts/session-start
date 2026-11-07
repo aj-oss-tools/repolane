@@ -87,6 +87,8 @@ fi
 if [ "${1:-}" = "--worktree" ] || [ -n "$cur" ]; then
   id="$cur"
   if [ -n "$id" ] && [ -f "$(lane_file "$id")" ]; then
+    # an agent with no compaction event gets the lane before every step (guard.py), which stays out of its chat
+    lane_can pre-compact || exit 0
     echo "## lane — session in lane '$id' ($(basename "$scwd"))"; echo
     cat "$(lane_file "$id")"; echo
     echo "Read $MEM_REL/<repo>/MEMORY.md for each repo above, then brief $OWNER in five lines and continue the work."

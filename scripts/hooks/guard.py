@@ -2761,7 +2761,10 @@ if event == PROMPT:
             if cur not in st["mem"]: st["mem"].append(cur); sess_save(st, sp)
             pre = memory_brief(cur) + "\n\n"
         if not _once:
-            pre = R.words(KEEP_RULES % (cur, cwd, cur, "")).rstrip() + "\n\n" + "".join(rules_brief(cur, r) + "\n\n" for r in st["rules"]) + pre
+            spec = re.split(r"^## Log\b", read(f"{LANES_DIR}/{cur}.md", 8000), maxsplit=1, flags=re.M)[0].strip()   # the log is not worth repeating each step
+            pre = (R.words(KEEP_RULES % (cur, cwd, cur, "")).rstrip() + "\n" + spec + "\n"
+                   f"Lane commands (lane-brief, lane-park, lane-memory, …) are on PATH: call them by name. Park with lane-park {cur} \"<note>\" before they switch away.\n\n"
+                   + "".join(rules_brief(cur, r) + "\n\n" for r in st["rules"]) + pre)
         repos_here = lane_repo_dirs(cur)
         at_root = os.path.realpath(cwd) == os.path.realpath(f"{LANES}/{cur}")
         how = ""

@@ -226,7 +226,9 @@ class AntigravityAdapter(AgentAdapter):
         return "startup", d.get("conversationId", "-"), _folder(d.get("workspacePaths")) or "-"
 
     def session_start_reply(self, context, screen):
-        # once per conversation, and it should stay: the one place a userMessage is right
+        # once per conversation, and it should stay: the one place a userMessage is right. It shows in the chat as if typed, so
+        # a session in a lane sends none: it has the lane before each step
+        if not context.strip(): return "{}"
         return json.dumps({"injectSteps": [{"userMessage": self.say(context)}]})
 
     def signature_dir(self, mirror):
