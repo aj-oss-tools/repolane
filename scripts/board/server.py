@@ -578,7 +578,8 @@ def memory_tree():
     for d in sorted(os.listdir(MEM)):
         if not os.path.isdir(f"{MEM}/{d}"): continue
         fl = [mem_meta(f) for f in sorted(glob.glob(f"{MEM}/{d}/*.md")) if os.path.basename(f) not in ("MEMORY.md", "README.md")]
-        scopes.append({"id": f"repo:{d}", "label": sh_.get(d, d), "repo": d, "hint": d, "files": [c for c in fl if c]})
+        scopes.append({"id": f"repo:{d}", "label": sh_.get(d, d), "repo": d, "files": [c for c in fl if c],
+                       "hint": d if os.path.isdir(f"{REPOS}/{d}") else f"{d}: not a registered repo"})
     pref = f"{KNOW}/preferences.md"
     scopes.append({"id": "pref", "label": "preferences", "hint": f"how {AGENT.label} works with you",
                    "files": [{"file": "preferences.md", "name": "preferences", "description": "standing working preferences", "type": "user",
@@ -608,7 +609,11 @@ def bad_memory_args(body):
         if not (isinstance(f, str) and f.endswith(".md") and mem_slug_ok(f[:-3])): return "bad memory name"
     elif act in ("move", "rm"):
         if not mem_slug_ok(f[:-3] if isinstance(f, str) and f.endswith(".md") else f): return "bad memory name"
-    if act in ("move", "file") and not (to == "cross" or (act == "file" and to in ("pref", "lane"))):
+    if act == "move" and to not in ("cross", "pref"):
+        r = to[5:] if isinstance(to, str) and to.startswith("repo:") else None
+        if not (mem_slug_ok(r) and os.path.isdir(f"{REPOS}/{r}")):
+            return "bad memory scope: move to cross, pref or repo:<name> of a registered repo"
+    if act == "file" and to not in ("cross", "pref", "lane"):
         if not mem_slug_ok(to[5:] if isinstance(to, str) and to.startswith("repo:") else to): return "bad memory scope"
     if act == "file" and to == "lane" and not mem_slug_ok(body.get("lane", "")): return "bad lane id"
     return None
@@ -906,7 +911,7 @@ class H(BaseHTTPRequestHandler):
                 if bad: return self.send(400, {"error": bad})
                 to = mb["to"]
                 if act == "move":
-                    args = ["move", fname, "cross"] if to == "cross" else ["move", fname, "repo", to[5:] if to.startswith("repo:") else to]
+                    args = ["move", fname, to] if to in ("cross", "pref") else ["move", fname, "repo", to[5:]]
                 elif act == "rm": args = ["rm", fname]
                 elif act == "file":
                     args = ["file", fname[:-3]] + (["cross"] if to == "cross" else ["pref"] if to == "pref" else

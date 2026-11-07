@@ -3,7 +3,10 @@
 
   lane upgrade [--yes] [--drop-missing]
       1. upgrade the package the way it was installed: `pipx upgrade repolane` (a pipx install), `uv tool upgrade
-         repolane` (a uv tool install); for any other install (pip in a venv) it prints the pip command to run
+         repolane` (a uv tool install); for any other install (pip in a venv) it prints the pip command to run.
+         The result is checked against the newest release on PyPI: a uv tool install still behind it (installed with an
+         exact pin, repolane==X) is reinstalled with `uv tool install repolane@latest`, which also drops the pin; one
+         that still cannot reach the newest is a failure, with the command to run
       2. refresh every workspace registered in ~/.local/share/lane/planes.json ("workspaces"), with the new version's
          files: the rule files and data migrations (the same refresh a workspace gets on its first use after an upgrade),
          Repolane's hooks in .claude/settings.json (your own keys and hooks kept), and every lane's settings.local.json
@@ -21,6 +24,7 @@ In a git-clone install `lane upgrade` is scripts/lane-upgrade (a fast-forward of
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -77,8 +81,22 @@ def latest_on_pypi():
         return None, f"could not reach PyPI ({why})"
 
 
-def upgrade_package():
-    """Run the matching upgrade command. Returns (ran_ok, what to tell the user)."""
+def uv_pinned(prefix):
+    """True when a uv tool install was made with an exact pin (repolane==X), which `uv tool upgrade` will not move."""
+    try:
+        with open(os.path.join(prefix, "uv-receipt.toml")) as fh: return bool(re.search(r'name = "repolane", specifier = "==', fh.read()))
+    except OSError:
+        return False
+
+
+def run(cmd):
+    print(f"  {D}$ {' '.join(cmd)}{N}", flush=True)
+    return subprocess.run(cmd, stdin=subprocess.DEVNULL).returncode
+
+
+def upgrade_package(latest=None):
+    """Run the matching upgrade command, then make sure it reached `latest` (the newest on PyPI, when known).
+    Returns (ran_ok, what to tell the user)."""
     how, prefix = installer()
     if how == "pip":
         print("  This copy of Repolane was not installed with pipx or uv tool, so lane upgrade does not upgrade it itself.")
@@ -88,10 +106,19 @@ def upgrade_package():
     cmd = ["pipx", "upgrade", "repolane"] if how == "pipx" else ["uv", "tool", "upgrade", "repolane"]
     if not shutil.which(cmd[0]):
         return False, f"{cmd[0]} is not on PATH, so it cannot upgrade Repolane: install it, or run `{' '.join(cmd)}` where it is"
-    print(f"  {D}$ {' '.join(cmd)}{N}", flush=True)
-    r = subprocess.run(cmd, stdin=subprocess.DEVNULL)
-    if r.returncode != 0:
-        return False, f"`{' '.join(cmd)}` failed (exit {r.returncode}); the installed version is unchanged"
+    rc = run(cmd)
+    if rc != 0:
+        return False, f"`{' '.join(cmd)}` failed (exit {rc}); the installed version is unchanged"
+    behind = lambda: latest and vkey(roots.product_version(PRODUCT)) < vkey(latest)
+    fix = ["uv", "tool", "install", "repolane@latest"] if how == "uv" else ["pipx", "install", "--force", "repolane"]
+    if behind() and how == "uv":
+        print(f"  {roots.product_version(PRODUCT)} is still installed, not {latest}: reinstalling without the pin", flush=True)
+        rc = run(fix)
+        if rc != 0:
+            return False, f"`{' '.join(fix)}` failed (exit {rc}); Repolane is still {roots.product_version(PRODUCT)}"
+    if behind():
+        return False, (f"Repolane is still {roots.product_version(PRODUCT)}, not {latest} (the newest on PyPI): run "
+                       f"`{' '.join(fix)}`, then lane upgrade --refresh-only")
     return True, ""
 
 
@@ -203,7 +230,7 @@ def refresh_all(assume_yes, drop_missing):
 
 def check():
     cur = roots.product_version(PRODUCT)
-    how, _ = installer()
+    how, prefix = installer()
     latest, why = latest_on_pypi()
     print(f"Installed: Repolane {cur} ({ {'pipx': 'pipx', 'uv': 'uv tool', 'pip': 'pip'}[how] } install)")
     rc = 0
@@ -211,7 +238,8 @@ def check():
         print(f"Latest:    unknown: {why}. Nothing was changed; try again when online.")
         rc = 1
     elif vkey(latest) > vkey(cur):
-        print(f"Latest:    {latest} on PyPI: lane upgrade takes it")
+        pin = f" (the uv tool install is pinned to {cur}; lane upgrade reinstalls it unpinned)" if how == "uv" and uv_pinned(prefix) else ""
+        print(f"Latest:    {latest} on PyPI: lane upgrade takes it{pin}")
     else:
         print(f"Latest:    {latest} on PyPI: up to date")
     try:
@@ -241,7 +269,8 @@ def main(argv):
     if "--refresh-only" not in flags:
         before = roots.product_version(PRODUCT)
         print(f"Upgrading Repolane (installed: {before}):")
-        ok, why = upgrade_package()
+        latest = latest_on_pypi()[0] if installer()[0] != "pip" else None
+        ok, why = upgrade_package(latest)
         if not ok:
             say("!!", R, why); rc = 1
         elif installer()[0] != "pip":
@@ -251,14 +280,18 @@ def main(argv):
             if lane:
                 sys.stdout.flush()
                 args = [lane, "upgrade", "--refresh-only"] + [a for a in argv if a in ("--yes", "-y", "--drop-missing")]
-                os.execve(lane, args, {**os.environ, "LANE_UPGRADED_FROM": before})
+                os.execve(lane, args, {**os.environ, "LANE_UPGRADED_FROM": before, "LANE_UPGRADE_LATEST": latest or ""})
             say("!!", R, "cannot find the upgraded lane to finish with: run lane upgrade --refresh-only")
             return 1
     else:
         frm = os.environ.get("LANE_UPGRADED_FROM")
         now = roots.product_version(PRODUCT)
+        latest = os.environ.get("LANE_UPGRADE_LATEST")
         if frm:
-            print(f"  Repolane is now {now}" + (f" (was {frm})" if frm != now else " (already the newest)"))
+            if frm != now: note = f" (was {frm})"
+            elif latest and vkey(now) >= vkey(latest): note = " (already the newest)"
+            else: note = " (unchanged; the newest on PyPI is unknown: it could not be asked)"
+            print(f"  Repolane is now {now}{note}")
     bad = refresh_all(assume_yes, "--drop-missing" in flags)
     return 1 if (bad or rc) else 0
 

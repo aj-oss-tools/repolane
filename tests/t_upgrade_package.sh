@@ -4,7 +4,8 @@
 # Two wheels are built from this checkout, one as 0.10.0 and one as 0.10.1, and installed into a throwaway venv. Fake
 # pipx / uv on PATH record how they are called, and "upgrade" by pip-installing the second wheel into that venv (so the
 # new version really runs the refresh). Covered: the installer detection (pipx, uv tool, plain pip); two registered
-# workspaces with stale rule files refreshed with every byte of the owner's data unchanged; a registered folder that is
+# workspaces with stale rule files refreshed; a uv tool install pinned to the old version (reinstalled unpinned, and a
+# failure with the command to run when even that does not move it, never "already the newest"); with every byte of the owner's data unchanged; a registered folder that is
 # gone (reported, the others still refreshed, the exit code, --drop-missing); a broken settings.json; an unregistered
 # workspace registered from inside; --check against a stubbed PyPI answer and offline; a clone upgraded onto 0.10 by the
 # released 0.9.2 upgrader and by this one, which prints the pipx + migrate steps and keeps working; then the full chain:
@@ -34,21 +35,28 @@ assert_eq "the $V1 wheel is installed in a venv" 0 "$?"
 BIN="$VENV/bin"
 reinstall_v1(){ "$VENV/bin/python" -m pip install -q --no-compile --no-index --disable-pip-version-check --force-reinstall --no-deps "$W1" >>"$T/pip.log" 2>&1; }
 
-# fake pipx and uv: record the call; `pipx upgrade repolane` / `uv tool upgrade repolane` install $UPGRADE_WHEEL
+# fake pipx and uv: record the call; `pipx upgrade repolane` / `uv tool upgrade repolane` install $UPGRADE_WHEEL. With
+# FAKE_PIN=1 the upgrade is uv's "Nothing to upgrade" for a pinned install, and `uv tool install repolane@latest` installs
+# it (unless FAKE_STUCK=1)
 SHIMS="$T/shims"; mkdir -p "$SHIMS"; CALLS="$T/calls.log"; : > "$CALLS"
 for tool in pipx uv; do
   cat > "$SHIMS/$tool" <<EOT
 #!/usr/bin/env bash
 echo "$tool \$*" >> "$CALLS"
 [ "\${FAKE_RC:-0}" = 0 ] || { echo "$tool: fake failure" >&2; exit "\$FAKE_RC"; }
-case "\$*" in "upgrade repolane"|"tool upgrade repolane")
-  [ -n "\${UPGRADE_WHEEL:-}" ] && "$VENV/bin/python" -m pip install -q --no-compile --no-index --disable-pip-version-check --no-deps --upgrade "\$UPGRADE_WHEEL" >/dev/null 2>&1
-  echo "upgraded package repolane" ;;
+take(){ [ -n "\${UPGRADE_WHEEL:-}" ] && "$VENV/bin/python" -m pip install -q --no-compile --no-index --disable-pip-version-check --no-deps --upgrade "\$UPGRADE_WHEEL" >/dev/null 2>&1; }
+case "\$*" in
+  "upgrade repolane"|"tool upgrade repolane")
+    if [ "\${FAKE_PIN:-0}" = 1 ]; then echo "Nothing to upgrade"; echo "hint: repolane is pinned to its version" >&2; exit 0; fi
+    take; echo "upgraded package repolane" ;;
+  "tool install repolane@latest") [ "\${FAKE_STUCK:-0}" = 1 ] || take; echo "installed repolane" ;;
 esac
 EOT
   chmod +x "$SHIMS/$tool"
 done
 export PATH="$BIN:$SHIMS:$CLEAN_PATH"
+export LANE_PYPI_URL="file://$T/pypi.json"   # never the real PyPI
+printf '{"info":{"version":"%s"}}' "$V2" > "$T/pypi.json"
 assert_eq "lane on PATH is the venv's" "$BIN/lane" "$(type -P lane)"
 mark(){ rm -f "$VENV/pipx_metadata.json" "$VENV/uv-receipt.toml"; case "$1" in pipx) echo '{}' > "$VENV/pipx_metadata.json" ;; uv) : > "$VENV/uv-receipt.toml" ;; esac; }
 
@@ -104,6 +112,7 @@ assert_not_contains "no traceback" "$OUT" "Traceback"
 assert_eq "--check changed nothing and ran no installer" "$BEFORE_CHECK" "$(user_sum "$WS1"; cat "$WS1/.repolane/version" "$WS1/.repolane/REPOLANE.md"; cat "$CALLS")"
 
 echo "-- lane upgrade (pipx): the package, then both workspaces"
+printf '{"info":{"version":"%s"}}' "$V2" > "$T/pypi.json"
 OUT=$(cd "$T" && env -u LANE_WORKSPACE UPGRADE_WHEEL="$W2" lane upgrade </dev/null 2>&1); RC=$?
 assert_eq "lane upgrade exits 0" 0 "$RC"
 [ "$RC" = 0 ] || printf '%s\n' "$OUT" | sed 's/^/        /'
@@ -134,6 +143,37 @@ OUT=$(cd "$T" && env -u LANE_WORKSPACE UPGRADE_WHEEL="$W2" lane upgrade </dev/nu
 assert_eq "uv tool: exit 0" 0 "$RC"
 assert_eq "uv tool: it ran uv tool upgrade repolane" "uv tool upgrade repolane" "$(cat "$CALLS")"
 assert_eq "uv tool: the package is $V2" "lane $V2" "$("$BIN/lane" --version)"
+echo "-- a uv tool install pinned to $V1 (uv tool upgrade does not move it)"
+reinstall_v1; : > "$CALLS"; mark uv
+printf '[tool]\nrequirements = [{ name = "repolane", specifier = "==%s" }]\n' "$V1" > "$VENV/uv-receipt.toml"
+OUT=$(cd "$WS1" && env -u LANE_WORKSPACE lane upgrade --check </dev/null 2>&1)
+assert_contains "--check mentions the pin" "$OUT" "the uv tool install is pinned to $V1; lane upgrade reinstalls it unpinned"
+OUT=$(cd "$T" && env -u LANE_WORKSPACE FAKE_PIN=1 UPGRADE_WHEEL="$W2" lane upgrade </dev/null 2>&1); RC=$?
+assert_eq "pinned uv: exit 0" 0 "$RC"
+[ "$RC" = 0 ] || printf '%s\n' "$OUT" | sed 's/^/        /'
+assert_eq "pinned uv: upgrade, then reinstall unpinned" "uv tool upgrade repolane
+uv tool install repolane@latest" "$(cat "$CALLS")"
+assert_eq "pinned uv: the package is $V2" "lane $V2" "$("$BIN/lane" --version)"
+assert_contains "pinned uv: it says so" "$OUT" "Repolane is now $V2 (was $V1)"
+assert_not_contains "pinned uv: never 'already the newest'" "$OUT" "already the newest"
+reinstall_v1; : > "$CALLS"
+OUT=$(cd "$T" && env -u LANE_WORKSPACE FAKE_PIN=1 FAKE_STUCK=1 UPGRADE_WHEEL="$W2" lane upgrade </dev/null 2>&1); RC=$?
+assert_eq "still behind after the reinstall: exit 1" 1 "$RC"
+assert_contains "it is a failure with the command to run" "$OUT" "Repolane is still $V1, not $V2 (the newest on PyPI): run \`uv tool install repolane@latest\`"
+assert_not_contains "and never 'already the newest'" "$OUT" "already the newest"
+assert_eq "the package is still $V1" "lane $V1" "$("$BIN/lane" --version)"
+printf '{"info":{"version":"%s"}}' "$V1" > "$T/pypi.json"; reinstall_v1; : > "$CALLS"
+OUT=$(cd "$T" && env -u LANE_WORKSPACE FAKE_PIN=1 lane upgrade </dev/null 2>&1); RC=$?
+assert_eq "the newest is installed: exit 0" 0 "$RC"
+assert_eq "no reinstall" "uv tool upgrade repolane" "$(cat "$CALLS")"
+assert_contains "now it is the newest" "$OUT" "Repolane is now $V1 (already the newest)"
+reinstall_v1; : > "$CALLS"
+OUT=$(cd "$T" && env -u LANE_WORKSPACE FAKE_PIN=1 LANE_PYPI_URL="http://127.0.0.1:9/pypi/repolane/json" lane upgrade </dev/null 2>&1); RC=$?
+assert_eq "PyPI unreachable: exit 0" 0 "$RC"
+assert_contains "it says the newest is unknown" "$OUT" "Repolane is now $V1 (unchanged; the newest on PyPI is unknown"
+assert_not_contains "and does not claim the newest" "$OUT" "already the newest"
+printf '{"info":{"version":"%s"}}' "$V2" > "$T/pypi.json"
+for w in "$WS1" "$WS2"; do printf '0.9.9\n' > "$w/.repolane/version"; done
 reinstall_v1; : > "$CALLS"; mark pip
 L "$T" upgrade; assert_eq "plain pip: exit 0" 0 "$RC"
 assert_contains "plain pip: it prints the pip command" "$OUT" "$VENV/bin/python -m pip install --upgrade repolane"

@@ -67,7 +67,7 @@ except Exception as _e:
     # Without its resolver or its adapter the guard cannot know what to protect or read what it is asked. That must not become
     # a silent pass: a tool call is refused, like any other internal error (fail closed), every other event shows a hook error.
     # There is no adapter to ask here, so this is Claude Code's field by name.
-    _raw0 = sys.stdin.read() if not sys.stdin.isatty() else ""
+    _raw0 = sys.stdin.buffer.read().decode("utf-8", "replace") if not sys.stdin.isatty() else ""
     if re.search(r'"hook_event_name"\s*:\s*"PreToolUse"', _raw0):
         _PRE_TOOL = True
     raise
@@ -449,7 +449,11 @@ if "--rules" in sys.argv:
 MALFORMED_MSG = ("The lane guard could not read this tool call (a field has the wrong type, or the payload is not valid JSON), "
                  "and it refuses what it cannot judge. A normally typed command is not the cause: retry it, and if it keeps "
                  "happening report it -- Claude Code is sending something this guard does not expect.")
-try: _raw = sys.stdin.read()
+try: _raw = sys.stdin.buffer.read().decode("utf-8")
+except UnicodeDecodeError as _e:
+    # bytes that are not text cannot be judged: a tool call is refused, and the adapter says what looks like one
+    if _PRE_TOOL or AGENT.claims_pre_tool(_e.object.decode("utf-8", "replace")): deny(PRE_TOOL, MALFORMED_MSG)
+    sys.exit(0)
 except Exception:
     if _PRE_TOOL: deny(PRE_TOOL, MALFORMED_MSG)   # an agent that lets a tool run on an empty answer gets a decision on this too
     sys.exit(0)
