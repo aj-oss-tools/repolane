@@ -47,6 +47,7 @@ Flags:
 | `--owner <name>` | your name, without asking |
 | `--yes` | ask nothing: take the defaults, add the import line, make the memory links |
 | `--git` | make the workspace a git repo, with a `.gitignore` for what is machine-local (see below) |
+| `--agent antigravity` | also wire Antigravity CLI into the workspace, see [Using Repolane with Antigravity](antigravity.md) |
 | `--claude-home <dir>` | Claude Code's folder, if it is not `~/.claude` (or set `CLAUDE_HOME`) |
 
 With no terminal to ask and no `--yes`, `lane init` changes neither your `CLAUDE.md` nor anything under `~/.claude`,

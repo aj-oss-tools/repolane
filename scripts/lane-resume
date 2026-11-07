@@ -21,4 +21,4 @@ lane_set_status "$id" active; write_lane_claude "$id"; refresh_guards
 echo "=== $(lane_file "$id")"; cat "$(lane_file "$id")"
 echo; while read -r repo branch; do d="$LANES/$id/$repo"; echo "--- $repo [$branch] $(lane_dirty_count "$d") dirty, $(lane_unpushed_text "$d")"; git -C "$d" log --oneline -3; done < <(lane_repos "$id")
 "$PRODUCT/scripts/lane-workspace" >/dev/null
-echo; echo "next: cd $LANES/$id && claude"
+echo; echo "next: cd $LANES/$id && $(lane_launch)"

@@ -13,7 +13,8 @@ A rail on the left holds them: Active lanes, Parked, Memory, and every lane in f
 **Home** is what opens: a card per lane with its Goal, one row per repo with its branch and state
 (uncommitted, to push, to pull, behind its base, PR checks failing, clean), and the one thing to do
 next. Parked lanes sit below with their resume note. On the right: what wants a decision, memory
-drafts waiting for a scope, and recent Claude conversations with a `claude --resume` line to copy.
+drafts waiting for a scope, and recent conversations of the workspace's agent with a line to copy that resumes one
+(`claude --resume <id>`, or `agy --conversation <id>` in a workspace that uses Antigravity).
 
 **A lane** is one piece of work. The repos it spans, the files you have changed (staged and
 unstaged), the diff of the one you picked, and a commit box. History shows this repo's commits or

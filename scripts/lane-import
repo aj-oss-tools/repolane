@@ -20,6 +20,7 @@ done
 source "$(cd "$(dirname "$_self")" && pwd)/lib.sh"   # sets PRODUCT and AD
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 
+lane_can import-conversations || die "lane import adopts Claude Code's conversations, which are filed by folder. This workspace's agent records its own as it goes (lane sessions)."
 LIST_ONLY=0; INTO=""; PICKS=""
 while [ $# -gt 0 ]; do
   case "$1" in

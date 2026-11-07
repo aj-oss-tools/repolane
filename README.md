@@ -85,6 +85,7 @@ worktrees may be all you need.
 | **pipx** or **uv** | to install the package (plain `pip` into a venv works too) |
 | **gh** | optional — pull request status and `lane gh` |
 | **Claude Code** | optional — the commands work on their own; the hooks only matter when Claude is driving |
+| **Antigravity CLI** | optional — `lane init --agent antigravity`, see [`docs/antigravity.md`](docs/antigravity.md) |
 
 Nothing is compiled and nothing phones home. Tested on macOS and Linux; on Windows use WSL.
 
@@ -277,6 +278,7 @@ and in this repo:
 | [`docs/rules.md`](docs/rules.md) | every refusal, and the failure behind it |
 | [`docs/commands.md`](docs/commands.md) | the full command reference |
 | [`docs/board.md`](docs/board.md) | the web board |
+| [`docs/antigravity.md`](docs/antigravity.md) | running Repolane with Antigravity CLI: what it writes, what is shared, what is not supported |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | the ways it actually breaks, and how to recover |
 | [`docs/releasing.md`](docs/releasing.md) | how a merged PR actually becomes a release |
 | [`docs/extending.md`](docs/extending.md) | `.repolane/scripts/local/` custom commands, and `lane rules pull` for shared rules |

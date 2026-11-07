@@ -35,10 +35,17 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import roots  # noqa: E402
+import agents  # noqa: E402
+from agents.base import AgentRefusal, Capability  # noqa: E402
 
 PRODUCT = os.path.realpath(os.environ.get("LANE_PRODUCT") or os.path.dirname(HERE))
 TTY = sys.stdout.isatty()
 G, Y, R, D, B, N = (("\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[1m", "\033[0m") if TTY else ("",) * 6)
+
+
+def agent_of(ad):
+    """The agent this workspace speaks to. Claude Code's files stay either way."""
+    return agents.get(agents.configured(f"{ad}/.repolane/config.yml") or agents.DEFAULT)
 
 
 def say(tag, color, text):
@@ -364,8 +371,11 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
     flush()
 
     # 2. CLAUDE.md imports REPOLANE.md
+    ag = agent_of(ad)
     state = roots.has_import(ad)
-    if state:
+    if not ag.has(Capability.RULES_IMPORT):
+        lines.append(("note", Y, f"this workspace's agent is {ag.name}: its rules are in {ag.rules_file}, checked below", ""))
+    elif state:
         report(True, "CLAUDE.md imports .repolane/REPOLANE.md")
     elif fix and not quiet:
         flush()
@@ -469,7 +479,9 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
     # 7. Claude Code's memory for the root and each mirror is linked into .repolane/memory (asks before touching ~/.claude)
     # A link the owner declined (.repolane/declined.json) is a note, not a failure; --fix still offers it.
     pend = pending_links(ad)
-    if not pend:
+    if not ag.has(Capability.MEMORY_LINK):
+        pass
+    elif not pend:
         n = len(wanted_links(ad))
         report(True, f"Claude Code's memory is linked into .repolane/memory ({n} folder(s) under {tilde(claude_home())}/projects)")
     else:
@@ -524,6 +536,17 @@ def doctor(ad, fix=False, assume_yes=False, quiet=False):
     elif st == "none":
         lines.append(("note", Y, f"no status line set (optional): lane doctor --fix adds {roots.STATUSLINE_CMD}", ""))
 
+    # 10. an agent whose hooks silently do not load unless they are in the very folder a session starts in
+    if ag.name != agents.DEFAULT:
+        folders = [ad] + sorted({os.path.dirname(os.path.dirname(p)) for _, p in lane_settings(ad)})
+        bad = [(f, w) for f in folders for w in ag.check_folder(f)]
+        if not bad:
+            report(True, f"{ag.name}'s hooks and rules are in all {len(folders)} session folder(s)")
+        for f, w in bad:
+            where = os.path.relpath(f, ad)
+            lane = where.split("/")[1] if where.startswith("lanes/") else ""
+            report(False, f"{B}{where}: {w}{N}", f"run: lane resume {lane}" if lane else f"run: lane init --agent {ag.name}")
+
     flush()
     if quiet and problems:
         print(f"!! workspace: {problems} problem(s) — run: lane doctor")
@@ -571,7 +594,7 @@ def make_git(ad):
 
 
 def init(argv):
-    target, owner, assume_yes, want_git = None, None, False, False
+    target, owner, assume_yes, want_git, agent = None, None, False, False, ""
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -581,6 +604,10 @@ def init(argv):
         elif a == "--claude-home":
             if i + 1 >= len(argv): print("lane init: --claude-home needs a folder", file=sys.stderr); return 2
             os.environ["CLAUDE_HOME"] = os.path.abspath(os.path.expanduser(argv[i + 1])); i += 1
+        elif a == "--agent":
+            if i + 1 >= len(argv) or argv[i + 1] not in agents.REGISTERED:
+                print(f"lane init: --agent needs one of {', '.join(sorted(agents.REGISTERED))}", file=sys.stderr); return 2
+            agent = argv[i + 1]; i += 1
         elif a in ("--yes", "-y"): assume_yes = True
         elif a == "--git": want_git = True
         elif a in ("-h", "--help"):
@@ -621,17 +648,23 @@ def init(argv):
 
     print(("Checking" if live else "Setting up") + f" the workspace {tilde(ad)} for {owner}:")
     try:
-        made = roots.make_workspace(PRODUCT, ad, owner)
+        made = roots.make_workspace(PRODUCT, ad, owner, agent)
     except ValueError as e:
         print(f"lane init: {ad}/.claude/settings.json is not valid JSON ({e}); mend it, then run lane init again", file=sys.stderr)
         return 1
+    except AgentRefusal as e:
+        print(f"lane init: {e}", file=sys.stderr)
+        return 1
+    ag = agent_of(ad)
     for m in made: say("made", G, m)
     for rel, st in roots.claude_files_state(PRODUCT, ad):
         if st == "mine": say("kept", Y, f".claude/{rel} is yours: kept, Repolane's file of that name is not installed")
-    imported = offer_import(ad, assume_yes)
+    imported = offer_import(ad, assume_yes) if ag.has(Capability.RULES_IMPORT) else True
     no = declined(ad)
-    pend = [x for x in pending_links(ad) if link_key(ad, x[1]) not in no]
-    skipped = len(pending_links(ad)) - len(pend)
+    # nothing under ~/.claude is touched for an agent that keeps no memory there
+    all_links = pending_links(ad) if ag.has(Capability.MEMORY_LINK) else []
+    pend = [x for x in all_links if link_key(ad, x[1]) not in no]
+    skipped = len(all_links) - len(pend)
     if skipped:
         say("note", Y, f"{skipped} memory link(s) you said no to are not offered again: lane doctor --fix offers them")
     unlinked = offer_links(ad, assume_yes, pending=pend)
@@ -656,8 +689,8 @@ def init(argv):
     print()
     if not live:
         print("Next: bring a repo in, then start a piece of work:\n\n"
-              "  lane add https://github.com/<org>/<repo>.git\n  lane start <id> <repo>\n  claude\n")
-        print("note: Claude can make mistakes. The hooks are a guardrail, not a sandbox: review what Claude changes.")
+              f"  lane add https://github.com/<org>/<repo>.git\n  lane start <id> <repo>\n  {ag.launch}\n")
+        print(ag.say("note: Claude can make mistakes. The hooks are a guardrail, not a sandbox: review what Claude changes."))
     if not imported:
         print("Repolane's rules will not load here until CLAUDE.md imports them: lane doctor --fix")
     if unlinked:
@@ -669,6 +702,7 @@ def link_mirror(ad, name, assume_yes):
     """`lane add` in a workspace: link the new mirror's Claude Code memory into .repolane/memory/<name>, by the same rule as
     lane init (shown and asked; --yes accepts; no terminal changes nothing and prints the command; a recorded no is kept)."""
     ad = os.path.realpath(ad)
+    if not agent_of(ad).has(Capability.MEMORY_LINK): return 0
     target = f"{ad}/.repolane/memory/{name}"
     pend = [x for x in pending_links(ad) if os.path.realpath(x[1]) == os.path.realpath(target)]
     if not pend:

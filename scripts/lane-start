@@ -79,12 +79,14 @@ for spec in "$@"; do
   [ -e "$dst" ] && { echo "exists: $dst"; continue; }
   if git -C "$REPOS/$repo" show-ref --verify -q "refs/heads/$branch"; then
     git -C "$REPOS/$repo" fetch -q origin 2>/dev/null || true
+    [ -z "$LANE_AGENT" ] || lane_install check-repo "$REPOS/$repo" "$branch" || exit 1
     git -C "$REPOS/$repo" worktree add -q "$dst" "$branch"; echo "worktree $dst on existing branch $branch"
     # the upstream is only a base when it is another branch: after `git push -u origin <id>` it is origin/<id> itself
     base=$(git -C "$REPOS/$repo" rev-parse --abbrev-ref "$branch@{u}" 2>/dev/null || echo "$def")
     case "$base" in */"$branch") base="$def" ;; esac
   else
     ref=$(resolve_base "$repo" "$base") || die "cannot start $repo: no such base"
+    [ -z "$LANE_AGENT" ] || lane_install check-repo "$REPOS/$repo" "$ref" || exit 1
     git -C "$REPOS/$repo" worktree add -q -b "$branch" "$dst" "$ref"; echo "worktree $dst on new branch $branch (from $ref)"
   fi
   link_env "$repo" "$dst"
@@ -101,4 +103,4 @@ lane_anchor "$id"
 write_lane_claude "$id"
 refresh_guards
 "$PRODUCT/scripts/lane-workspace" >/dev/null
-echo; echo "next: cd $LANES/$id && claude"
+echo; echo "next: cd $LANES/$id && $(lane_launch)"

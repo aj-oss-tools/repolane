@@ -10,6 +10,16 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 Nothing yet.
 
+## [0.12.0] — 2026-11-07
+
+### Added
+
+- **Antigravity CLI, opt-in per workspace:** `lane init --agent antigravity` wires `agy`'s hooks and rules into the workspace, every lane and every worktree, and the same guard judges its tool calls. Claude Code stays the default. Running `agy` with `--dangerously-skip-permissions` is untested, so the rules are not known to hold in that mode. In interactive `agy` 1.5.0 the guard held in default and auto mode, after an always-allow for a command prefix, and for a `read_file` from a `/btw` side question. There is no status line. The board names the workspace's agent and copies its resume command, and [`docs/antigravity.md`](docs/antigravity.md) covers what is written, shared and not supported.
+
+### Changed
+
+- Everything specific to Claude Code now sits behind an agent adapter (`scripts/agents/`, `lane agent <action>`), so a second agent costs one new adapter. Nothing changes in how it behaves.
+
 ## [0.11.1] — 2026-11-07
 
 ### Fixed
@@ -845,7 +855,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/aj-oss-tools/repolane/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/aj-oss-tools/repolane/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/aj-oss-tools/repolane/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/aj-oss-tools/repolane/compare/v0.9.2...v0.10.0
