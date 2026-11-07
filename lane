@@ -24,13 +24,14 @@ _ws_named="${LANE_WORKSPACE:-}"
 source "$S/roots.sh"
 # A hook runs in the session's current folder, which a cd can move; the folder the session was started in is the one
 # that says which workspace it belongs to.
-if { [ "${1:-}" = hook ] || [ "${1:-}" = statusline ]; } && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then lane_resolve_roots "$CLAUDE_PROJECT_DIR"
+# (A hook that names its agent runs in that agent's own way, and does not read another agent's variable.)
+if { [ "${1:-}" = hook ] || [ "${1:-}" = statusline ]; } && [ "${2:-}" != --agent ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then lane_resolve_roots "$CLAUDE_PROJECT_DIR"
 else lane_resolve_roots; fi
 # a workspace takes the installed version's rule files (and data migrations) on the first run after an upgrade; not
 # for `lane doctor`, which reports a stale workspace (and repairs it with --fix) rather than hide it, nor for the
 # doctor's own probe of the hook path
 # nor for `lane upgrade`, which refreshes every registered workspace itself and reports what it did
-case "${1:-} ${2:-}" in "doctor "*|"upgrade "*|"hook ping") : ;; *) lane_refresh_workspace ;; esac
+case "${1:-} ${2:-}" in "doctor "*|"upgrade "*|"hook ping"|"agent "*) : ;; *) lane_refresh_workspace ;; esac
 
 # the installed package (LANE_PRODUCT set by its launcher, and no git checkout of its own) as opposed to a clone: a few
 # commands only make sense for one of the two
@@ -182,6 +183,15 @@ case "$cmd" in
     # `lane hook <event>`: what a workspace's .claude/settings.json runs, so no hook names a file in the product. The
     # hook's JSON passes through on stdin to the same implementations a clone's settings name by path.
     ev="${2:-}"
+    if [ "$ev" = --agent ]; then
+      # `lane hook --agent <name> <event>`: an agent whose hook body does not say which event it is
+      ag="${3:-}"; ev="${4:-}"
+      case "$ev" in
+        session-start) LANE_HOOK_AGENT="$ag" exec "$S/session-start" ;;
+        pre-tool-use|post-tool-use|user-prompt-submit|turn-end) exec python3 -B "$S/hooks/guard.py" --agent "$ag" --event "$ev" ;;
+        *) echo "lane hook: unknown event '$ev'" >&2; exit 1 ;;
+      esac
+    fi
     case "$ev" in
       session-start) exec "$S/session-start" ;;
       # `lane doctor` runs this exactly the way a hook runs, to see which product and workspace a hook would reach
@@ -192,6 +202,11 @@ case "$cmd" in
       *) echo "lane hook: unknown event '$ev' (session-start, pre-tool-use, post-tool-use, user-prompt-submit, pre-compact, session-end, worktree-create, worktree-remove)" >&2
          exit 1 ;;
     esac ;;
+  agent)
+    # `lane agent <action>`: what bash needs to know about the agent (read-only: scripts/agents/cli.py lists the actions)
+    shift
+    ag=$(sed -n 's/^agent:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -1); [ "$LANE_MODE" = workspace ] || ag=""
+    exec python3 -B "$S/agents/cli.py" ${ag:+--agent "$ag"} "$@" ;;
   statusline)
     # what a workspace's statusLine runs (the status line's JSON on stdin), so it names no file in the product either
     exec "$S/statusline.sh" ;;

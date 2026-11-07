@@ -9,7 +9,6 @@ as a small command by the shell side:
   python3 -B roots.py lane-context <lane>                    what a session inside that lane is handed (LANE.md and its header)
   python3 -B roots.py words                                  stdin to stdout in the workspace's words (Roots.words)
 """
-import json
 import os
 import sys
 
@@ -156,152 +155,31 @@ SCRIPT_COMMANDS = {"sessions": "lane sessions", "status-all": "lane status", "br
                    "hooks/guard-check": "lane doctor", "init": "lane init"}
 
 
-# ------------------------------------------------------------------------------------------------ hooks as commands
-# hook_event_name -> the word `lane hook` takes. A workspace's settings name only these commands, never a file in the
-# product: the installed `lane` is found on PATH, and the workspace from the session's folder.
-HOOK_EVENTS = {"SessionStart": "session-start", "PreToolUse": "pre-tool-use", "PostToolUse": "post-tool-use",
-               "UserPromptSubmit": "user-prompt-submit", "PreCompact": "pre-compact", "SessionEnd": "session-end",
-               "WorktreeCreate": "worktree-create", "WorktreeRemove": "worktree-remove"}
-HOOK_PREFIX = "lane hook "
+# ------------------------------------------------------------------------------------------- the agent's own files
+# Claude Code's hooks, status line, slash commands and CLAUDE.md are behind the adapter (scripts/agents/claude_setup.py).
+# The names stay reachable here for what calls them.
+_AGENT_SETUP = ("HOOK_EVENTS", "HOOK_PREFIX", "workspace_hooks", "WORKSPACE_ALLOW", "is_repolane_hook", "repolane_hooks",
+                "merge_settings", "STATUSLINE_CMD", "is_repolane_statusline", "statusline_state", "set_statusline",
+                "CLAUDE_KINDS", "CLAUDE_RECORD", "claude_files", "claude_files_state", "install_claude_files",
+                "CLAUDE_IMPORT", "has_import", "add_import")
 
 
-def workspace_hooks():
-    """The hooks block of a workspace's settings (its top .claude/settings.json and every lane's settings.local.json):
-    the same events and matchers a clone wires, plus EnterWorktree after the fact, which is when LANE.md is handed in."""
-    def hk(event, matcher=None, timeout=30):
-        return [{**({"matcher": matcher} if matcher else {}),
-                 "hooks": [{"type": "command", "command": HOOK_PREFIX + HOOK_EVENTS[event], "timeout": timeout}]}]
-    return {"SessionStart": hk("SessionStart", "startup|resume|clear|compact|fork", 60),
-            "PreToolUse": hk("PreToolUse", "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree|Glob|Grep"),
-            "PostToolUse": hk("PostToolUse", "Edit|Write|MultiEdit|NotebookEdit|EnterWorktree"),
-            "WorktreeCreate": hk("WorktreeCreate", None, 120), "WorktreeRemove": hk("WorktreeRemove"),
-            "UserPromptSubmit": hk("UserPromptSubmit"), "PreCompact": hk("PreCompact"), "SessionEnd": hk("SessionEnd")}
-
-
-# the read-only commands a dispatcher session at the workspace root may run without asking (a clone's settings.json
-# lists the same, by its bin/ paths)
-WORKSPACE_ALLOW = ["Bash(lane-merge-plan:*)", "Bash(lane-status:*)", "Bash(lane-brief:*)", "Bash(lane-menu:*)",
-                   "Bash(lane-sessions:*)", "Bash(lane-env-check:*)", "Bash(lane-env-keys:*)", "Bash(lane-memory list:*)",
-                   "Bash(lane-memory show:*)", "Bash(lane-memory audit:*)", "Bash(lane status:*)", "Bash(lane brief:*)",
-                   # a dispatcher session that enters a lane with EnterWorktree keeps these root permissions (a lane's
-                   # settings.local.json only applies to a session started inside it), and LANE.md tells it to save the
-                   # Goal and draft memories with these two: they write only that lane's file and the draft inbox, and the
-                   # command itself refuses another lane's Goal from inside a lane. `lane-memory file` still asks.
-                   "Bash(lane-memory goal:*)", "Bash(lane-memory draft:*)"]
-
-
-def is_repolane_hook(cmd):
-    """A hook command Repolane owns: `lane hook <event>`, or a clone's guard / session-start by path (left in a workspace's
-    settings by an earlier setup, it would run a second, possibly stale, guard)."""
-    cmd = str(cmd or "")
-    return (cmd.startswith(HOOK_PREFIX) or cmd.rstrip().endswith("scripts/hooks/guard.py")
-            or "scripts/session-start" in cmd)
-
-
-def repolane_hooks(settings):
-    """Repolane's part of a settings dict's hooks, in the same shape as workspace_hooks(): what a check compares."""
-    have = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
-    out = {}
-    for event, entries in have.items():
-        for e in entries if isinstance(entries, list) else []:
-            hs = [h for h in (e.get("hooks") or []) if isinstance(h, dict) and is_repolane_hook(h.get("command"))] if isinstance(e, dict) else []
-            if hs: out.setdefault(event, []).append({**e, "hooks": hs})
-    return out
-
-
-def merge_settings(path, hooks, allow=()):
-    """Put Repolane's hooks into a settings file without disturbing anything else in it: hook entries that run some other
-    command, permissions, env, the status line. Ours are recognised by is_repolane_hook and replaced whole. The file is
-    written only when that changes something, and a file that is not valid JSON is refused (ValueError), never replaced.
-    Returns True when the file was written."""
+def _agents():
+    sys.dont_write_bytecode = True   # the product is never written to, not even a __pycache__
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
     try:
-        with open(path) as fh: raw = fh.read()
-    except OSError:
-        raw = None
-    if raw is None or not raw.strip():
-        cur = {}
-    else:
-        cur = json.loads(raw)   # ValueError: the user's file is broken, and is theirs to mend
-        if not isinstance(cur, dict): raise ValueError(f"{path} is not a JSON object")
-    before = json.loads(json.dumps(cur))
-    have = cur.get("hooks") if isinstance(cur.get("hooks"), dict) else {}
-    out = {}
-    for event, entries in have.items():
-        kept = []
-        for e in entries if isinstance(entries, list) else []:
-            hs = [h for h in (e.get("hooks") or []) if not (isinstance(h, dict) and is_repolane_hook(h.get("command")))] if isinstance(e, dict) else []
-            if hs: kept.append({**e, "hooks": hs})
-        if kept: out[event] = kept
-    for event, entries in hooks.items():
-        out[event] = out.get(event, []) + entries
-    cur["hooks"] = out
-    if allow:
-        perm = cur.setdefault("permissions", {})
-        perm["allow"] = sorted(set(perm.get("allow") or []) | set(allow))
-    if raw is not None and cur == before:
-        return False
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w") as fh: json.dump(cur, fh, indent=2); fh.write("\n")
-    os.replace(tmp, path)
-    return True
+        import agents
+        return agents
+    finally:
+        sys.path.pop(0)
 
 
-# ------------------------------------------------------------------------------------------------ the status line
-# A workspace's status line is a command too, never a path into the product: `lane statusline` runs scripts/statusline.sh.
-STATUSLINE_CMD = "lane statusline"
-
-
-def is_repolane_statusline(cmd):
-    """A status line Repolane wired: the workspace's command, or a clone's statusline.sh by path (left by an older setup)."""
-    cmd = str(cmd or "")
-    return cmd.strip() == STATUSLINE_CMD or "scripts/statusline.sh" in cmd
-
-
-def statusline_state(ad):
-    """'ours' (lane statusline), 'stale' (a clone's statusline.sh by path), 'mine' (the user's own command, left alone),
-    'none' (neither settings file has one), or 'broken' (settings.json is not valid JSON)."""
-    found = None
-    for f in ("settings.json", "settings.local.json"):
-        try:
-            with open(f"{ad}/.claude/{f}") as fh: raw = fh.read()
-        except OSError:
-            continue
-        try:
-            cur = json.loads(raw) if raw.strip() else {}
-        except ValueError:
-            if f == "settings.json": return "broken"
-            continue
-        sl = cur.get("statusLine") if isinstance(cur, dict) else None
-        if sl is not None and found is None: found = sl
-    if found is None: return "none"
-    cmd = found.get("command") if isinstance(found, dict) else ""
-    if str(cmd or "").strip() == STATUSLINE_CMD: return "ours"
-    return "stale" if is_repolane_statusline(cmd) else "mine"
-
-
-def set_statusline(ad, replace_stale=True):
-    """Wire `lane statusline` into .claude/settings.json when no status line is set (or, with replace_stale, when the one
-    set is a clone's statusline.sh by path). The user's own status line is never replaced. True when the file was written."""
-    st = statusline_state(ad)
-    if st == "ours" or st == "mine" or st == "broken" or (st == "stale" and not replace_stale): return False
-    path = f"{ad}/.claude/settings.json"
-    try:
-        with open(path) as fh: raw = fh.read()
-    except OSError:
-        raw = ""
-    cur = json.loads(raw) if raw.strip() else {}
-    if st == "stale" and not is_repolane_statusline((cur.get("statusLine") or {}).get("command") if isinstance(cur.get("statusLine"), dict) else ""):
-        # the stale one is in settings.local.json: that file is machine-local and Repolane's to mend as well
-        lpath = f"{ad}/.claude/settings.local.json"
-        with open(lpath) as fh: loc = json.load(fh)
-        loc["statusLine"] = {"type": "command", "command": STATUSLINE_CMD}
-        _write(lpath, json.dumps(loc, indent=2) + "\n")
-        return True
-    cur["statusLine"] = {"type": "command", "command": STATUSLINE_CMD}
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    _write(path, json.dumps(cur, indent=2) + "\n")
-    return True
+def __getattr__(name):
+    if name in _AGENT_SETUP:
+        _agents()
+        from agents import claude_setup
+        return getattr(claude_setup, name)
+    raise AttributeError(name)
 
 
 # ------------------------------------------------------------------------------------ the rule files and migrations
@@ -361,120 +239,30 @@ def refresh(product, ad, force=False):
         if applies(have, want): step(ad)
     for f in RULE_FILES:
         with open(f"{product}/templates/{f}") as fh: _write(f"{data}/{f}", fh.read())
-    install_claude_files(product, ad)
-    try:   # Repolane's hooks and approvals in .claude/settings.json (the user's own keys and hooks kept)
-        merge_settings(f"{ad}/.claude/settings.json", workspace_hooks(), WORKSPACE_ALLOW)
-    except (ValueError, OSError):
-        pass   # a broken settings.json is the user's to mend; lane doctor says so
+    for a in _agents_of(ad): a.refresh_workspace(product, ad)
     _write(f"{data}/version", want + "\n")
     return True
 
 
-# ------------------------------------------------------------------------------ slash commands and agents
-# Repolane's slash commands (/status, /lane-brief, …) and agents (lane-manager, …) for a workspace are the product's
-# templates/claude/{commands,agents}/*.md, copied into the workspace's .claude/ by name. .claude/ is the user's folder,
-# so a file is only ever written when it is missing, or when it is still exactly what Repolane wrote there before (a
-# previous version, never edited): .repolane/claude-files.json records each file Repolane wrote, with a hash of its
-# text. A file of the user's by the same name, or one of ours they edited, is kept; one they deleted stays deleted.
-CLAUDE_KINDS = ("commands", "agents")
-CLAUDE_RECORD = "claude-files.json"
-
-
-def _sha(text):
-    import hashlib
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
-def claude_files(product):
-    """{"commands/status.md": text, …}: what the installed version puts in a workspace's .claude/."""
-    out = {}
-    for kind in CLAUDE_KINDS:
-        d = f"{product}/templates/claude/{kind}"
-        try: names = sorted(os.listdir(d))
-        except OSError: continue
-        for n in names:
-            if n.endswith(".md") and os.path.isfile(f"{d}/{n}"):
-                with open(f"{d}/{n}") as fh: out[f"{kind}/{n}"] = fh.read()
-    return out
-
-
-def _claude_record(ad):
-    try:
-        with open(f"{ad}/.repolane/{CLAUDE_RECORD}") as fh: rec = json.load(fh)
-        return {k: v for k, v in rec.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(rec, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def claude_files_state(product, ad):
-    """[(path under .claude/, state)], state one of:
-      ours     the installed version's, word for word
-      old      what an earlier version wrote, never edited: a refresh replaces it
-      missing  never written here: a refresh writes it
-      mine     a file of the user's by that name, or one of ours they edited: kept
-      removed  written once, deleted since: left deleted
-      retired  an earlier version's file this one no longer ships, never edited: a refresh removes it"""
-    want, rec, out = claude_files(product), _claude_record(ad), []
-    for rel, text in want.items():
-        try:
-            with open(f"{ad}/.claude/{rel}") as fh: cur = fh.read()
-        except OSError:
-            out.append((rel, "removed" if rel in rec else "missing")); continue
-        out.append((rel, "ours" if cur == text else "old" if rec.get(rel) == _sha(cur) else "mine"))
-    for rel, h in sorted(rec.items()):
-        if rel in want or "/" not in rel or rel.split("/", 1)[0] not in CLAUDE_KINDS or ".." in rel.split("/"): continue
-        try:
-            with open(f"{ad}/.claude/{rel}") as fh:
-                if _sha(fh.read()) == h: out.append((rel, "retired"))
-        except OSError:
-            pass
-    return out
-
-
-def install_claude_files(product, ad):
-    """Bring the workspace's copies of Repolane's slash commands and agents up to the installed version, by the rules
-    above. Returns (written, kept): the paths written or removed, and the user's files left in their place."""
-    want, rec = claude_files(product), _claude_record(ad)
-    before, written, kept = dict(rec), [], []
-    for rel, st in claude_files_state(product, ad):
-        p = f"{ad}/.claude/{rel}"
-        if st in ("missing", "old"):
-            os.makedirs(os.path.dirname(p), exist_ok=True)
-            _write(p, want[rel]); rec[rel] = _sha(want[rel]); written.append(rel)
-        elif st == "ours":
-            rec[rel] = _sha(want[rel])
-        elif st == "retired":
-            os.remove(p); rec.pop(rel, None); written.append(rel)
-        elif st == "mine":
-            kept.append(rel)
-    if rec != before and os.path.isdir(f"{ad}/.repolane"):
-        _write(f"{ad}/.repolane/{CLAUDE_RECORD}", json.dumps(rec, indent=2, sort_keys=True) + "\n")
-    return written, kept
-
-
 # ------------------------------------------------------------------------------------------- an empty workspace
-CLAUDE_IMPORT = "@.repolane/REPOLANE.md"
+def _agents_of(ad):
+    """Claude Code's adapter, and the one this workspace opted in to, if any."""
+    a = _agents()
+    extra = a.configured(f"{ad}/.repolane/config.yml")
+    return [a.get()] + ([a.get(extra)] if extra and extra != a.DEFAULT else [])
 
 
-def has_import(ad):
-    """Does the workspace's CLAUDE.md load REPOLANE.md? None when there is no CLAUDE.md at all."""
-    try:
-        with open(f"{ad}/CLAUDE.md") as fh: text = fh.read()
-    except OSError:
-        return None
-    return CLAUDE_IMPORT in [l.strip() for l in text.splitlines()]
+def _set_agent(ad, name):
+    """The workspace's choice: one line in config.yml, which a session cannot write (the guard refuses it)."""
+    import re
+    p = f"{ad}/.repolane/config.yml"
+    with open(p) as fh: text = fh.read()
+    line = f"agent: {name}\n"
+    text = re.sub(r"^agent:.*\n?", line, text, flags=re.M) if re.search(r"^agent:", text, re.M) else text + ("" if text.endswith("\n") or not text else "\n") + line
+    _write(p, text)
 
 
-def add_import(ad):
-    """Append the import line to the workspace's CLAUDE.md: only ever when the owner said yes (scripts/workspace.py)."""
-    cm = f"{ad}/CLAUDE.md"
-    with open(cm) as fh: text = fh.read()
-    if CLAUDE_IMPORT in [l.strip() for l in text.splitlines()]: return False
-    with open(cm, "a") as fh: fh.write(("" if text.endswith("\n") or not text else "\n") + "\n" + CLAUDE_IMPORT + "\n")
-    return True
-
-
-def make_workspace(product, ad, owner=""):
+def make_workspace(product, ad, owner="", agent=""):
     """Create the workspace layout in `ad` (made if missing), filling only what is absent: it is safe to run again over a
     workspace in use, and never overwrites the user's data. CLAUDE.md is the user's file: a small one is written when there
     is none, and an existing one is never edited here (`lane init` and `lane doctor --fix` ask before adding the import
@@ -501,15 +289,8 @@ def make_workspace(product, ad, owner=""):
     except OSError:
         pass
     seed(f"{data}/env.sh", template("env.sh"))
-    seed(f"{ad}/CLAUDE.md", "# My workspace\n\nRepolane's rules for every session in this folder:\n\n" + CLAUDE_IMPORT + "\n",
-         " (it imports .repolane/REPOLANE.md)")
-    if merge_settings(f"{ad}/.claude/settings.json", workspace_hooks(), WORKSPACE_ALLOW):
-        made.append(".claude/settings.json (Repolane's hooks)")
-    if set_statusline(ad, replace_stale=False):
-        made.append(f".claude/settings.json (status line: {STATUSLINE_CMD})")
-    written, _ = install_claude_files(product, ad)   # the user's own files of those names are kept (lane init says which)
-    if written:
-        made.append(f".claude/commands, .claude/agents (Repolane's {len(written)} slash command and agent file(s))")
+    if agent and agent != "claude": _set_agent(ad, agent)
+    for a in _agents_of(ad): made += a.install_workspace(product, ad, seed)
     if refresh(product, ad):
         made.append(f".repolane/REPOLANE.md, .repolane/LANE.md (version {product_version(product)})")
     return made
@@ -521,12 +302,17 @@ def main(argv):
         refresh(os.path.realpath(argv[2]), os.path.realpath(argv[3])); return 0
     if cmd == "make-workspace" and len(argv) in (4, 5):
         make_workspace(os.path.realpath(argv[2]), argv[3], argv[4] if len(argv) == 5 else ""); print(os.path.realpath(argv[3])); return 0
+    if cmd == "agent" and len(argv) == 2:
+        here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        print(_agents().configured(Roots(here).config)); return 0
     if cmd == "lane-context" and len(argv) == 3:
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         sys.stdout.write(Roots(here).lane_context(argv[2])); return 0
     if cmd == "words" and len(argv) == 2:
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-        sys.stdout.write(Roots(here).words(sys.stdin.read())); return 0
+        r = Roots(here); text = r.words(sys.stdin.read())
+        a = _agents()   # a hook says whose session it is; otherwise it is the person, and the workspace's choice
+        sys.stdout.write(a.get(os.environ.get("LANE_HOOK_AGENT") or a.configured(r.config) or a.DEFAULT).say(text)); return 0
     if cmd == "paths" and len(argv) in (2, 3):
         here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         for k, v in Roots(here, start=argv[2] if len(argv) == 3 else None).paths().items(): print(f"{k}={v}")

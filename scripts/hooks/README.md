@@ -5,18 +5,27 @@ thing that refuses.
 
 | | |
 |---|---|
-| `guard.py` | the whole dispatcher — one file, no dependencies |
+| `guard.py` | the whole dispatcher and every rule — no dependencies; it reads the agent only through [`../agents/`](../README.md#agents) |
 | `guard-check` | is it healthy? compiles it, fires eleven named probes, checks every lane is wired, and lists lanes nobody has touched in `stale_days` with the command that clears each (`lane doctor`; `-v` also runs the suite) |
 | `test-guard.sh` | 1,700+ cases covering every rule, against a throwaway control plane it builds itself (there is no hard-coded count to keep in step: every section must run at least one case and the totals must add up) |
 
 ## How it is wired
 
 `.claude/settings.json` at the control plane root points seven hook events at `guard.py`, and
-`write_guard` in `../lib.sh` writes the same wiring into every lane and worktree. The `PreToolUse`
+`write_guard` in `../lib.sh` writes the same wiring into every lane and worktree (the code is
+`install_lane` in `../agents/claude_setup.py`). The `PreToolUse`
 matcher (`Bash|Edit|Write|MultiEdit|NotebookEdit|Read|EnterWorktree|Glob|Grep`) is written in those two
 places and the suite fails if they ever differ; `lane doctor` also flags a lane whose matcher predates
 `Glob|Grep` (run `lane resume` to rewrite it). The script reads
-the hook JSON on stdin, branches on `hook_event_name`, prints a JSON decision on stdout, and exits.
+the hook JSON on stdin, and the adapter (`../agents/claude.py`) turns it into a neutral `Event`: a
+tool call is `ToolCall(kind=SHELL|READ|WRITE|SEARCH|LIST|ENTER_LANE|OTHER, command, paths, …)`, and the rules
+below work on that, never on `Bash` or `tool_input`. The adapter turns each `Decision` back into the JSON
+on stdout (or the text and exit status the worktree events take), and the guard exits.
+
+`agy` runs the same rules. Its hook runs `lane hook --agent antigravity <event>`, since its body has no event name, and exit 0 with empty output
+would let the tool run: so every tool call gets a decision (no objection is `ask`), and unreadable input, a crash or a broken adapter is a `deny`.
+A tool the adapter does not know is judged by every path in its arguments. `bash tests/t_guard_agents.sh` runs this whole suite through that
+adapter, with the differences it expects listed there.
 
 ```
 PreToolUse        allow / deny / add context, before the tool runs
@@ -175,7 +184,9 @@ The two failure modes are chosen on purpose (the same text is at the top of `gua
   answered with a deny that says why, and so is any unexpected exception while judging a tool call.
   A hook that crashes exits non-zero *without a decision* and Claude Code then runs the tool, so an
   input that crashes the guard would be the easiest bypass there is. The price of a guard bug is one
-  refused command with the reason printed, not a silently unguarded session.
+  refused command with the reason printed, not a silently unguarded session. The adapter is held to the
+  same rule: if it cannot be imported, or its `parse_event` or `format_decision` raises, a tool call is still
+  denied (`tests/t_agents.sh`).
 - **Every other event fails open.** `UserPromptSubmit`, `PreCompact`, `SessionEnd`, `PostToolUse` and
   `Worktree*` only add context or tidy up; refusing them would break the session over bookkeeping.
   Unreadable input there is ignored (exit 0), and a crash exits 1 so Claude Code shows a hook error.
@@ -196,7 +207,7 @@ bash scripts/hooks/test-guard.sh
 
 It builds its own throwaway control plane under a temp directory — a lane with repos, a mirror,
 an attached reference, a second lane to test reach-in against, an existing memory file — copies
-`guard.py` into it (a copy, not a symlink: the guard finds the control plane from its own real
+`guard.py`, `roots.py` and `agents/` into it (a copy, not a symlink: the guard finds the control plane from its own real
 path) and runs every case there. The guard runs with `HOME` pointed at a fake home inside that
 directory, so the result is the same wherever the real `$HOME` or `$TMPDIR` is (`/Users`, `/home`,
 `/tmp`, macOS `/var/folders`). It asserts the same cases on a fresh clone as on a machine full of

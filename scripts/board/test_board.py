@@ -621,6 +621,95 @@ class TestTrackerUrl(unittest.TestCase):
         self.assertEqual(self.url('tracker:\n  url: "https://l.app/i/{key}"\n'), "https://l.app/i/{key}")
 
 
+class TestAgentWording(unittest.TestCase):
+    """board.js names no agent: what it says comes from the board's `agent`, which comes from the adapter."""
+    def test_page_names_no_agent(self):
+        js = open(f"{SRC}/scripts/board/board.js").read()
+        for word in ("Claude", "claude --resume", "agy", "Antigravity"): self.assertNotIn(word, js)
+
+    def test_claude_workspace_says_claude(self):
+        st, b = req("GET", "/api/board")
+        self.assertEqual(st, 200)
+        self.assertEqual((b["agent"]["name"], b["agent"]["label"], b["agent"]["resume"]), ("claude", "Claude", "claude --resume"))
+        self.assertIn("memory-link", b["agent"]["capabilities"])
+        st, m = req("GET", "/api/memory")
+        self.assertEqual(next(s["hint"] for s in m["scopes"] if s["id"] == "pref"), "how Claude works with you")
+
+
+class TestAgyWorkspace(unittest.TestCase):
+    """A second server over a workspace that opted in to Antigravity, with conversations in its ledger."""
+    IDS = ("11111111-aaaa-4aaa-8aaa-111111111111", "22222222-bbbb-4bbb-8bbb-222222222222")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ws = f"{ROOT}/agy-ws"; d = f"{cls.ws}/.repolane"
+        for sub in ("registry/lanes", "repos/web", "repos/api", "memory", "knowledge", "cache"): os.makedirs(f"{d}/{sub}")
+        open(f"{d}/config.yml", "w").write("agent: antigravity\nowner:\n  name: tester\n")
+        open(f"{d}/registry/repos.yaml", "w").write(
+            "repos:\n  web:\n    short: web\n    default_branch: main\n  api:\n    short: api\n    default_branch: main\n")
+        open(f"{d}/registry/lanes/A1.md", "w").write(
+            "---\nstatus: active\nticket: T-2\nupdated: 2026-01-01\nrepos:\n  - repo: web\n    branch: a1\n    base: main\n"
+            "  - repo: api\n    branch: a1\n    base: main\n---\n\n## Goal\ntest\n")
+        cls.ledger = f"{d}/cache/conversations.jsonl"
+        cls.note(cls.IDS[0], "first prompt")
+        cls.port = free_port()
+        env = {**os.environ, "LANE_PRODUCT": PLANE, "LANE_WORKSPACE": cls.ws, "WS_BOARD_NO_OPEN": "1", "WS_BOARD_PORT": str(cls.port), "WS_BOARD_REFRESH": "3600", "WS_BOARD_SESSIONS": "0.2"}
+        cls.proc = subprocess.Popen([sys.executable, f"{PLANE}/scripts/board/server.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+        for _ in range(100):
+            try:
+                st, html = cls.call("/", token=False)
+                if st == 200: break
+            except OSError: pass
+            time.sleep(0.1)
+        else: raise RuntimeError("board did not start")
+        cls.token = html.split("__T='")[1].split("'")[0]
+
+    @classmethod
+    def tearDownClass(cls): cls.proc.terminate(); cls.proc.wait()
+
+    @classmethod
+    def note(cls, cid, said):
+        with open(cls.ledger, "a") as f: f.write(json.dumps({"id": cid, "lane": "A1", "at": time.time(), "said": said}) + "\n")
+
+    @classmethod
+    def call(cls, path, token=True):
+        c = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=30)
+        c.request("GET", path, headers={"Host": f"127.0.0.1:{cls.port}", **({"X-Token": cls.token} if token else {})})
+        r = c.getresponse(); raw = r.read().decode(); c.close()
+        try: return r.status, json.loads(raw)
+        except ValueError: return r.status, raw
+
+    def listed(self):
+        """The cached sessions text of every repo, as Home reads it, once the sweep has seen the ledger."""
+        st, s = self.call("/api/sessions")
+        self.assertEqual(st, 200)
+        return s["sessions"]
+
+    def wait_for(self, text):
+        for _ in range(200):
+            if text in self.listed().get("web", ""): return
+            time.sleep(0.1)
+        self.fail(f"{text} never listed: {self.listed()}")
+
+    def test_agent_payload_comes_from_the_adapter(self):
+        st, b = self.call("/api/board")
+        self.assertEqual(st, 200)
+        a = b["agent"]
+        self.assertEqual((a["name"], a["label"], a["resume"]), ("antigravity", "agy", "agy --conversation"))
+        self.assertIn("conversation-ledger", a["capabilities"])
+        for claude_only in ("memory-link", "import-conversations", "status-line"): self.assertNotIn(claude_only, a["capabilities"])
+
+    def test_memory_hint_names_the_agent(self):
+        st, m = self.call("/api/memory")
+        self.assertEqual(next(s["hint"] for s in m["scopes"] if s["id"] == "pref"), "how agy works with you")
+
+    def test_ledger_conversation_listed_and_a_new_one_noticed(self):
+        self.wait_for(self.IDS[0])
+        self.note(self.IDS[1], "second prompt")   # the cache watches the ledger, so this must show without a restart
+        self.wait_for(self.IDS[1])
+        self.assertIn("second prompt", self.listed()["web"])
+
+
 class TestDesignTokens(unittest.TestCase):
     """board.css is the single source of design tokens: colours, font families, font sizes and radii live in its
     two :root blocks (light, and :root[data-theme="dark"]) and nowhere else; the page carries no inline styles."""

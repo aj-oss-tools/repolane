@@ -34,6 +34,10 @@ for f in repolane/__init__.py repolane/cli.py $P/lane $P/VERSION $P/LICENSE $P/N
          $P/scripts/board/fonts/inter-var.woff2 $P/scripts/board/fonts/jetbrains-mono-var.woff2 $P/scripts/board/fonts/instrument-serif.woff2 \
          $P/scripts/board/fonts/instrument-serif-italic.woff2 $P/scripts/board/fonts/OFL.txt \
          $P/knowledge/preferences.md.example $P/.claude/settings.json $P/scripts/roots.sh $P/scripts/roots.py \
+         $P/scripts/agents/__init__.py $P/scripts/agents/base.py $P/scripts/agents/claude.py $P/scripts/agents/claude_setup.py \
+         $P/scripts/agents/cli.py $P/scripts/agents/install.py \
+         $P/scripts/agents/antigravity.py $P/scripts/agents/antigravity_setup.py $P/scripts/agents/translate.py \
+         $P/templates/antigravity/AGENTS.md $P/templates/antigravity/LANE.md \
          $P/templates/REPOLANE.md $P/templates/LANE.md $P/templates/config.yml $P/templates/env.sh \
          $P/templates/claude/commands/status.md $P/templates/claude/commands/lane-start.md $P/templates/claude/agents/lane-manager.md; do
   assert_contains "wheel has $f" "$names" "$f"

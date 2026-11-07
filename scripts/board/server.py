@@ -28,6 +28,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))   # the page and its static f
 sys.dont_write_bytecode = True   # the product is only read
 sys.path.insert(0, os.path.dirname(HERE))
 import roots as _roots
+import agents as _agents
+from agents.base import Capability as _Capability
 sys.path.pop(0)
 R = _roots.Roots(os.path.dirname(os.path.dirname(HERE)))
 PRODUCT, AD = R.product, R.ad
@@ -37,11 +39,21 @@ def roots_of(ad):
     """The data paths of plane `ad`: this server's own, or another registered plane's, laid out the way that one is."""
     if ad not in _ROOTS: _ROOTS[ad] = _roots.Roots(PRODUCT, env={"LANE_WORKSPACE": ad})
     return _ROOTS[ad]
+def agent_of(ad):
+    """The adapter of plane `ad`: the agent its config.yml opts in to, or the default. Only a workspace can opt in."""
+    r = roots_of(ad)
+    return _agents.get(r.workspace and _agents.configured(r.config) or _agents.DEFAULT)
+AGENT = agent_of(AD)
+def agent_payload(a):
+    """What the page needs to know about the agent. It never decides anything from the name."""
+    return {"name": a.name, "label": a.label, "capabilities": sorted(c.value for c in a.capabilities),
+            "resume": a.resume_command if a.has(_Capability.RESUME) else ""}
 TOKEN = secrets.token_urlsafe(24)
 # The refresh loop runs `git status` every few seconds. By default that opportunistically rewrites
 # .git/index, taking index.lock, so a user's own `git add` could fail with "index.lock exists".
 os.environ["GIT_OPTIONAL_LOCKS"] = "0"
 REFRESH_EVERY = float(os.environ.get("WS_BOARD_REFRESH", "3"))
+SESSIONS_EVERY = float(os.environ.get("WS_BOARD_SESSIONS", "45"))
 MAX_BODY = 1 << 20   # 1 MiB: every request body here is a few paths or a commit message
 
 # ---------------------------------------------------------------- multi-plane registry
@@ -270,7 +282,7 @@ def board_uncached():
         out.append(w)
     order = {"active": 0, "parked": 1}
     out.sort(key=lambda w: (order.get(w["status"], 2), w["id"].lower()))
-    return {"lanes": out, "repos": sorted(os.listdir(REPOS)), "generated": time.strftime("%H:%M:%S"), "serverStartedAt": STARTED,
+    return {"lanes": out, "agent": agent_payload(AGENT), "repos": sorted(os.listdir(REPOS)), "generated": time.strftime("%H:%M:%S"), "serverStartedAt": STARTED,
             "tracker": tracker_url()}
 
 def lane_path(ad, lane, repo):
@@ -569,7 +581,7 @@ def memory_tree():
         scopes.append({"id": f"repo:{d}", "label": sh_.get(d, d), "repo": d, "files": [c for c in fl if c],
                        "hint": d if os.path.isdir(f"{REPOS}/{d}") else f"{d}: not a registered repo"})
     pref = f"{KNOW}/preferences.md"
-    scopes.append({"id": "pref", "label": "preferences", "hint": "how Claude works with you",
+    scopes.append({"id": "pref", "label": "preferences", "hint": f"how {AGENT.label} works with you",
                    "files": [{"file": "preferences.md", "name": "preferences", "description": "standing working preferences", "type": "user",
                               "bytes": os.path.getsize(pref) if os.path.exists(pref) else 0,
                               "modified": time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(pref))) if os.path.exists(pref) else "", "suspect": False}]})
@@ -662,7 +674,7 @@ def compute_board():
         out.append(w)
     order = {"active": 0, "parked": 1}
     out.sort(key=lambda w: (order.get(w["status"], 2), w["id"].lower()))
-    return {"lanes": out, "repos": sorted(os.listdir(REPOS)), "generated": time.strftime("%H:%M:%S"), "serverStartedAt": STARTED,
+    return {"lanes": out, "agent": agent_payload(AGENT), "repos": sorted(os.listdir(REPOS)), "generated": time.strftime("%H:%M:%S"), "serverStartedAt": STARTED,
             "tracker": tracker_url()}
 
 def refresh_repo(lane, repo):
@@ -680,7 +692,7 @@ def refresh_all():
         BOARD["data"] = compute_board()
 
 def sessions_cached(repo):
-    proj = os.path.expanduser("~/.claude/projects/") + f"{REPOS}/{repo}".replace("/", "-").replace("_", "-")
+    proj = AGENT.signature_dir(f"{REPOS}/{repo}")
     try: sig = tuple(sorted((e.name, e.stat().st_mtime) for e in os.scandir(proj) if e.name.endswith(".jsonl")))
     except FileNotFoundError: sig = ()
     hit = SESS.get(repo)
@@ -728,7 +740,7 @@ def compute_board_for(ad):
         out.append(w)
     order = {"active": 0, "parked": 1}
     out.sort(key=lambda w: (order.get(w["status"], 2), w["id"].lower()))
-    return {"lanes": out, "repos": sorted(os.listdir(roots_of(ad).repos)), "generated": time.strftime("%H:%M:%S"),
+    return {"lanes": out, "agent": agent_payload(agent_of(ad)), "repos": sorted(os.listdir(roots_of(ad).repos)), "generated": time.strftime("%H:%M:%S"),
             "serverStartedAt": STARTED, "tracker": tracker_url(ad)}
 
 def board_for(ad):
@@ -1003,7 +1015,7 @@ def main():
     url = f"http://127.0.0.1:{port}/"
     DEFAULTS.update(defaults())
     refresh_all()
-    loop(refresh_all, REFRESH_EVERY, "git"); loop(pr_sweep, 60, "pr"); loop(sess_sweep, 45, "sessions"); loop(self_reload, 2, "reload")
+    loop(refresh_all, REFRESH_EVERY, "git"); loop(pr_sweep, 60, "pr"); loop(sess_sweep, SESSIONS_EVERY, "sessions"); loop(self_reload, 2, "reload")
     print(f"lane-board  {url}   (Ctrl-C to stop)"); sys.stdout.flush()
     if not os.environ.get("WS_BOARD_NO_OPEN"): threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try: srv.serve_forever()

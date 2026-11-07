@@ -62,7 +62,11 @@ fi
 
 # The probes. Every one runs from the control plane root, so they answer the same on a fresh
 # clone as on a machine full of lanes — the claim has to be checkable before there is any work.
-ask(){ printf '%s' "$1" | python3 -B "$G" 2>&1 | grep -o '"permissionDecision": "[a-z]*"' | cut -d'"' -f4; }
+# In a workspace that opted in to another agent, the probes reach the guard as that agent's sessions do (scripts/agents/translate.py).
+GCALL=(python3 -B "$G"); WS_AGENT=""
+if [ "$LANE_MODE" = workspace ]; then WS_AGENT=$(python3 -B "$PRODUCT/scripts/roots.py" agent); fi
+case "$WS_AGENT" in ""|claude) WS_AGENT="" ;; *) GCALL=(python3 -B "$PRODUCT/scripts/agents/translate.py" "$G") ;; esac
+ask(){ printf '%s' "$1" | "${GCALL[@]}" 2>&1 | grep -o '"permissionDecision": "[a-z]*"' | cut -d'"' -f4; }
 bash_probe(){ printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"%s","tool_input":{"command":%s}}' \
   "$AD" "$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$1")"; }
 file_probe(){ printf '{"hook_event_name":"PreToolUse","tool_name":"%s","cwd":"%s","tool_input":{"file_path":"%s"}}' "$1" "$AD" "$2"; }
@@ -75,8 +79,8 @@ probe(){ # probe <want> <label> <json>
   else lines="$lines$(printf '  !! %-4s %s — wanted %s' "$got" "$2" "$1")
 "; fi
 }
-probe deny "a worktree with no lane named"        '{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","cwd":"'"$AD"'","tool_input":{}}'
-probe deny "a worktree opened by path"            '{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","cwd":"'"$AD"'","tool_input":{"path":"'"$AD"'/lanes/x"}}'
+[ -n "$WS_AGENT" ] || probe deny "a worktree with no lane named"        '{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","cwd":"'"$AD"'","tool_input":{}}'
+[ -n "$WS_AGENT" ] || probe deny "a worktree opened by path"            '{"hook_event_name":"PreToolUse","tool_name":"EnterWorktree","cwd":"'"$AD"'","tool_input":{"path":"'"$AD"'/lanes/x"}}'
 probe deny "reading a .env"                       "$(file_probe Read "$REPOS/any/.env")"
 probe deny "a shell that prints a .env"           "$(bash_probe 'cat .env')"
 probe deny "writing a memory directly"            "$(file_probe Write "$MEMORY_DIR/brand-new-thing.md")"
@@ -112,7 +116,7 @@ while IFS="$(printf '\t')" read -r rid rjson; do
 "
     continue
   fi
-  reason=$(printf '%s' "$rjson" | python3 "$G" 2>&1 | python3 -c 'import json,sys
+  reason=$(printf '%s' "$rjson" | "${GCALL[@]}" 2>&1 | python3 -c 'import json,sys
 try: d = json.load(sys.stdin)["hookSpecificOutput"]
 except Exception: print("pass|"); raise SystemExit
 print(d.get("permissionDecision","pass") + "|" + (d.get("permissionDecisionReason") or ""))')
@@ -140,9 +144,9 @@ for r in rules:
     if not ex:
         print(rid + "\t@noexample"); continue
     if isinstance(ex, str):
-        ti = {"command": ex} if tool == "Bash" else {"file_path": ex}
+        ti = {"command": ex} if tool in ("Bash", "shell") else {"file_path": ex}
     else:
-        ti = {"command": ex.get("command", "")} if tool == "Bash" else {"file_path": ex.get("path", "")}
+        ti = {"command": ex.get("command", "")} if tool in ("Bash", "shell") else {"file_path": ex.get("path", "")}
     print(rid + "\t" + json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "cwd": ad, "tool_input": ti}))
 PYR
 )

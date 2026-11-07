@@ -83,7 +83,7 @@ and anything else with 404. An old `/#lane=X&repo=Y` link is rewritten to `/lane
 Same rule: the resource is the path, the verb of a POST is its last segment.
 
 ```
-GET  /api/board | /api/planes | /api/sessions
+GET  /api/board | /api/planes | /api/sessions                 board carries `agent`: label, resume command, capabilities
 GET  /api/lanes/<lane>/spec | /api/lanes/<lane>/log[?all=1] | /api/lanes/<lane>/brief
 GET  /api/lanes/<lane>/repos/<repo>                         files, log, branch, PR, sessions
 GET  /api/lanes/<lane>/repos/<repo>/diff?file=&staged=0|1&all=1
