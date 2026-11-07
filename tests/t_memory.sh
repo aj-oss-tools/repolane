@@ -77,4 +77,24 @@ if [ -f "$PLANE/victim3.md" ] && [ ! -e "$PLANE/memory/victim3.md" ]; then ok "m
 run rm ok2 repo api; assert_eq "rm of a real memory still works" 0 "$RC"
 assert "rm removed it" test ! -e "$PLANE/memory/api/ok2.md"
 
+echo "-- move to an unregistered repo, and to preferences"
+run move cr.oss-1 repo pref; assert_eq "move into an unregistered repo is refused" 1 "$RC"
+assert_contains "it names the repo" "$OUT" "unknown repo 'pref'"
+assert "no memory/pref folder" test ! -e "$PLANE/memory/pref"
+assert "the memory is still there" test -f "$PLANE/memory/cr.oss-1.md"
+run move cr.oss-1 repo; assert_eq "move with no repo name is refused" 1 "$RC"
+PREFS="$PLANE/knowledge/preferences.md"; before=$(cat "$PREFS" 2>/dev/null)
+run move cr.oss-1 pref; assert_eq "move to pref works" 0 "$RC"
+assert "the file is gone" test ! -e "$PLANE/memory/cr.oss-1.md"
+assert "no memory/pref folder" test ! -e "$PLANE/memory/pref"
+assert_eq "it is appended to preferences.md as file … pref does" "$before
+
+- cross one
+  body" "$(cat "$PREFS")"
+assert_not_contains "its index line is gone" "$(cat "$PLANE/memory/MEMORY.md")" "cr.oss-1.md"
+printf -- '---\nname: twin\ndescription: d\n---\nb\n' > "$PLANE/memory/twin.md"; mkdir -p "$PLANE/memory/api"; cp "$PLANE/memory/twin.md" "$PLANE/memory/api/"
+run move twin pref; assert_eq "an ambiguous name is refused for pref" 1 "$RC"
+assert_contains "it says so" "$OUT" "more than one match"
+assert "both are kept" test -f "$PLANE/memory/twin.md" -a -f "$PLANE/memory/api/twin.md"
+
 finish
