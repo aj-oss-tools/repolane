@@ -30,9 +30,9 @@ jobs:
           - { os: macos-latest, bash: /bin/bash }
         suite:
           - { name: "guard, through every adapter", run: "tests/run-all.sh --only t_guard_agents.sh" }
-          - { name: "guard suite", run: "scripts/hooks/test-guard.sh" }
+          - { name: "guard suite, and the board", run: "scripts/hooks/test-guard.sh", board: true }
           - { name: "lane suite 1 of 2", run: "tests/run-all.sh --exclude t_guard_agents.sh --shard 1/2" }
-          - { name: "lane suite 2 of 2, and the board", run: "tests/run-all.sh --exclude t_guard_agents.sh --shard 2/2", board: true }
+          - { name: "lane suite 2 of 2", run: "tests/run-all.sh --exclude t_guard_agents.sh --shard 2/2" }
     runs-on: ${{ matrix.platform.os }}
     steps:
       - uses: actions/checkout@v4
