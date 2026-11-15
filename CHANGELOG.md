@@ -8,7 +8,9 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- The README's Status section links the author's write-up at https://akshantjain.com/projects/repolane.
 
 ## [0.12.0] — 2026-11-07
 
