@@ -49,10 +49,17 @@ shipped upgrader refuse or conflict fails it, for example editing a tracked file
 leaves modified in every install (`registry/config.yml`). Run it with `bash tests/t_upgrade_path.sh`
 in a checkout that has the tags.
 
-CI runs these on every push and pull request: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
-runs `tests/run-all.sh`, the guard suite and the board smoke test (`scripts/board/smoke.sh`) on Linux
-and on macOS's bash 3.2, and [`.github/workflows/test.yml`](.github/workflows/test.yml) runs the guard
-suite alone on pull requests into `main` and `release`.
+CI runs these on every pull request and on every push to `main` and `release`:
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs `tests/run-all.sh`, the guard suite and the board smoke
+test (`scripts/board/smoke.sh`) on Linux and on macOS's bash 3.2, split into parallel jobs, and its "all suites" check
+passes only when every job did. A newer push to the same pull request cancels the run it replaces.
+[`.github/workflows/test.yml`](.github/workflows/test.yml) runs the guard suite alone on pull requests into `main` and
+`release`.
+
+The split comes from `tests/run-all.sh` itself: `--shard 1/2` runs half the files, balanced by the times in
+`tests/timings.txt`, `--only` and `--exclude` pick files by name, and `--list` shows what would run. Every file lands in
+exactly one shard, and a file missing from `timings.txt` still runs, with a default weight, so a new `tests/t_*.sh` needs
+no CI change. `tests/t_runall_shards.sh` checks that the workflow's jobs cover every file.
 
 `lane doctor` runs eleven named probes against the guard; `lane doctor -v` runs the whole guard suite
 and exits non-zero if it fails.
