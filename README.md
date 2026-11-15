@@ -300,7 +300,7 @@ What is worth keeping is small text: `CLAUDE.md`, `.claude/settings.json`, `.rep
 
 ## Status and contributing
 
-Repolane is used daily by its author and is stable for that use. It is early software: the layout on
+Repolane is used daily by its author, [Akshant Jain](https://akshantjain.com/projects/repolane), and is stable for that use. It is early software: the layout on
 disk is settled, the command names are settled, and the guard has a real test suite — but expect
 rough edges outside the paths that get walked every day. `lane --version` prints the installed version, and
 `lane upgrade --check` compares it with the newest on PyPI; see [`CHANGELOG.md`](CHANGELOG.md) for what changed.
