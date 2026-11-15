@@ -10,6 +10,12 @@ written down. Inside a git checkout it also says how far past the release tag yo
 
 Nothing yet.
 
+## [0.12.1] — 2026-11-15
+
+### Changed
+
+- The README's Status section links the author's write-up at https://akshantjain.com/projects/repolane.
+
 ## [0.12.0] — 2026-11-07
 
 ### Added
@@ -855,7 +861,8 @@ paths that get walked every day.
   the board fetches its typefaces from Google Fonts, so "no network calls beyond its own server" was
   false; [`docs/board.md`](docs/board.md) now says so, and how to remove them.
 
-[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/aj-oss-tools/repolane/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/aj-oss-tools/repolane/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/aj-oss-tools/repolane/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/aj-oss-tools/repolane/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/aj-oss-tools/repolane/compare/v0.10.0...v0.11.0
