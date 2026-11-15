@@ -1,0 +1,32 @@
+# Seconds each tests/t_*.sh takes on CI's macOS runner (/bin/bash 3.2), for `run-all.sh --shard`.
+# Only the balance between shards depends on these: a file missing here still runs, weighted as DEFAULT.
+# Refresh from a CI log when a file grows a lot; nothing else needs to change.
+DEFAULT 20
+t_guard_agents.sh 344
+t_init_workspace.sh 102
+t_workspace.sh 75
+t_antigravity.sh 52
+t_lifecycle.sh 47
+t_upgrade_package.sh 47
+t_migrate.sh 47
+t_audit2.sh 45
+t_upgrade.sh 27
+t_claude_files.sh 25
+t_misc.sh 21
+t_workspace_words.sh 19
+t_root_approvals.sh 14
+t_upgrade_path.sh 13
+t_agents.sh 12
+t_v090fixes.sh 12
+t_package_commands.sh 10
+t_dispatcher.sh 9
+t_roots.sh 8
+t_publish.sh 7
+t_lanefile.sh 7
+t_secretnames.sh 7
+t_package.sh 6
+t_lanefile_sections.sh 6
+t_memory.sh 4
+t_releasepr.sh 4
+t_releasesync.sh 2
+t_runall_shards.sh 1
